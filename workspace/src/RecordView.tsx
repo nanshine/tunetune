@@ -7,6 +7,7 @@ const labels: Record<string, string> = {
   hypothesis: '假设', resources: '所需资源', parent_experiment_id: '起点实验', evaluation_version: '评测版本', goal_revision: '目标修订',
   artifact_id: '产物', experiment_id: '来源实验', assessment_ids: '关联评测', notes: '说明', constraints: '限制', source: '来源', error: '错误',
   disposition: '处理决定', reason: '理由', changes: '相关改动', text: '原始意见', prompt: '问题', options: '选项', created_at: '保存时间', completed_at: '完成时间',
+  id: '标识', items: '条目', limitations: '使用限制', purpose: '用途', sha256: '内容哈希', gpu_model: 'GPU 型号', gpu_utilization: 'GPU 利用率', memory: '显存', disk_free: '磁盘剩余', collected_at: '采集时间',
 };
 export function RecordView({ value, depth = 0 }: { value: unknown; depth?: number }) {
   if (value == null || value === '') return <span className="muted">尚未填写</span>;

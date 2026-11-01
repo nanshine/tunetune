@@ -1,8 +1,9 @@
-"""Local, file-backed research workspace. No research execution or business writes."""
+"""Local, file-backed research workspace. Writes only feedback and project-name metadata; no research execution."""
 from __future__ import annotations
 
 import argparse
 import copy
+import fcntl
 import hashlib
 import json
 import math
@@ -16,6 +17,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
+import unicodedata
 import uuid
 
 MAX_FILE_BYTES = 4 * 1024 * 1024
@@ -34,7 +36,8 @@ PATTERNS = (
     "evaluation/draft/definition.json", "evaluation/versions/*/definition.json",
     "experiments/*/config.json", "experiments/*/status.json",
     "experiments/*/artifacts.json", "experiments/*/analysis.md", "experiments/*/train.log",
-    "assessments/*/config.json", "assessments/*/result.json", "assessments/*/outputs.jsonl",
+    "assessments/*/config.json", "assessments/*/status.json",
+    "assessments/*/result.json", "assessments/*/outputs.jsonl",
     "releases/*.json", "acceptance/*/config.json", "acceptance/*/outputs.jsonl",
     "feedback/requests/*.json", "feedback/responses/*.json",
     "feedback/incoming/*.json", "feedback/handled/*.json",
@@ -117,6 +120,20 @@ class SafeTree:
             yield fd
         finally:
             os.close(fd)
+
+    @contextmanager
+    def locked(self):
+        # Share the canonical records writer's nonblocking advisory lock.
+        with self.directory([".workspace", "runtime"], create=True) as parent:
+            fd = os.open("records.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         0o600, dir_fd=parent)
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise ValueError("Not a regular lock file")
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                yield
+            finally:
+                os.close(fd)
 
     def read(self, path, limit=MAX_FILE_BYTES):
         segments = parts(path)
@@ -233,6 +250,11 @@ class Reader:
                              "candidates.json": "items"}.get(path)
                     if field in content and not isinstance(content[field], list):
                         raise ValueError(f"{field} must be an array")
+                    if path.startswith("assessments/"):
+                        if path.endswith("/status.json") and content.get("state") not in ("pending", "running"):
+                            raise ValueError("state must be pending/running")
+                        if path.endswith("/result.json") and content.get("state") not in ("succeeded", "failed", "cancelled"):
+                            raise ValueError("state must be succeeded/failed/cancelled")
                 elif path.endswith(".jsonl"):
                     content = [strict_json(line) for line in raw.decode("utf-8").splitlines()
                                if line.strip()]
@@ -249,15 +271,12 @@ class Reader:
             raise ValueError("Missing required project.json")
         if files["project.json"]["content"].get("schema_version") != 1:
             raise ValueError("project.json requires schema_version=1")
+        # Published assessment configs are pending intent; results arrive at completion.
         for path in files:
             if path.startswith("experiments/") and path.endswith("/config.json"):
                 required = path.removesuffix("config.json") + "status.json"
-            elif path.startswith("assessments/") and path.endswith("/config.json"):
-                required = path.removesuffix("config.json") + "result.json"
-            else:
-                continue
-            if required not in files:
-                raise ValueError(f"Incomplete record: missing {required}")
+                if required not in files:
+                    raise ValueError(f"Incomplete record: missing {required}")
         return files
 
     def snapshot(self):
@@ -280,6 +299,71 @@ class FeedbackError(Exception):
     def __init__(self, status, message):
         self.status = status
         super().__init__(message)
+
+
+def save_project_name(reader, body):
+    if not isinstance(body, dict) or body.keys() != {"name", "expected_sha256"}:
+        raise FeedbackError(400, "Invalid project name fields")
+    if not isinstance(body["name"], str):
+        raise FeedbackError(400, "Invalid project name")
+    name = body["name"].strip()
+    if not name or len(name) > 120 or any(
+        unicodedata.category(char) in ("Cc", "Cs") for char in body["name"]
+    ):
+        raise FeedbackError(400, "Project name must be 1–120 characters without control characters")
+    expected = body["expected_sha256"]
+    if not isinstance(expected, str) or not HASH.fullmatch(expected):
+        raise FeedbackError(400, "Invalid expected_sha256")
+
+    def version(info):
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    with reader.lock:
+        try:
+            with reader.tree.locked(), reader.tree.directory() as parent:
+                fd = os.open("project.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                             dir_fd=parent)
+                with os.fdopen(fd, "rb") as stream:
+                    before = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(before.st_mode):
+                        raise ValueError("Not a regular file: project.json")
+                    if before.st_size > MAX_FILE_BYTES:
+                        raise ValueError("File exceeds byte limit: project.json")
+                    raw = stream.read(MAX_FILE_BYTES + 1)
+                    if len(raw) > MAX_FILE_BYTES:
+                        raise ValueError("File exceeds byte limit: project.json")
+                    if version(before) != version(os.fstat(stream.fileno())):
+                        raise ValueError("project.json changed while reading")
+                project = strict_json(raw.decode("utf-8"))
+                if not isinstance(project, dict) or type(project.get("schema_version")) is not int or project["schema_version"] != 1:
+                    raise ValueError("project.json requires schema_version=1")
+                if hashlib.sha256(raw).hexdigest() != expected:
+                    raise FeedbackError(409, "Project is stale; refresh before renaming")
+                project["name"] = name
+                raw = (json.dumps(project, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+                if len(raw) > MAX_FILE_BYTES:
+                    raise ValueError("File exceeds byte limit: project.json")
+                temp = ".pending-" + uuid.uuid4().hex
+                fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=parent)
+                try:
+                    with os.fdopen(fd, "wb") as stream:
+                        stream.write(raw)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    current = os.stat("project.json", dir_fd=parent, follow_symlinks=False)
+                    if not stat.S_ISREG(current.st_mode) or version(current) != version(before):
+                        raise FeedbackError(409, "project.json changed before renaming")
+                    os.replace(temp, "project.json", src_dir_fd=parent, dst_dir_fd=parent)
+                    os.fsync(parent)
+                finally:
+                    try:
+                        os.unlink(temp, dir_fd=parent)
+                    except FileNotFoundError:
+                        pass
+                return {"name": name, "sha256": hashlib.sha256(raw).hexdigest()}
+        except (OSError, ValueError, RecursionError) as exc:
+            raise FeedbackError(409, f"Cannot safely save project name: {exc}") from exc
 
 
 def save_feedback(reader, body):
@@ -442,7 +526,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.headers.get_all("Origin", []) != ["http://" + self.headers["Host"]]:
                 raise FeedbackError(403, "Same Origin required")
-            if self.path != "/api/feedback":
+            if self.path not in ("/api/feedback", "/api/project/name"):
                 raise FeedbackError(404, "Not found")
             if self.headers.get_all("Transfer-Encoding"):
                 raise FeedbackError(400, "Transfer-Encoding is not supported")
@@ -459,8 +543,11 @@ class Handler(BaseHTTPRequestHandler):
             if len(raw) != length:
                 raise FeedbackError(400, "Incomplete body")
             body = strict_json(raw.decode("utf-8"))
-            record, created = save_feedback(self.server.reader, body)
-            self.reply(201 if created else 200, record)
+            if self.path == "/api/project/name":
+                self.reply(200, save_project_name(self.server.reader, body))
+            else:
+                record, created = save_feedback(self.server.reader, body)
+                self.reply(201 if created else 200, record)
         except FeedbackError as exc:
             self.reply(exc.status, {"error": str(exc)})
         except (ValueError, RecursionError):

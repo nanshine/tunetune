@@ -1,9 +1,9 @@
 export type JsonObject = Record<string, unknown>;
 export type ResearchFile = { content: unknown; sha256: string };
 export type Snapshot = { files: Record<string, ResearchFile>; revision: string; synced_at: string; error: string | null };
-export type Experiment = { id: string; title: string; parent: string | null; state: string; updatedAt: string; configPath: string };
+export type Experiment = { id: string; title: string; parent: string | null; state: string; updatedAt: string; configPath: string; artifact: string };
 export type Assessment = { id: string; experimentId: string; version: string; state: string; metrics: Record<string, number>; metricLabels: Record<string, string>; path: string };
-export type FeedbackTarget = { kind: 'comment' | 'change' | 'response' | 'preference' | 'acceptance'; target: string | null; request_id?: string; sample_id?: string; title: string; options?: string[] };
+export type FeedbackTarget = { kind: 'comment' | 'change' | 'response' | 'preference' | 'acceptance'; target: string | null; request_id?: string; sample_id?: string; title: string; options?: string[]; choices?: { value: string; label: string }[]; context?: string };
 
 export function object(value: unknown): JsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
@@ -23,6 +23,11 @@ export function parseSnapshot(value: unknown): Snapshot {
     if (!/^[a-f0-9]{64}$/.test(text(file.sha256)) || !('content' in file)) throw new Error(`${path}：缺少内容或版本标识`);
     if (path.endsWith('.json') && (file.content === null || typeof file.content !== 'object' || Array.isArray(file.content))) throw new Error(`${path}：需要 JSON 对象`);
     if (path.endsWith('.jsonl') && (!Array.isArray(file.content) || file.content.some(row => row === null || typeof row !== 'object' || Array.isArray(row)))) throw new Error(`${path}：需要逐行 JSON 对象`);
+    const assessmentRecord = /^assessments\/[^/]+\/(status|result)\.json$/.exec(path);
+    if (assessmentRecord) {
+      const states = assessmentRecord[1] === 'status' ? ['pending', 'running'] : ['succeeded', 'failed', 'cancelled'];
+      if (!states.includes(text(object(file.content).state))) throw new Error(`${path}：state 必须为 ${states.join('/')}`);
+    }
   }
   const files = data.files as Snapshot['files'];
   if (Object.keys(files).length && document(files, 'project.json').schema_version !== 1) throw new Error('不支持此研究文件格式，请显式迁移后打开');
@@ -36,12 +41,17 @@ export function experiments(files: Snapshot['files']): Experiment[] {
   return collection(files, /^experiments\/[^/]+\/config\.json$/).map(([path, config]) => {
     const id = path.split('/')[1];
     const status = document(files, `experiments/${id}/status.json`);
-    return { id, title: text(config.title, id), parent: text(config.parent_experiment_id) || null, state: text(status.state, 'unknown'), updatedAt: text(status.updated_at), configPath: path };
+    const artifact = object(array(document(files, `experiments/${id}/artifacts.json`).items)[0]);
+    return { id, title: text(config.title, id), parent: text(config.parent_experiment_id) || null, state: text(status.state, 'unknown'), updatedAt: text(status.updated_at), configPath: path, artifact: text(artifact.id) };
   });
 }
 export function assessments(files: Snapshot['files']): Assessment[] {
   return collection(files, /^assessments\/[^/]+\/config\.json$/).map(([path, config]) => {
-    const result = document(files, path.replace('/config.json', '/result.json'));
+    const resultPath = path.replace('/config.json', '/result.json');
+    const result = document(files, resultPath);
+    const status = document(files, path.replace('/config.json', '/status.json'));
+    // Status is only the last recorded intent; a final result always takes precedence.
+    const state = files[resultPath] ? text(result.state, 'unknown') : text(status.state, 'pending');
     const rawMetrics = Object.fromEntries(Object.entries(object(result.metrics)).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1])));
     const version = text(config.evaluation_version, '未指定');
     const definitions = array(document(files, `evaluation/versions/${version}/definition.json`).metrics).map(object);
@@ -49,8 +59,14 @@ export function assessments(files: Snapshot['files']): Assessment[] {
     const order = [...new Set([...columns, ...definitions.map(metric => text(metric.id)), ...Object.keys(rawMetrics)])];
     const metrics = Object.fromEntries(order.filter(id => Object.hasOwn(rawMetrics, id)).map(id => [id, rawMetrics[id]]));
     const metricLabels = Object.fromEntries(definitions.map(metric => [text(metric.id), text(metric.label, text(metric.id))]));
-    return { id: path.split('/')[1], experimentId: text(config.experiment_id), version, state: text(result.state, 'unknown'), metrics, metricLabels, path };
+    return { id: path.split('/')[1], experimentId: text(config.experiment_id), version, state, metrics, metricLabels, path };
   });
+}
+
+export function resolvedFeedback(files: Snapshot['files']): Set<string> {
+  const records = collection(files, /^feedback\/handled\/[^/]+\.json$/).map(([, entry]) => entry);
+  return new Set(records.filter(entry => ['adopted', 'rejected'].includes(text(entry.disposition))
+    && records.filter(other => other.feedback_id === entry.feedback_id).length === 1).map(entry => text(entry.feedback_id)));
 }
 
 export function layout(items: Experiment[]): Map<string, { x: number; y: number }> {

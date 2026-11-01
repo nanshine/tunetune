@@ -9,9 +9,11 @@ import shutil
 import tarfile
 import tempfile
 
-VERSION = "0.2.0"
-TEMPLATES = ("AGENTS.md", "project.json", "goal.json", "resources.json", "candidates.json", "workspace.json")
-SKILLS = ("init", "build-evaluation", "train", "review")
+VERSION = "0.3.0"
+TEMPLATES = ("AGENTS.md", "research-contract.md", "project.json", "goal.json", "resources.json", "candidates.json", "workspace.json")
+SKILLS = ("research-workspace", "init", "build-evaluation", "train", "review")
+SKILL_RESOURCES = {"references": {".md", ".json"}, "scripts": {".py"}}
+EXCLUDED_SKILL_PARTS = {"evals", "notes", "reference", "__pycache__", "cache", "node_modules"}
 ASSET_SUFFIXES = {".html", ".js", ".css", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".woff", ".woff2", ".ttf"}
 
 
@@ -21,9 +23,32 @@ def checked_file(path):
     return path
 
 
+def collect_skills(source):
+    inputs = {}
+    for relative in ("references/records.md", "references/tools.md", "scripts/records.py"):
+        checked_file(source / "skills/research-workspace" / relative)
+    for name in SKILLS:
+        root = source / "skills" / name
+        inputs[f"skills/{name}/SKILL.md"] = checked_file(root / "SKILL.md")
+        for path in sorted(root.rglob("*")):
+            # Reject links even in excluded trees; never follow them into other inputs.
+            if path.is_symlink():
+                raise ValueError(f"Skill symlink is not allowed: {path}")
+            relative = path.relative_to(root)
+            if (path.is_dir() or len(relative.parts) < 2
+                    or any(part.startswith(".") or part in EXCLUDED_SKILL_PARTS for part in relative.parts)
+                    or path.suffix not in SKILL_RESOURCES.get(relative.parts[0], set())):
+                continue
+            inputs[f"skills/{name}/{relative.as_posix()}"] = checked_file(path)
+    return inputs
+
+
 def build(source, output):
     source, output = Path(os.path.abspath(source)), Path(os.path.abspath(output))
-    inputs = {f"template/{name}": checked_file(source / "templates/workspace" / name) for name in TEMPLATES}
+    # The base skill owns the contract; there is no second template source to maintain.
+    inputs = {f"template/{name}": checked_file(
+        source / "skills/research-workspace/references/records.md" if name == "research-contract.md"
+        else source / "templates/workspace" / name) for name in TEMPLATES}
     inputs["workspace/workspace.py"] = checked_file(source / "workspace/workspace.py")
     inputs["install-workspace.py"] = checked_file(source / "scripts/install-workspace.py")
     assets = source / "workspace/dist"
@@ -37,7 +62,7 @@ def build(source, output):
         if path.suffix.lower() not in ASSET_SUFFIXES or any(part.startswith(".") for part in path.relative_to(assets).parts):
             raise ValueError(f"Unexpected built asset (sources and maps are not distributed): {path}")
         inputs["workspace/assets/" + path.relative_to(assets).as_posix()] = path
-    skill_inputs = {f"skills/{name}/SKILL.md": checked_file(source / "skills" / name / "SKILL.md") for name in SKILLS}
+    skill_inputs = collect_skills(source)
     name = f"workspace-kit-{VERSION}"
     targets = (output / name, output / f"{name}.tar.gz", output / f"skills-{VERSION}.tar.gz")
     for path in (output, *output.parents, *targets):

@@ -83,6 +83,12 @@ class WorkspaceTests(unittest.TestCase):
     def post(self, body, **kwargs):
         return self.request("POST", "/api/feedback", body, **kwargs)
 
+    def rename(self, body, **kwargs):
+        return self.request("POST", "/api/project/name", body, **kwargs)
+
+    def rename_body(self, name="Renamed"):
+        return {"name": name, "expected_sha256": self.binding("project.json")["target_sha256"]}
+
     def binding(self, path):
         return {"target": path, "target_sha256": hashlib.sha256((self.root / path).read_bytes()).hexdigest()}
 
@@ -144,15 +150,84 @@ class WorkspaceTests(unittest.TestCase):
                 written.unlink()
         self.assertIsNone(self.state()["error"])
 
-    def test_incomplete_experiments_and_assessments(self):
-        for directory, final in (("experiments/e", "status.json"), ("assessments/a", "result.json")):
-            good = self.state()
-            self.write(f"{directory}/config.json", {})
-            result = self.state()
-            self.assertIn(final, result["error"])
-            self.assertEqual(result["files"], good["files"])
-            self.write(f"{directory}/{final}", {})
-            self.assertIsNone(self.state()["error"])
+    def test_incomplete_experiments_retain_snapshot(self):
+        good = self.state()
+        self.write("experiments/e/config.json", {})
+        result = self.state()
+        self.assertIn("experiments/e/status.json", result["error"])
+        for key in ("files", "revision", "synced_at"):
+            self.assertEqual(result[key], good[key])
+        self.write("experiments/e/status.json", {})
+        self.assertIsNone(self.state()["error"])
+
+    def test_assessments_without_results_allow_other_refreshes(self):
+        previous = self.state()
+        config = {"experiment_id": "e", "evaluation_version": "v1"}
+        self.server.reader.tree.publish("assessments/a/config.json", config)
+        config_only = self.state()
+        self.assertIsNone(config_only["error"])
+        self.assertNotEqual(config_only["revision"], previous["revision"])
+        self.assertEqual(config_only["files"]["assessments/a/config.json"]["content"], config)
+        previous = config_only
+        for state, training_state in ((None, "pending"), ("pending", "running"), ("running", "succeeded")):
+            with self.subTest(state=state):
+                if state is not None:
+                    self.write("assessments/a/status.json", {"state": state})
+                goal = {"examples": [{"id": training_state}]}
+                self.write("goal.json", goal)
+                self.write("experiments/e/config.json", {})
+                self.write("experiments/e/status.json", {"state": training_state})
+                fresh = self.state()
+                self.assertIsNone(fresh["error"])
+                self.assertNotEqual(fresh["revision"], previous["revision"])
+                self.assertNotIn("assessments/a/result.json", fresh["files"])
+                if state is not None:
+                    self.assertEqual(fresh["files"]["assessments/a/status.json"]["content"]["state"], state)
+                self.assertEqual(fresh["files"]["goal.json"]["content"], goal)
+                self.assertEqual(fresh["files"]["experiments/e/status.json"]["content"]["state"], training_state)
+                previous = fresh
+
+    def test_assessment_results_allow_stale_running_status(self):
+        for state in ("failed", "succeeded", "cancelled"):
+            with self.subTest(state=state):
+                directory = f"assessments/{state}"
+                self.write(f"{directory}/config.json", {"experiment_id": "e"})
+                self.write(f"{directory}/status.json", {"state": "running"})
+                before = self.state()
+                self.assertIsNone(before["error"])
+                result = {"state": state, "metrics": {"accuracy": 0.9} if state == "succeeded" else {}}
+                self.server.reader.tree.publish(f"{directory}/result.json", result)
+                fresh = self.state()
+                self.assertIsNone(fresh["error"])
+                self.assertNotEqual(fresh["revision"], before["revision"])
+                self.assertEqual(fresh["files"][f"{directory}/result.json"]["content"], result)
+                self.assertEqual(fresh["files"][f"{directory}/status.json"], before["files"][f"{directory}/status.json"])
+
+    def test_bad_assessment_records_retain_snapshot_and_recover(self):
+        self.write("assessments/a/config.json", {})
+        records = (("status.json", {"state": "running"}, ("succeeded", "failed", "cancelled")),
+                   ("result.json", {"state": "succeeded", "metrics": {"accuracy": 0.9}}, ("pending", "running")))
+        for filename, valid, _ in records:
+            self.write(f"assessments/a/{filename}", valid)
+        for filename, valid, invalid_states in records:
+            path = f"assessments/a/{filename}"
+            malformed = ([], "null", '{"state":', {}, {"state": None}, {"state": True},
+                         {"state": 1}, {"state": []}, {"state": {}}, {"state": "unknown"})
+            for index, content in enumerate((*malformed, *({"state": state} for state in invalid_states))):
+                with self.subTest(path=path, content=content):
+                    good = self.state()
+                    self.assertIsNone(good["error"])
+                    self.write(path, content)
+                    goal = {"examples": [{"id": f"{filename}-{index}"}]}
+                    self.write("goal.json", goal)
+                    bad = self.state()
+                    self.assertIn(path, bad["error"])
+                    for key in ("files", "revision", "synced_at"):
+                        self.assertEqual(bad[key], good[key])
+                    self.write(path, valid)
+                    recovered = self.state()
+                    self.assertIsNone(recovered["error"])
+                    self.assertEqual(recovered["files"]["goal.json"]["content"], goal)
 
     def test_allowlist_jsonl_markdown_and_log_preview(self):
         for pattern in wb.PATTERNS:
@@ -161,6 +236,10 @@ class WorkspaceTests(unittest.TestCase):
                 continue
             content = "{\"id\":1}\n\n{\"id\":2}\n" if path.endswith(".jsonl") else (
                 "hello" if path.endswith((".md", ".log")) else {})
+            if path == "assessments/one/status.json":
+                content = {"state": "running"}
+            elif path == "assessments/one/result.json":
+                content = {"state": "succeeded", "metrics": {}}
             self.write(path, content)
         self.write("code/private.json", {"secret": True})
         self.write("experiments/one/snapshot/source.json", {"secret": True})
@@ -187,6 +266,266 @@ class WorkspaceTests(unittest.TestCase):
             self.assertTrue(self.state()["error"])
         self.write("review.md", "x" * (wb.MAX_FILE_BYTES + 1))
         self.assertTrue(self.state()["error"])
+
+    def test_project_name_persists_and_preserves_other_fields(self):
+        project = {"schema_version": 1, "name": "First", "language": "zh",
+                   "current_evaluation": "v2", "custom": {"values": [1, False, None, "研究"]}}
+        self.write("project.json", project)
+        goal = self.write("goal.json", {"examples": []})
+        goal_before = goal.read_bytes()
+        before = self.state()
+        status, saved, _ = self.rename(self.rename_body("  New name  "))
+        self.assertEqual(status, 200)
+        raw = (self.root / "project.json").read_bytes()
+        self.assertEqual(saved, {"name": "New name", "sha256": hashlib.sha256(raw).hexdigest()})
+        self.assertEqual(json.loads(raw), dict(project, name="New name"))
+        fresh = self.state()
+        self.assertIsNone(fresh["error"])
+        self.assertNotEqual(fresh["revision"], before["revision"])
+        self.assertEqual(fresh["files"]["project.json"], {"content": dict(project, name="New name"),
+                                                        "sha256": saved["sha256"]})
+        self.assertEqual(wb.Reader(self.root).snapshot()["files"], fresh["files"])
+        self.assertEqual(goal.read_bytes(), goal_before)
+        self.assertFalse((self.root / "feedback").exists())
+        self.assertEqual(list(self.root.glob(".pending-*")), [])
+
+    def test_project_name_trims_unicode_and_counts_codepoints(self):
+        for name in ("研究 Café", "e\u0301" * 60, "\U00020000" * 120):
+            with self.subTest(name=name):
+                status, saved, _ = self.rename(self.rename_body(" \u3000" + name + "\u00a0 "))
+                self.assertEqual(status, 200)
+                self.assertEqual(saved["name"], name)
+                self.assertEqual(json.loads((self.root / "project.json").read_bytes())["name"], name)
+
+    def test_project_name_validation(self):
+        before = (self.root / "project.json").read_bytes()
+        body = self.rename_body()
+        invalid = [None, False, 1, [], {}, "", " \u3000\u00a0", "x" * 121,
+                   "\U00020000" * 121, "e\u0301" * 60 + "e", "\ud800", "\udfff", "\nName", "Name\t"]
+        invalid.extend("a" + chr(code) + "b" for code in (*range(32), *range(127, 160)))
+        for name in invalid:
+            with self.subTest(name=name):
+                self.assertEqual(self.rename(dict(body, name=name))[0], 400)
+        for digest in (None, False, 1, [], {}, "", "0" * 63, "0" * 65, "A" * 64, "g" * 64, "0" * 64 + "\n"):
+            with self.subTest(digest=digest):
+                self.assertEqual(self.rename(dict(body, expected_sha256=digest))[0], 400)
+        for invalid_body in ({}, {"name": "Name"}, {"expected_sha256": body["expected_sha256"]},
+                             dict(body, path="project.json"), dict(body, schema_version=2),
+                             b"[]", b"null", b"{broken", b'{"name":"a","name":"b"}',
+                             b'{"name":NaN}', b'"\xff"'):
+            with self.subTest(body=invalid_body):
+                self.assertEqual(self.rename(invalid_body)[0], 400)
+        self.assertEqual((self.root / "project.json").read_bytes(), before)
+        self.assertFalse((self.root / ".workspace").exists())
+
+    def test_project_name_stale_hash_checks_disk_and_recovers(self):
+        body = self.rename_body()
+        self.state()
+        path = self.write("project.json", {"schema_version": 1, "name": "Agent edit", "language": "en"})
+        before = path.read_bytes()
+        self.assertEqual(self.rename(body)[0], 409)
+        self.assertEqual(path.read_bytes(), before)
+        body = self.rename_body()
+        self.assertEqual(self.rename(body)[0], 200)
+        self.assertEqual(json.loads(path.read_bytes())["language"], "en")
+        self.assertEqual(self.rename(body)[0], 409)
+        path.unlink()
+        self.assertEqual(self.rename(body)[0], 409)
+        self.assertFalse(path.exists())
+        self.assertEqual(list(self.root.glob(".pending-*")), [])
+
+    def test_project_name_requires_valid_current_schema_and_file_limits(self):
+        for project in ({}, {"schema_version": True}, {"schema_version": 1.0}, {"schema_version": 2},
+                        [], "null", '{"schema_version":', '{"schema_version":1,"schema_version":1}',
+                        '{"schema_version":1,"custom":1e999}'):
+            with self.subTest(project=project):
+                path = self.write("project.json", project)
+                before = path.read_bytes()
+                self.assertEqual(self.rename(self.rename_body())[0], 409)
+                self.assertEqual(path.read_bytes(), before)
+        for project, limit in (({"schema_version": 1, "name": "First"}, 64),
+                               ({"schema_version": 1, "custom": "x" * 128}, 64)):
+            with self.subTest(project=project):
+                path = self.write("project.json", project)
+                before = path.read_bytes()
+                with patch.object(wb, "MAX_FILE_BYTES", limit):
+                    self.assertEqual(self.rename(self.rename_body("研" * 120))[0], 409)
+                self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(list(self.root.glob(".pending-*")), [])
+
+    def test_project_name_cooperates_with_canonical_records_lock(self):
+        source = SOURCE.parents[1] / "skills" / "research-workspace" / "scripts" / "records.py"
+        spec = importlib.util.spec_from_file_location("canonical_records", source)
+        records = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(records)
+        tree = records.Tree(self.root.resolve())
+        self.addCleanup(tree.close)
+        lock = self.write(".workspace/runtime/records.lock", "keep this lock inode")
+        before = (self.root / "project.json").read_bytes()
+        body = self.rename_body()
+        with tree.locked():
+            self.assertEqual(self.rename(body)[0], 409)
+            self.assertEqual((self.root / "project.json").read_bytes(), before)
+        replace = os.replace
+        def check_lock(*args, **kwargs):
+            with self.assertRaises(BlockingIOError):
+                with tree.locked():
+                    self.fail("Canonical writer acquired the name writer's lock")
+            return replace(*args, **kwargs)
+        with patch.object(wb.os, "replace", side_effect=check_lock):
+            self.assertEqual(self.rename(body)[0], 200)
+        self.assertEqual(lock.read_text(), "keep this lock inode")
+        with tree.locked():
+            pass
+
+    def test_project_name_atomic_replace_and_independent_reader_contention(self):
+        before = (self.root / "project.json").read_bytes()
+        body = self.rename_body()
+        other = wb.Reader(self.root)
+        replace = os.replace
+        def check_replace(source, destination, **kwargs):
+            self.assertTrue(source.startswith(".pending-"))
+            self.assertEqual(destination, "project.json")
+            self.assertEqual(kwargs["src_dir_fd"], kwargs["dst_dir_fd"])
+            self.assertEqual((self.root / "project.json").read_bytes(), before)
+            self.assertEqual(sync.call_count, 1)
+            with self.assertRaises(wb.FeedbackError) as error:
+                wb.save_project_name(other, body)
+            self.assertEqual(error.exception.status, 409)
+            return replace(source, destination, **kwargs)
+        with (self.root / "project.json").open("rb") as old:
+            with patch.object(wb.os, "fsync", wraps=os.fsync) as sync:
+                with patch.object(wb.os, "replace", side_effect=check_replace):
+                    self.assertEqual(self.rename(body)[0], 200)
+                self.assertEqual(sync.call_count, 2)
+            self.assertEqual(old.read(), before)
+        self.assertEqual(list(self.root.glob(".pending-*")), [])
+        saved = wb.save_project_name(other, self.rename_body("Second rename"))
+        self.assertEqual(saved["name"], "Second rename")
+
+    def test_project_name_uses_reader_lock(self):
+        with patch.object(self.server.reader, "lock", wraps=self.server.reader.lock) as lock:
+            self.assertEqual(self.rename(self.rename_body())[0], 200)
+            lock.__enter__.assert_called_once()
+            lock.__exit__.assert_called_once()
+
+    def test_project_name_failed_publication_cleans_up_and_unlocks(self):
+        before = (self.root / "project.json").read_bytes()
+        body = self.rename_body()
+        for operation in ("fsync", "replace"):
+            with self.subTest(operation=operation):
+                with patch.object(wb.os, operation, side_effect=OSError("Cannot publish")):
+                    self.assertEqual(self.rename(body)[0], 409)
+                self.assertEqual((self.root / "project.json").read_bytes(), before)
+                self.assertEqual(list(self.root.glob(".pending-*")), [])
+        self.assertEqual(self.rename(body)[0], 200)
+
+    def test_project_name_symlink_and_nonregular_file_protection(self):
+        body = self.rename_body()
+        outside = self.write("outside.json", {"schema_version": 1, "name": "Outside"}, root=self.base)
+        before = outside.read_bytes()
+        path = self.root / "project.json"
+        path.unlink()
+        for target in (outside, self.base / "missing.json"):
+            with self.subTest(target=target):
+                path.symlink_to(target)
+                self.assertEqual(self.rename(body)[0], 409)
+                self.assertTrue(path.is_symlink())
+                path.unlink()
+        os.mkfifo(path)
+        self.assertEqual(self.rename(body)[0], 409)
+        path.unlink()
+        path.mkdir()
+        self.assertEqual(self.rename(body)[0], 409)
+        path.rmdir()
+        self.write("project.json", {"schema_version": 1, "name": "First"})
+        linked_root = self.base / "linked-project"
+        linked_root.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises(wb.FeedbackError) as error:
+            wb.save_project_name(wb.Reader(linked_root), body)
+        self.assertEqual(error.exception.status, 409)
+        self.assertEqual(outside.read_bytes(), before)
+        self.assertFalse((self.base / "missing.json").exists())
+
+    def test_project_name_lock_symlinks_and_nonregular_files(self):
+        body = self.rename_body()
+        before = (self.root / "project.json").read_bytes()
+        outside = self.base / "outside"
+        outside.mkdir()
+        sentinel = self.write("records.lock", "outside lock", root=outside)
+        for relative, target in ((".workspace", outside), (".workspace/runtime", outside),
+                                 (".workspace/runtime/records.lock", sentinel),
+                                 (".workspace/runtime/records.lock", outside / "missing")):
+            with self.subTest(relative=relative, target=target):
+                path = self.root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.symlink_to(target)
+                self.assertEqual(self.rename(body)[0], 409)
+                self.assertTrue(path.is_symlink())
+                path.unlink()
+        lock = self.root / ".workspace/runtime/records.lock"
+        os.mkfifo(lock)
+        self.assertEqual(self.rename(body)[0], 409)
+        lock.unlink()
+        lock.mkdir()
+        self.assertEqual(self.rename(body)[0], 409)
+        self.assertEqual((self.root / "project.json").read_bytes(), before)
+        self.assertEqual(sentinel.read_text(), "outside lock")
+        self.assertEqual(list(outside.iterdir()), [sentinel])
+        self.assertEqual(list(self.root.glob(".pending-*")), [])
+
+    def test_project_name_rechecks_destination_before_replace(self):
+        body = self.rename_body()
+        path = self.root / "project.json"
+        outside = self.write("outside.json", {"schema_version": 1, "name": "Outside"}, root=self.base)
+        before = outside.read_bytes()
+        fsync = os.fsync
+        def swap_destination(fd):
+            path.unlink()
+            path.symlink_to(outside)
+            return fsync(fd)
+        with patch.object(wb.os, "fsync", side_effect=swap_destination):
+            self.assertEqual(self.rename(body)[0], 409)
+        self.assertTrue(path.is_symlink())
+        self.assertEqual(outside.read_bytes(), before)
+        self.assertEqual(list(self.root.glob(".pending-*")), [])
+
+    def test_project_name_host_origin_and_request_limits(self):
+        body = self.rename_body()
+        before = (self.root / "project.json").read_bytes()
+        for host in ("evil.example", "127.0.0.1", "127.0.0.1:1"):
+            self.assertEqual(self.rename(body, headers={"Host": host})[0], 403)
+        for origin in ("", "null", "http://evil.example", f"http://localhost:{self.port}", self.origin + "/"):
+            self.assertEqual(self.rename(body, headers={"Origin": origin})[0], 403)
+        self.assertEqual(self.rename(body, headers={"Content-Type": "text/plain"})[0], 415)
+        self.assertEqual(self.rename(body, headers={"Transfer-Encoding": "chunked"})[0], 400)
+        self.assertEqual(self.rename(b"x" * (wb.MAX_BODY_BYTES + 1))[0], 413)
+        base = f"POST /api/project/name HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nContent-Type: application/json\r\n"
+        self.assertEqual(self.raw_request(base + "Content-Length: 2\r\n\r\n{}"), 403)
+        base += f"Origin: {self.origin}\r\n"
+        for headers, status in (("", 411), ("Content-Length: 2\r\nContent-Length: 2\r\n", 411),
+                                ("Content-Length: 0\r\n", 413), ("Content-Length: 3\r\n", 400),
+                                (f"Origin: {self.origin}\r\nContent-Length: 2\r\n", 403)):
+            self.assertEqual(self.raw_request(base + headers + "\r\n{}"), status)
+        for path in ("/api/project", "/api/project/name/", "/api/project/name?other=1"):
+            self.assertEqual(self.request("POST", path, body)[0], 404)
+        self.assertEqual(self.request(path="/api/project/name")[0], 404)
+        self.assertEqual((self.root / "project.json").read_bytes(), before)
+        self.assertEqual(self.rename(body, headers={"Host": f"localhost:{self.port}",
+                                                    "Origin": f"http://localhost:{self.port}"})[0], 200)
+
+    def test_project_name_keeps_feedback_immutable_and_hash_bound(self):
+        body = self.feedback(**self.binding("project.json"))
+        status, saved, _ = self.post(body)
+        self.assertEqual(status, 201)
+        path = self.root / f"feedback/incoming/{body['id']}.json"
+        before = path.read_bytes()
+        self.assertEqual(self.rename(self.rename_body())[0], 200)
+        self.assertEqual(self.post(body)[:2], (200, saved))
+        self.assertEqual(self.post(dict(body, id=str(uuid.uuid4())))[0], 409)
+        self.assertEqual(self.post(self.feedback(**self.binding("project.json")))[0], 201)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(json.loads((self.root / "project.json").read_bytes())["name"], "Renamed")
 
     def test_feedback_immutable_idempotency_and_business_unchanged(self):
         before = (self.root / "project.json").read_bytes()

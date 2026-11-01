@@ -1,0 +1,29 @@
+{
+  "skill_name": "research-workspace",
+  "evals": [
+    {
+      "id": 1,
+      "name": "existing-goal",
+      "prompt": "这是已有研究目录 project。只把目标的期望结果改为：得到一个可在本地批量处理文本的分类器。保留情境、例子和资源，不安装或升级界面，不构建评测，不训练。请实际保存修订，并简述结果。",
+      "expected_output": "目标修订递增且旧版本保留，不要求kit，不改其他业务内容。",
+      "files": [],
+      "expectations": ["goal revision 增加一且期望结果正确", "旧 goal 原始字节保存到 history", "资源与项目配置不变且不新增实验"]
+    },
+    {
+      "id": 2,
+      "name": "assessment-retry",
+      "prompt": "project 中训练 e1 已成功，a1 评测因错误失败且进程已经结束。请用已经发布的 v1 评测只重测现有 m1 产物一次，不训练，不改评测、不发布。评测接口说明在 v1/interface.md，请实际运行并保留结果。",
+      "expected_output": "新 assessment 使用实际脚本及产物摘要，有真实输出和分数；训练、旧评测、v1 不变。",
+      "files": [],
+      "expectations": ["只新增一次成功assessment且真实输出正确", "训练目录和失败a1原始字节不变", "固定v1与产物哈希且未发布未重训"]
+    },
+    {
+      "id": 3,
+      "name": "stale-feedback",
+      "prompt": "请复盘 project 并读取所有还需跟进的反馈，保留我的已有候选方向，只记录分析与处理意见。目标已调整为离线分类；f1 基于旧目标要求部署云服务，此前被暂缓。我这次没有授权训练、发布、部署或修改目标。",
+      "expected_output": "识别过时且暂缓仍需跟进，不执行云部署，保留原答与候选，生成review及解释。",
+      "files": [],
+      "expectations": ["review指出过时反馈与处理意见，必要时说明待澄清事项", "原答与旧handled和目标保持原始字节", "保留已有候选且没有训练发布部署"]
+    }
+  ]
+}

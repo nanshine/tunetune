@@ -9,8 +9,8 @@ import re
 import stat
 import tempfile
 
-VERSION = "0.2.0"
-TEMPLATES = ("AGENTS.md", "project.json", "goal.json", "resources.json", "candidates.json", "workspace.json")
+VERSION = "0.3.0"
+TEMPLATES = ("AGENTS.md", "research-contract.md", "project.json", "goal.json", "resources.json", "candidates.json", "workspace.json")
 BUSINESS_DIRS = ("evaluation", "experiments", "assessments", "releases", "acceptance", "feedback", "history", ".workspace")
 
 

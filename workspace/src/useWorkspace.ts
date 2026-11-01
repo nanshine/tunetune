@@ -26,5 +26,24 @@ export function useWorkspace() {
     void refresh();
     return () => { controller.abort(); clearTimeout(timer); };
   }, []);
-  return { snapshot, connectionError };
+  async function renameProject(name: string, expectedSha256: string) {
+    const response = await fetch('/api/project/name', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, expected_sha256: expectedSha256 }),
+    });
+    if (!response.ok) {
+      if (response.status === 409) throw new Error('项目记录已变更或正在写入，请取消后重新编辑。');
+      throw new Error(`名称保存失败（HTTP ${response.status}），请重试。`);
+    }
+    const saved: { name: string; sha256: string } = await response.json();
+    setSnapshot(previous => previous ? {
+      ...previous,
+      files: { ...previous.files, 'project.json': {
+        content: { ...(previous.files['project.json'].content as Record<string, unknown>), name: saved.name },
+        sha256: saved.sha256,
+      } },
+    } : previous);
+  }
+  return { snapshot, connectionError, renameProject };
 }
