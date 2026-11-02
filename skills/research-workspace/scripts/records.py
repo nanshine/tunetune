@@ -189,7 +189,7 @@ def shape(path, data):
     leaf = path.split("/")[-1]
     fields = {
         "project.json": ("schema_version", "name", "language", "current_evaluation"),
-        "goal.json": ("revision", "context", "expected_result", "examples", "sources"),
+        "goal.json": ("revision", "summary", "sections", "examples"),
         "resources.json": ("items",), "candidates.json": ("items",),
         "workspace.json": ("title", "metric_columns"),
         "definition.json": ("version", "description", "metrics", "datasets"),
@@ -209,10 +209,10 @@ def shape(path, data):
             "handled": ("id", "feedback_id", "disposition", "reason", "changes"),
         }[path.split("/")[1]]
     require(all(key in obj for key in fields), f"Missing required fields: {', '.join(fields)}")
-    for key in ("items", "examples", "sources", "datasets", "options", "changes", "metric_columns", "assessment_ids", "release_ids"):
+    for key in ("items", "examples", "sections", "sources", "datasets", "options", "changes", "metric_columns", "assessment_ids", "release_ids"):
         if key in obj:
             require(isinstance(obj[key], list), f"{key} must be an array")
-    for key in ("name", "language", "title", "description", "context", "expected_result", "prompt", "text", "reason", "notes"):
+    for key in ("name", "language", "title", "description", "summary", "proposal", "context", "expected_result", "prompt", "text", "reason", "notes"):
         if key in obj:
             require(isinstance(obj[key], str), f"{key} must be text")
     for key in ("id", "experiment_id", "artifact_id", "evaluation_version", "feedback_id", "request_id", "parent_experiment_id", "current_evaluation"):
@@ -221,6 +221,32 @@ def shape(path, data):
     if "id" in obj:
         expected = path.split("/")[-2] if leaf == "config.json" else Path(path).stem
         require(obj["id"] == expected, "ID does not match path")
+    if path == "goal.json":
+        require(all(isinstance(section, dict) and isinstance(section.get("title"), str)
+                    and isinstance(section.get("body"), str) for section in obj["sections"]), "Invalid goal section")
+        ids = []
+        for example in obj["examples"]:
+            require(isinstance(example, dict) and isinstance(example.get("id"), str)
+                    and re.fullmatch(ID, example["id"]), "Invalid goal example ID")
+            require(all(isinstance(example.get(key, ""), str) for key in ("title", "input", "expected_output", "source")), "Invalid example text")
+            ids.append(example["id"])
+        require(len(ids) == len(set(ids)), "Duplicate example ID")
+    if path == "resources.json":
+        ids = []
+        for item in obj["items"]:
+            require(isinstance(item, dict) and isinstance(item.get("id"), str) and re.fullmatch(ID, item["id"]), "Invalid resource ID")
+            require(all(isinstance(item.get(key), str) and item[key].strip() for key in ("title", "type", "purpose")), "Invalid resource description")
+            require(item.get("status") in ("unknown", "available", "preparing", "ready", "unavailable"), "Invalid resource status")
+            for key in ("source", "path", "location", "notes", "version"):
+                require(key not in item or isinstance(item[key], str), "Invalid resource detail")
+            if "checked_at" in item:
+                timestamp(item["checked_at"])
+            ids.append(item["id"])
+        require(len(ids) == len(set(ids)), "Duplicate resource ID")
+    if path == "workspace.json" and "presentation" in obj:
+        presentation = obj["presentation"]
+        require(isinstance(presentation, dict) and isinstance(presentation.get("id"), str)
+                and bool(presentation["id"]) and presentation.get("panel") in ("goal", "resources"), "Invalid presentation request")
     if path == "project.json":
         require(type(obj["schema_version"]) is int and obj["schema_version"] == 1, "Unsupported schema_version")
     for key in ("revision", "goal_revision"):

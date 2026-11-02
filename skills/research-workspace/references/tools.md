@@ -15,6 +15,8 @@ validate 输出 JSON：`valid/errors/warnings/unfinished/unhandled_feedback`。e
 
 ## 排他创建与条件更新
 
+面板只读（直接编辑项目名称除外）不取消 Agent 的文件工具写入能力。历史反馈继续校验、读取并按协议追加处理记录；Agent 可按会话保存必要决策证据，来源与依据绑定遵循 [反馈生命周期](records.md#反馈生命周期)，不以写入代替用户授权或要求用户在面板提交。
+
 先将完整记录准备在项目外的临时输入文件中，再发布：
 
 ```sh

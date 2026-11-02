@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package explicit workspace inputs and prebuilt assets; never run npm or install skills."""
+"""Package explicit workspace inputs and prebuilt assets; bundle skills without running npm."""
 import argparse
 import hashlib
 import json
@@ -11,7 +11,7 @@ import tempfile
 
 VERSION = "0.3.0"
 TEMPLATES = ("AGENTS.md", "research-contract.md", "project.json", "goal.json", "resources.json", "candidates.json", "workspace.json")
-SKILLS = ("research-workspace", "init", "build-evaluation", "train", "review")
+SKILLS = ("research-workspace", "tunetune-init", "build-evaluation", "train", "review")
 SKILL_RESOURCES = {"references": {".md", ".json"}, "scripts": {".py"}}
 EXCLUDED_SKILL_PARTS = {"evals", "notes", "reference", "__pycache__", "cache", "node_modules"}
 ASSET_SUFFIXES = {".html", ".js", ".css", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".woff", ".woff2", ".ttf"}
@@ -63,8 +63,9 @@ def build(source, output):
             raise ValueError(f"Unexpected built asset (sources and maps are not distributed): {path}")
         inputs["workspace/assets/" + path.relative_to(assets).as_posix()] = path
     skill_inputs = collect_skills(source)
+    inputs.update(skill_inputs)
     name = f"workspace-kit-{VERSION}"
-    targets = (output / name, output / f"{name}.tar.gz", output / f"skills-{VERSION}.tar.gz")
+    targets = (output / name, output / f"{name}.tar.gz")
     for path in (output, *output.parents, *targets):
         if path.is_symlink():
             raise ValueError(f"Symlink output is not allowed: {path}")
@@ -84,13 +85,9 @@ def build(source, output):
         (kit / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         with tarfile.open(stage / f"{name}.tar.gz", "w:gz") as archive:
             archive.add(kit, arcname=name)
-        with tarfile.open(stage / f"skills-{VERSION}.tar.gz", "w:gz") as archive:
-            for relative, path in skill_inputs.items():
-                archive.add(path, arcname=relative, recursive=False)
         # Output publication assumes one builder per output directory.
         kit.rename(targets[0])
         os.link(stage / f"{name}.tar.gz", targets[1])
-        os.link(stage / f"skills-{VERSION}.tar.gz", targets[2])
     return targets
 
 

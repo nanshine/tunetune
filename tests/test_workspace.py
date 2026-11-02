@@ -389,7 +389,7 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(kwargs["src_dir_fd"], kwargs["dst_dir_fd"])
             self.assertEqual((self.root / "project.json").read_bytes(), before)
             self.assertEqual(sync.call_count, 1)
-            with self.assertRaises(wb.FeedbackError) as error:
+            with self.assertRaises(wb.RequestError) as error:
                 wb.save_project_name(other, body)
             self.assertEqual(error.exception.status, 409)
             return replace(source, destination, **kwargs)
@@ -441,7 +441,7 @@ class WorkspaceTests(unittest.TestCase):
         self.write("project.json", {"schema_version": 1, "name": "First"})
         linked_root = self.base / "linked-project"
         linked_root.symlink_to(self.root, target_is_directory=True)
-        with self.assertRaises(wb.FeedbackError) as error:
+        with self.assertRaises(wb.RequestError) as error:
             wb.save_project_name(wb.Reader(linked_root), body)
         self.assertEqual(error.exception.status, 409)
         self.assertEqual(outside.read_bytes(), before)
@@ -514,114 +514,101 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.rename(body, headers={"Host": f"localhost:{self.port}",
                                                     "Origin": f"http://localhost:{self.port}"})[0], 200)
 
-    def test_project_name_keeps_feedback_immutable_and_hash_bound(self):
+    def test_project_name_preserves_historical_feedback_and_original_binding(self):
         body = self.feedback(**self.binding("project.json"))
-        status, saved, _ = self.post(body)
-        self.assertEqual(status, 201)
-        path = self.root / f"feedback/incoming/{body['id']}.json"
+        saved = dict(body, source="workspace", created_at="2026-01-01T00:00:00Z")
+        relative = f"feedback/incoming/{body['id']}.json"
+        path = self.write(relative, saved)
         before = path.read_bytes()
         self.assertEqual(self.rename(self.rename_body())[0], 200)
-        self.assertEqual(self.post(body)[:2], (200, saved))
-        self.assertEqual(self.post(dict(body, id=str(uuid.uuid4())))[0], 409)
-        self.assertEqual(self.post(self.feedback(**self.binding("project.json")))[0], 201)
+        fresh = self.state()
+        self.assertIsNone(fresh["error"])
+        self.assertEqual(fresh["files"][relative]["content"], saved)
+        self.assertNotEqual(saved["target_sha256"], fresh["files"]["project.json"]["sha256"])
+        self.assertEqual(self.post(body)[0], 404)
         self.assertEqual(path.read_bytes(), before)
-        self.assertEqual(json.loads((self.root / "project.json").read_bytes())["name"], "Renamed")
+        self.assertEqual(fresh["files"]["project.json"]["content"]["name"], "Renamed")
 
-    def test_feedback_immutable_idempotency_and_business_unchanged(self):
-        before = (self.root / "project.json").read_bytes()
-        body = self.feedback(**self.binding("project.json"))
-        status, saved, _ = self.post(body)
-        self.assertEqual(status, 201)
-        self.assertEqual(saved["source"], "workspace")
-        self.assertIn("created_at", saved)
-        path = self.root / f"feedback/incoming/{body['id']}.json"
-        self.assertEqual(json.loads(path.read_text()), saved)
-        self.assertEqual(self.post(body)[:2], (200, saved))
-        self.assertEqual(self.post(dict(body, text="Changed"))[0], 409)
-        self.assertEqual((self.root / "project.json").read_bytes(), before)
-        self.assertEqual(list(path.parent.glob(".pending-*")), [])
-        self.assertIn(str(path.relative_to(self.root)), self.state()["files"])
-
-    def test_stale_hash_validated_against_disk_without_polling(self):
-        body = self.feedback(**self.binding("project.json"))
-        self.state()
-        self.write("project.json", {"schema_version": 1, "name": "changed"})
-        self.assertEqual(self.post(body)[0], 409)
-        self.assertFalse((self.root / "feedback").exists())
-        self.assertEqual(self.post(self.feedback(target="goal.json", target_sha256="0" * 64))[0], 409)
-
-    def test_response_binding_options_closed_handled_and_retry(self):
-        request_id = "question-1"
-        path = f"feedback/requests/{request_id}.json"
-        self.write(path, {"id": request_id, "options": ["yes", {"id": "no"}]})
-        body = self.feedback(kind="response", request_id=request_id, choice="yes", sample_id="sample-1", **self.binding(path))
-        self.assertEqual(self.post(dict(body, request_id="wrong"))[0], 400)
-        self.assertEqual(self.post(dict(body, choice="maybe"))[0], 400)
-        self.assertEqual(self.post(body)[0], 201)
-        self.assertTrue((self.root / f"feedback/responses/{body['id']}.json").is_file())
-        self.write("feedback/handled/record.json", {"feedback_id": body["id"]})
-        self.assertEqual(self.post(dict(body, id=str(uuid.uuid4())))[0], 409)
-        self.assertEqual(self.post(body)[0], 200)
-        (self.root / "feedback/handled/record.json").unlink()
-        self.write(path, {"id": request_id, "status": "closed"})
-        closed = self.feedback(kind="response", request_id=request_id, **self.binding(path))
-        self.assertEqual(self.post(closed)[0], 409)
-
-    def test_response_evidence_and_missing_choice(self):
-        path = "feedback/requests/q.json"
-        self.write(path, {"id": "q", "options": ["yes"], **self.binding("project.json")})
-        body = self.feedback(kind="response", request_id="q", **self.binding(path))
-        self.assertEqual(self.post(body)[0], 400)
-        self.write("project.json", {"schema_version": 1, "name": "updated"})
-        self.assertEqual(self.post(dict(body, choice="yes"))[0], 409)
-        self.write(path, {"id": "q", "options": []})
-        body = self.feedback(kind="response", request_id="q", **self.binding(path))
-        self.assertEqual(self.post(body)[0], 201)
-        self.assertEqual(self.post(dict(body, id=str(uuid.uuid4())))[0], 409)
-        self.assertEqual(self.post(body)[0], 200)
-
-    def test_all_non_response_kinds_and_cross_kind_id_conflict(self):
+    def test_feedback_endpoint_removed_without_creating_files(self):
+        before = self.state()
+        project = (self.root / "project.json").read_bytes()
         for kind in ("comment", "change", "preference", "acceptance"):
-            self.assertEqual(self.post(self.feedback(kind=kind))[0], 201)
-        self.write("feedback/requests/q.json", {})
-        body = self.feedback()
-        self.assertEqual(self.post(body)[0], 201)
-        self.assertEqual(self.post(dict(body, kind="response", request_id="q", **self.binding("feedback/requests/q.json")))[0], 409)
+            for binding in ({}, self.binding("project.json")):
+                with self.subTest(kind=kind, binding=binding):
+                    body = self.feedback(kind=kind, **binding)
+                    for _ in range(2):
+                        self.assertEqual(self.post(body)[:2], (404, {"error": "Not found"}))
+        for path in ("/api/feedback", "/api/feedback/", "/api/feedback?other=1", "/api/%66eedback"):
+            with self.subTest(path=path):
+                self.assertEqual(self.request(path=path)[0], 404)
+                self.assertEqual(self.request("POST", path, self.feedback())[0], 404)
+        fresh = self.state()
+        self.assertIsNone(fresh["error"])
+        self.assertEqual(fresh["files"], before["files"])
+        self.assertEqual(fresh["revision"], before["revision"])
+        self.assertEqual((self.root / "project.json").read_bytes(), project)
+        self.assertEqual(list(self.root.iterdir()), [self.root / "project.json"])
 
-    def test_full_length_unicode_feedback(self):
-        body = self.feedback(text="研" * wb.MAX_TEXT_LENGTH)
-        self.assertEqual(self.post(body)[0], 201)
-        self.assertEqual(self.post(body)[0], 200)
+    def test_feedback_response_endpoint_removed_without_creating_files(self):
+        path = "feedback/requests/question-1.json"
+        self.write(path, {"id": "question-1", "options": ["yes", "no"], **self.binding("project.json")})
+        body = self.feedback(kind="response", request_id="question-1", choice="yes",
+                             sample_id="sample-1", **self.binding(path))
+        before = self.state()
+        entries = sorted(self.root.rglob("*"))
+        self.assertEqual(self.post(body)[:2], (404, {"error": "Not found"}))
+        self.assertEqual(self.state()["files"], before["files"])
+        self.assertEqual(sorted(self.root.rglob("*")), entries)
 
-    def test_invalid_feedback_fields(self):
-        for changes in ({"id": "../escape"}, {"id": "x/y"}, {"id": ".hidden"}, {"id": "x" * 129},
-                        {"kind": "run"}, {"text": "  "}, {"text": "x" * (wb.MAX_TEXT_LENGTH + 1)},
-                        {"target": "code/source.json", "target_sha256": "0" * 64},
-                        {"target": "../project.json", "target_sha256": "0" * 64},
-                        {"target": "project.json", "target_sha256": None}, {"target_sha256": "0" * 64},
-                        {"request_id": "../q"}, {"source": "agent"}, {"choice": []}):
-            with self.subTest(changes=changes):
-                self.assertEqual(self.post(self.feedback(**changes))[0], 400)
-        self.assertEqual(self.post(b"[]")[0], 400)
-        self.assertEqual(self.post(b"{broken")[0], 400)
+    def test_removed_feedback_endpoint_does_not_parse_or_write_body(self):
+        before = (self.root / "project.json").read_bytes()
+        for body in ({}, b"[]", b"null", b"{broken", b'"\xff"', self.rename_body(),
+                     self.feedback(id="../escape")):
+            with self.subTest(body=body):
+                self.assertEqual(self.post(body)[0], 404)
+        for headers in ({"Content-Type": "text/plain"}, {"Transfer-Encoding": "chunked"},
+                        {"Content-Length": str(wb.MAX_BODY_BYTES + 1)}):
+            with self.subTest(headers=headers):
+                self.assertEqual(self.post(b"{}", headers=headers)[0], 404)
+        base = f"POST /api/feedback HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nOrigin: {self.origin}\r\n"
+        self.assertEqual(self.raw_request(base + "\r\n"), 404)
+        self.assertEqual(self.raw_request(base + "Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}"), 404)
+        self.assertEqual((self.root / "project.json").read_bytes(), before)
+        self.assertEqual(list(self.root.iterdir()), [self.root / "project.json"])
 
-    def test_host_origin_and_request_framing(self):
+    def test_historical_feedback_remains_readable_and_unchanged(self):
+        request = {"id": "question-1", "options": ["yes"], **self.binding("project.json")}
+        self.write("feedback/requests/question-1.json", request)
+        response = self.feedback(id="response-1", kind="response", request_id="question-1", choice="yes",
+                                 **self.binding("feedback/requests/question-1.json"))
+        comment = self.feedback(id="comment-1", **self.binding("project.json"))
+        records = {"feedback/requests/question-1.json": request,
+                   "feedback/responses/response-1.json": dict(response, source="workspace", created_at="2026-01-01T00:00:00Z"),
+                   "feedback/incoming/comment-1.json": dict(comment, source="workspace", created_at="2026-01-01T00:00:00Z"),
+                   "feedback/handled/handled-1.json": {"id": "handled-1", "feedback_id": "comment-1"}}
+        for path, content in records.items():
+            self.write(path, content)
+        entries = sorted(self.root.rglob("*"))
+        before = {path: path.read_bytes() for path in entries if path.is_file()}
+        state = self.state()
+        self.assertIsNone(state["error"])
+        for path, content in records.items():
+            self.assertEqual(state["files"][path], {"content": content,
+                             "sha256": hashlib.sha256(before[self.root / path]).hexdigest()})
+        for body in (response, comment, dict(comment, text="Changed")):
+            self.assertEqual(self.post(body)[0], 404)
+        self.assertEqual(self.state()["files"], state["files"])
+        self.assertEqual(wb.Reader(self.root).snapshot()["files"], state["files"])
+        self.assertEqual(sorted(self.root.rglob("*")), entries)
+        for path, raw in before.items():
+            self.assertEqual(path.read_bytes(), raw)
+
+    def test_host_validation_for_reads_and_unsupported_methods(self):
         for host in ("evil.example", "127.0.0.1", "127.0.0.1:1", f"127.0.0.1:{self.port}.evil", f"localhost:{self.port}."):
             self.assertEqual(self.request(headers={"Host": host})[0], 403)
             self.assertEqual(self.request("DELETE", headers={"Host": host})[0], 403)
-        for origin in ("null", "http://evil.example", f"http://localhost:{self.port}", self.origin + "/"):
-            self.assertEqual(self.post(self.feedback(), headers={"Origin": origin})[0], 403)
-        self.assertEqual(self.post(self.feedback(), headers={"Content-Type": "text/plain"})[0], 415)
-        self.assertEqual(self.post(self.feedback(), headers={"Transfer-Encoding": "chunked"})[0], 400)
-        self.assertEqual(self.post(b"x" * (wb.MAX_BODY_BYTES + 1))[0], 413)
-        base = f"POST /api/feedback HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nContent-Type: application/json\r\n"
-        self.assertEqual(self.raw_request(base + "Content-Length: 2\r\n\r\n{}"), 403)
-        base += f"Origin: {self.origin}\r\n"
-        self.assertEqual(self.raw_request(base + "\r\n"), 411)
-        self.assertEqual(self.raw_request(base + "Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}"), 411)
         self.assertEqual(self.raw_request(f"GET /api/state HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nHost: evil\r\n\r\n"), 403)
         self.assertEqual(self.request(headers={"Host": f"localhost:{self.port}"})[0], 200)
-        self.assertEqual(self.post(self.feedback(), headers={"Host": f"localhost:{self.port}", "Origin": f"http://localhost:{self.port}"})[0], 201)
 
     def test_static_assets_csp_and_traversal(self):
         status, content, headers = self.request(path="/")
@@ -656,58 +643,25 @@ class WorkspaceTests(unittest.TestCase):
         (self.root / "code").symlink_to(self.base)
         self.assertIsNone(self.state()["error"])
 
-    def test_feedback_symlinks_at_every_level(self):
+    def test_historical_feedback_symlinks_at_every_level(self):
+        good = self.state()
         outside = self.base / "outside"
         outside.mkdir()
-        feedback = self.root / "feedback"
-        feedback.symlink_to(outside)
-        self.assertEqual(self.post(self.feedback())[0], 409)
-        feedback.unlink()
-        feedback.mkdir()
-        incoming = feedback / "incoming"
-        incoming.symlink_to(outside)
-        self.assertEqual(self.post(self.feedback())[0], 409)
-        incoming.unlink()
-        incoming.mkdir()
-        body = self.feedback()
-        (incoming / f"{body['id']}.json").symlink_to(outside / "missing.json")
-        self.assertEqual(self.post(body)[0], 409)
-        self.assertEqual(list(outside.iterdir()), [])
-
-    def test_parallel_immutable_submissions(self):
-        body = self.feedback()
-        results = []
-        def submit():
-            results.append(wb.save_feedback(self.server.reader, body))
-        threads = [threading.Thread(target=submit) for _ in range(8)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(3)
-        self.assertEqual(len(results), 8)
-        self.assertEqual(sum(created for _, created in results), 1)
-        self.assertTrue(all(saved == results[0][0] for saved, _ in results))
-
-    def test_atomic_publication_across_independent_readers(self):
-        body = self.feedback()
-        barrier = threading.Barrier(6)
-        results, errors = [], []
-        def submit():
-            reader = wb.Reader(self.root)
-            barrier.wait(timeout=3)
-            try:
-                results.append(wb.save_feedback(reader, body))
-            except Exception as exc:
-                errors.append(exc)
-        threads = [threading.Thread(target=submit) for _ in range(6)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(3)
-        self.assertEqual(errors, [])
-        self.assertEqual(len(results), 6)
-        self.assertEqual(sum(created for _, created in results), 1)
-        self.assertTrue(all(saved == results[0][0] for saved, _ in results))
+        body = self.feedback(id="comment-1")
+        for relative in ("feedback", "feedback/incoming", "feedback/incoming/comment-1.json"):
+            with self.subTest(relative=relative):
+                path = self.root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                target = outside / "missing.json" if relative.endswith(".json") else outside
+                path.symlink_to(target)
+                self.assertEqual(self.post(body)[0], 404)
+                state = self.state()
+                self.assertIn("Symlink", state["error"])
+                self.assertEqual(state["files"], good["files"])
+                self.assertTrue(path.is_symlink())
+                self.assertEqual(list(outside.iterdir()), [])
+                path.unlink()
+        self.assertIsNone(self.state()["error"])
 
     def test_cli_rejects_symlinked_runtime_without_external_writes(self):
         outside = self.base / "outside-runtime"
@@ -729,8 +683,15 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(state["files"]["project.json"]["content"]["name"], "Second")
         self.assertEqual(self.state()["files"]["project.json"]["content"]["name"], "First")
-        self.assertEqual(self.post(self.feedback())[0], 201)
-        self.assertFalse((other / "feedback").exists())
+        self.assertEqual(self.rename(self.rename_body())[0], 200)
+        self.assertEqual(self.state()["files"]["project.json"]["content"]["name"], "Renamed")
+        self.assertEqual(self.request(port=server.server_address[1])[1]["files"], state["files"])
+        self.assertEqual(self.post(self.feedback())[0], 404)
+        other_port = server.server_address[1]
+        self.assertEqual(self.post(self.feedback(), port=other_port,
+                                   headers={"Origin": f"http://127.0.0.1:{other_port}"})[0], 404)
+        self.assertFalse((self.root / "feedback").exists())
+        self.assertEqual(list(other.iterdir()), [other / "project.json"])
 
     def test_cli_url_runtime_and_keyboard_interrupt(self):
         process = subprocess.Popen([sys.executable, "-B", str(SOURCE), "--project", str(self.root),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assessments, experiments, layout, parseSnapshot, resolvedFeedback, statusLabel } from './model';
+import { assessments, experiments, layout, parseSnapshot, statusLabel } from './model';
 import type { ResearchFile, Snapshot } from './model';
 const file = (content: unknown): ResearchFile => ({ content, sha256: 'a'.repeat(64) });
 const files = {
@@ -12,16 +12,6 @@ const files = {
   'assessments/b/result.json': file({ state: 'succeeded', metrics: { accuracy: 0.9, invalid: '0.5' } }),
 };
 describe('research file contract', () => {
-  it('keeps deferred, questioned and ambiguous feedback open', () => {
-    const handled = {
-      'feedback/handled/h1.json': file({ feedback_id: 'f1', disposition: 'deferred' }),
-      'feedback/handled/h2.json': file({ feedback_id: 'f2', disposition: 'question' }),
-      'feedback/handled/h3.json': file({ feedback_id: 'f3', disposition: 'adopted' }),
-      'feedback/handled/h4.json': file({ feedback_id: 'f4', disposition: 'rejected' }),
-      'feedback/handled/h5.json': file({ feedback_id: 'f4', disposition: 'deferred' }),
-    };
-    expect([...resolvedFeedback(handled)]).toEqual(['f3']);
-  });
   it('validates the external snapshot envelope', () => {
     expect(parseSnapshot({ files, revision: '1', synced_at: '', error: null }).files).toEqual(files);
     expect(() => parseSnapshot({ files: [], revision: '1', synced_at: '', error: null })).toThrow();

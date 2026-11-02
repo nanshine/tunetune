@@ -11,7 +11,7 @@ import tempfile
 
 VERSION = "0.3.0"
 TEMPLATES = ("AGENTS.md", "research-contract.md", "project.json", "goal.json", "resources.json", "candidates.json", "workspace.json")
-BUSINESS_DIRS = ("evaluation", "experiments", "assessments", "releases", "acceptance", "feedback", "history", ".workspace")
+BUSINESS_DIRS = ("data", "src", "evaluation", "experiments", "assessments", "releases", "acceptance", "feedback", "history", ".workspace")
 
 
 def digest(data):
@@ -58,8 +58,8 @@ def validate_business(name, data):
                  and (obj["current_evaluation"] is None or isinstance(obj["current_evaluation"], str)))
     elif name == "goal.json":
         valid = (type(obj.get("revision")) is int and obj["revision"] >= 1
-                 and all(isinstance(obj.get(key), str) for key in ("context", "expected_result"))
-                 and all(isinstance(obj.get(key), list) for key in ("examples", "sources")))
+                 and isinstance(obj.get("summary"), str)
+                 and all(isinstance(obj.get(key), list) for key in ("examples", "sections")))
     elif name in ("resources.json", "candidates.json"):
         valid = isinstance(obj.get("items"), list) and all(isinstance(item, dict) for item in obj["items"])
     else:
@@ -97,7 +97,9 @@ def verify_kit(kit):
         folded.add(relative.casefold())
         allowed = (relative in {f"template/{name}" for name in TEMPLATES}
                    or relative in ("workspace/workspace.py", "install-workspace.py")
-                   or relative.startswith("workspace/assets/"))
+                   or relative.startswith("workspace/assets/")
+                   or (relative.startswith("skills/") and len(PurePosixPath(relative).parts) >= 3
+                       and PurePosixPath(relative).parts[1] in ("research-workspace", "tunetune-init", "build-evaluation", "train", "review")))
         if not allowed or not isinstance(entry["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
             raise ValueError(f"Unexpected manifest file: {relative}")
         file = kit / relative
@@ -109,6 +111,9 @@ def verify_kit(kit):
             raise ValueError(f"Hash mismatch: {relative}")
         payload[relative] = data
     required = {f"template/{name}" for name in TEMPLATES} | {"workspace/workspace.py", "workspace/assets/index.html", "install-workspace.py"}
+    required |= {f"skills/{name}/SKILL.md" for name in ("research-workspace", "tunetune-init", "build-evaluation", "train", "review")}
+    required |= {"skills/research-workspace/" + path for path in
+                 ("references/records.md", "references/tools.md", "scripts/records.py")}
     if not required <= payload.keys():
         raise ValueError("Kit is missing required files")
     expected = set(payload) | {"manifest.json"}
@@ -126,7 +131,9 @@ def verify_kit(kit):
     return manifest, manifest_bytes, payload
 
 
-def install(kit, project, name=None):
+def install(kit, project, name=None, host="agents"):
+    if host not in ("agents", "claude"):
+        raise ValueError("Unsupported skill host")
     kit, project = Path(os.path.abspath(kit)), Path(os.path.abspath(project))
     manifest, manifest_bytes, payload = verify_kit(kit)
     no_symlinks(project)
@@ -168,6 +175,9 @@ def install(kit, project, name=None):
             raise ValueError("Installed workspace differs; upgrades are not supported")
     app_payload = {".workspace/app/" + key.removeprefix("workspace/"): data
                    for key, data in payload.items() if key.startswith("workspace/")}
+    skill_root = ".agents/skills" if host == "agents" else ".claude/skills"
+    skill_payload = {skill_root + "/" + key.removeprefix("skills/"): data
+                     for key, data in payload.items() if key.startswith("skills/")}
     app = project / ".workspace/app"
     no_symlinks(app)
     if app.exists():
@@ -181,7 +191,7 @@ def install(kit, project, name=None):
                 continue
             if not path.is_file() or relative not in app_payload or path.read_bytes() != app_payload[relative]:
                 raise ValueError(f"Installed app differs: {relative}; upgrades are not supported")
-    for relative, data in app_payload.items():
+    for relative, data in {**app_payload, **skill_payload}.items():
         path = project / relative
         no_symlinks(path)
         if path.exists():
@@ -198,6 +208,8 @@ def install(kit, project, name=None):
             if parent.exists() and not parent.is_dir():
                 raise ValueError(f"File occupies required directory: {parent}")
     if not planned:
+        for directory in BUSINESS_DIRS:
+            (project / directory).mkdir(parents=True, exist_ok=True)
         return 0
     ancestor = project.parent
     while not ancestor.exists():
@@ -222,6 +234,8 @@ def install(kit, project, name=None):
                         and destination.stat().st_ino == inode and destination.read_bytes() == original):
                     destination.unlink()
             raise
+    for directory in BUSINESS_DIRS:
+        (project / directory).mkdir(parents=True, exist_ok=True)
     return len(planned)
 
 
@@ -230,9 +244,10 @@ def main():
     parser.add_argument("--kit", required=True, type=Path)
     parser.add_argument("--project", required=True, type=Path)
     parser.add_argument("--name")
+    parser.add_argument("--host", choices=("agents", "claude"), default="agents")
     args = parser.parse_args()
     try:
-        count = install(args.kit, args.project, args.name)
+        count = install(args.kit, args.project, args.name, args.host)
     except (OSError, ValueError) as error:
         parser.exit(1, f"Installation refused: {error}\n")
     print(f"Installed {count} missing files in {args.project.absolute()}")

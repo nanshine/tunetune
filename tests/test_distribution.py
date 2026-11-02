@@ -48,7 +48,7 @@ class DistributionTests(unittest.TestCase):
             (self.source / directory).mkdir(parents=True, exist_ok=True)
             (self.source / directory / "DO_NOT_SHIP.md").write_text("private source fixture")
         self.output = self.base / "dist"
-        self.kit, self.archive, self.skills_archive = builder.build(self.source, self.output)
+        self.kit, self.archive = builder.build(self.source, self.output)
         self.project = self.base / "research"
 
     def rewrite_manifest(self, change):
@@ -69,9 +69,10 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual((manifest["version"], manifest["schema_min"], manifest["schema_max"]), ("0.3.0", 1, 1))
         self.assertEqual(builder.TEMPLATES, installer.TEMPLATES)
         self.assertIn("research-contract.md", installer.TEMPLATES)
-        self.assertEqual(set(builder.SKILLS), {"research-workspace", "init", "build-evaluation", "train", "review"})
+        self.assertEqual(set(builder.SKILLS), {"research-workspace", "tunetune-init", "build-evaluation", "train", "review"})
         self.assertEqual(set(payload), {f"template/{name}" for name in installer.TEMPLATES}
-                         | {"install-workspace.py", "workspace/workspace.py", "workspace/assets/index.html", "workspace/assets/assets/app.js"})
+                         | {"install-workspace.py", "workspace/workspace.py", "workspace/assets/index.html", "workspace/assets/assets/app.js"}
+                         | set(builder.collect_skills(self.source)))
         contract = (self.source / "skills/research-workspace/references/records.md").read_bytes()
         self.assertEqual(payload["template/research-contract.md"], contract)
         self.assertIn(b"research-contract.md", payload["template/AGENTS.md"])
@@ -81,30 +82,10 @@ class DistributionTests(unittest.TestCase):
             names = archive.getnames()
             self.assertIn("workspace-kit-0.3.0/install-workspace.py", names)
             self.assertIn("workspace-kit-0.3.0/template/research-contract.md", names)
-            self.assertFalse(any(any(part in name.split("/") for part in ("design", "notes", "reference", "evals", "src", "node_modules", "skills")) for name in names))
-        with tarfile.open(self.skills_archive) as archive:
-            required = {f"skills/{name}/SKILL.md" for name in builder.SKILLS} | {
-                "skills/research-workspace/references/records.md",
-                "skills/research-workspace/references/tools.md",
-                "skills/research-workspace/scripts/records.py",
-            }
-            self.assertTrue(required <= set(archive.getnames()))
-            self.assertEqual(archive.extractfile("skills/research-workspace/references/records.md").read(), contract)
-            for member in archive.getmembers():
-                self.assertTrue(member.isfile(), member.name)
-                relative = Path(member.name)
-                self.assertEqual(relative.parts[0], "skills")
-                self.assertIn(relative.parts[1], builder.SKILLS)
-                self.assertFalse(any(part.startswith(".") or part in {"evals", "notes", "reference", "__pycache__", "cache", "node_modules"}
-                                     for part in relative.parts))
-                self.assertEqual(archive.extractfile(member).read(), (self.source / relative).read_bytes())
-                if relative.name == "SKILL.md" and len(relative.parts) == 3:
-                    content = archive.extractfile(member).read().decode()
-                    self.assertIn(f"name: {relative.parts[1]}\n", content)
-                    self.assertIn("description:", content)
-                else:
-                    self.assertGreaterEqual(len(relative.parts), 4)
-                    self.assertIn(relative.suffix, {"references": {".md", ".json"}, "scripts": {".py"}}.get(relative.parts[2], set()))
+            self.assertFalse(any(any(part in name.split("/") for part in ("design", "notes", "reference", "evals", "src", "node_modules")) for name in names))
+        for relative, source in builder.collect_skills(self.source).items():
+            self.assertEqual(payload[relative], source.read_bytes())
+            self.assertTrue((self.kit / relative).is_file())
 
     def test_missing_base_skill_dependency_is_refused(self):
         for relative in ("references/tools.md", "scripts/records.py"):
@@ -119,19 +100,18 @@ class DistributionTests(unittest.TestCase):
     def test_contract_comes_only_from_base_skill(self):
         # A stale duplicate in the template tree must never become the source of truth.
         (self.source / "templates/workspace/research-contract.md").write_text("stale duplicate")
-        kit, _, skills = builder.build(self.source, self.base / "contract-dist")
+        kit, archive_path = builder.build(self.source, self.base / "contract-dist")
         canonical = (self.source / "skills/research-workspace/references/records.md").read_bytes()
         self.assertEqual((kit / "template/research-contract.md").read_bytes(), canonical)
-        with tarfile.open(skills) as archive:
-            self.assertEqual(archive.extractfile("skills/research-workspace/references/records.md").read(), canonical)
+        with tarfile.open(archive_path) as archive:
+            self.assertEqual(archive.extractfile("workspace-kit-0.3.0/skills/research-workspace/references/records.md").read(), canonical)
         (self.source / "skills/research-workspace/references/records.md").unlink()
         with self.assertRaisesRegex(ValueError, "records.md"):
             builder.build(self.source, self.base / "missing-contract-dist")
         self.assertFalse((self.base / "missing-contract-dist").exists())
 
     def test_all_skill_resources_use_recursive_allowlist(self):
-        with tarfile.open(self.skills_archive) as archive:
-            expected = set(archive.getnames())
+        expected = set(builder.collect_skills(self.source))
         allowed = {
             "references/distribution-fixture/deep/contract.md": "# Fixture contract\n",
             "references/distribution-fixture/schema.json": '{"fixture":true}\n',
@@ -163,17 +143,47 @@ class DistributionTests(unittest.TestCase):
         unknown = self.source / "skills/unlisted-skill/SKILL.md"
         unknown.parent.mkdir()
         unknown.write_text("not an allowed skill")
-        _, _, skills = builder.build(self.source, self.base / "resource-dist")
-        with tarfile.open(skills) as archive:
-            self.assertEqual(set(archive.getnames()), expected)
-            for member in archive.getmembers():
-                self.assertTrue(member.isfile(), member.name)
-                self.assertEqual(archive.extractfile(member).read(), (self.source / member.name).read_bytes())
+        kit, archive_path = builder.build(self.source, self.base / "resource-dist")
+        actual = {path.relative_to(kit).as_posix() for path in (kit / "skills").rglob("*") if path.is_file()}
+        self.assertEqual(actual, expected)
+        for relative in actual:
+            self.assertEqual((kit / relative).read_bytes(), (self.source / relative).read_bytes())
+
+    def test_bundle_requires_shared_record_tools(self):
+        relative = "skills/research-workspace/scripts/records.py"
+        (self.kit / relative).unlink()
+        self.rewrite_manifest(lambda manifest: manifest.update(files=[item for item in manifest["files"] if item["path"] != relative]))
+        with self.assertRaisesRegex(ValueError, "missing required"):
+            self.install()
+        self.assertFalse(self.project.exists())
+
+    def test_project_skills_are_installed_together_and_conflicts_preserved(self):
+        self.install(host="claude")
+        for name in builder.SKILLS:
+            self.assertEqual((self.project / ".claude/skills" / name / "SKILL.md").read_bytes(),
+                             (self.kit / "skills" / name / "SKILL.md").read_bytes())
+        self.assertFalse((self.project / ".agents").exists())
+        skill = self.project / ".claude/skills/tunetune-init/SKILL.md"
+        skill.write_text("Existing local skill")
+        before = self.snapshot(self.project)
+        with self.assertRaisesRegex(ValueError, "Conflicting app file"):
+            self.install(host="claude")
+        self.assertEqual(self.snapshot(self.project), before)
+
+    def test_skill_symlink_is_rejected_before_installation(self):
+        outside = self.base / "external-skills"
+        outside.mkdir()
+        (self.project / ".agents").mkdir(parents=True)
+        (self.project / ".agents/skills").symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            self.install()
+        self.assertFalse((self.project / "project.json").exists())
+        self.assertEqual(list(outside.iterdir()), [])
 
     def test_minimal_install(self):
         self.assertGreater(self.install(name="实际研究"), 0)
         self.assertEqual(json.loads((self.project / "project.json").read_text())["name"], "实际研究")
-        self.assertEqual({path.name for path in self.project.iterdir()}, set(installer.TEMPLATES) | {".workspace"})
+        self.assertEqual({path.name for path in self.project.iterdir()}, set(installer.TEMPLATES) | set(installer.BUSINESS_DIRS) | {".agents"})
         self.assertFalse((self.project / ".workspace/runtime").exists())
         self.assertFalse((self.project / "skills").exists())
         self.assertEqual((self.project / ".workspace/app/workspace.py").read_bytes(), (self.kit / "workspace/workspace.py").read_bytes())
@@ -182,9 +192,9 @@ class DistributionTests(unittest.TestCase):
         self.install()
         expected = {
             "project.json": {"schema_version": 1, "name": "未命名研究", "language": "zh-CN", "current_evaluation": None},
-            "goal.json": {"revision": 1, "context": "", "expected_result": "", "examples": [], "sources": []},
+            "goal.json": {"revision": 1, "summary": "", "sections": [], "examples": [], "proposal": ""},
             "resources.json": {"items": []}, "candidates.json": {"items": []},
-            "workspace.json": {"title": "研究空间", "metric_columns": []},
+            "workspace.json": {"title": "研究空间", "metric_columns": [], "presentation": {"id": "initial-goal", "panel": "goal"}},
         }
         for name, value in expected.items():
             self.assertEqual(json.loads((self.project / name).read_text()), value)
@@ -193,7 +203,7 @@ class DistributionTests(unittest.TestCase):
         self.install(name="原名称")
         goal = self.project / "goal.json"
         value = json.loads(goal.read_text())
-        value["context"] = "用户已经编辑"
+        value["summary"] = "用户已经编辑"
         goal.write_text(json.dumps(value, ensure_ascii=False))
         (self.project / "AGENTS.md").write_text("Existing project instructions")
         (self.project / "research-contract.md").write_text("Existing locally adapted contract; not JSON")
@@ -428,18 +438,18 @@ class DistributionTests(unittest.TestCase):
         external_file = external / "payload.md"
         external_file.write_text("external content")
         cases = (
-            ("skills/init", external),
-            ("skills/init/SKILL.md", external_file),
+            ("skills/tunetune-init", external),
+            ("skills/tunetune-init/SKILL.md", external_file),
             ("skills/research-workspace/references", external),
             ("skills/research-workspace/references/records.md", external_file),
             ("skills/research-workspace/scripts/records.py", external_file),
             ("skills/train/references/linked.json", external_file),
             ("skills/review/scripts/linked", external),
             ("skills/build-evaluation/evals/linked.json", external_file),
-            ("skills/init/notes/linked.md", external_file),
-            ("skills/init/references/.hidden.md", external_file),
-            ("skills/init/scripts/__pycache__/linked.pyc", external_file),
-            ("skills/init/scripts/dangling.py", self.base / "missing-target"),
+            ("skills/tunetune-init/notes/linked.md", external_file),
+            ("skills/tunetune-init/references/.hidden.md", external_file),
+            ("skills/tunetune-init/scripts/__pycache__/linked.pyc", external_file),
+            ("skills/tunetune-init/scripts/dangling.py", self.base / "missing-target"),
         )
         output = self.base / "symlink-dist"
         for relative, target in cases:
@@ -461,18 +471,18 @@ class DistributionTests(unittest.TestCase):
 
     def test_extracted_skills_run_and_sibling_references_resolve_without_source(self):
         extracted = self.base / "installed-skills"
-        with tarfile.open(self.skills_archive) as archive:
+        with tarfile.open(self.archive) as archive:
             archive.extractall(extracted)
         shutil.rmtree(self.source)
         shutil.rmtree(self.output)
-        skills = extracted / "skills"
+        skills = extracted / "workspace-kit-0.3.0/skills"
         self.assertEqual({path.name for path in skills.iterdir()}, set(builder.SKILLS))
         script = skills / "research-workspace/scripts/records.py"
         result = subprocess.run([sys.executable, "-E", "-s", "-B", str(script), "--help"],
                                 cwd=self.base, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("usage:", result.stdout.lower())
-        for name in ("init", "build-evaluation", "train", "review"):
+        for name in ("tunetune-init", "build-evaluation", "train", "review"):
             with self.subTest(skill=name):
                 skill = skills / name / "SKILL.md"
                 links = re.findall(r"\.\./research-workspace/[A-Za-z0-9_./-]+", skill.read_text(encoding="utf-8"))

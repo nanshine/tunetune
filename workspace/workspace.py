@@ -1,7 +1,8 @@
-"""Local, file-backed research workspace. Writes only feedback and project-name metadata; no research execution."""
+"""Local, file-backed research workspace. Writes only project-name metadata; no research execution."""
 from __future__ import annotations
 
 import argparse
+import webbrowser
 import copy
 import fcntl
 import hashlib
@@ -26,8 +27,6 @@ MAX_FILES = 2000
 MAX_ENTRIES = 10000
 LOG_PREVIEW_BYTES = 64 * 1024
 MAX_BODY_BYTES = 128 * 1024
-MAX_TEXT_LENGTH = 16000
-ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 # A closed allowlist: wildcard matches exactly one safe path component.
 PATTERNS = (
@@ -295,7 +294,7 @@ class Reader:
                     "synced_at": self._synced_at or now(), "error": error}
 
 
-class FeedbackError(Exception):
+class RequestError(Exception):
     def __init__(self, status, message):
         self.status = status
         super().__init__(message)
@@ -303,17 +302,17 @@ class FeedbackError(Exception):
 
 def save_project_name(reader, body):
     if not isinstance(body, dict) or body.keys() != {"name", "expected_sha256"}:
-        raise FeedbackError(400, "Invalid project name fields")
+        raise RequestError(400, "Invalid project name fields")
     if not isinstance(body["name"], str):
-        raise FeedbackError(400, "Invalid project name")
+        raise RequestError(400, "Invalid project name")
     name = body["name"].strip()
     if not name or len(name) > 120 or any(
         unicodedata.category(char) in ("Cc", "Cs") for char in body["name"]
     ):
-        raise FeedbackError(400, "Project name must be 1–120 characters without control characters")
+        raise RequestError(400, "Project name must be 1–120 characters without control characters")
     expected = body["expected_sha256"]
     if not isinstance(expected, str) or not HASH.fullmatch(expected):
-        raise FeedbackError(400, "Invalid expected_sha256")
+        raise RequestError(400, "Invalid expected_sha256")
 
     def version(info):
         return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
@@ -338,7 +337,7 @@ def save_project_name(reader, body):
                 if not isinstance(project, dict) or type(project.get("schema_version")) is not int or project["schema_version"] != 1:
                     raise ValueError("project.json requires schema_version=1")
                 if hashlib.sha256(raw).hexdigest() != expected:
-                    raise FeedbackError(409, "Project is stale; refresh before renaming")
+                    raise RequestError(409, "Project is stale; refresh before renaming")
                 project["name"] = name
                 raw = (json.dumps(project, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
                 if len(raw) > MAX_FILE_BYTES:
@@ -353,7 +352,7 @@ def save_project_name(reader, body):
                         os.fsync(stream.fileno())
                     current = os.stat("project.json", dir_fd=parent, follow_symlinks=False)
                     if not stat.S_ISREG(current.st_mode) or version(current) != version(before):
-                        raise FeedbackError(409, "project.json changed before renaming")
+                        raise RequestError(409, "project.json changed before renaming")
                     os.replace(temp, "project.json", src_dir_fd=parent, dst_dir_fd=parent)
                     os.fsync(parent)
                 finally:
@@ -363,108 +362,7 @@ def save_project_name(reader, body):
                         pass
                 return {"name": name, "sha256": hashlib.sha256(raw).hexdigest()}
         except (OSError, ValueError, RecursionError) as exc:
-            raise FeedbackError(409, f"Cannot safely save project name: {exc}") from exc
-
-
-def save_feedback(reader, body):
-    allowed = {"id", "kind", "text", "target", "target_sha256", "request_id", "choice", "sample_id"}
-    required = {"id", "kind", "text", "target", "target_sha256"}
-    if not isinstance(body, dict) or not required <= body.keys() or body.keys() - allowed:
-        raise FeedbackError(400, "Invalid feedback fields")
-    for key in ("id", "request_id"):
-        if key in body and (not isinstance(body[key], str) or not ID.fullmatch(body[key])):
-            raise FeedbackError(400, f"Invalid {key}")
-    if body["kind"] not in ("comment", "change", "response", "preference", "acceptance"):
-        raise FeedbackError(400, "Invalid feedback kind")
-    if not isinstance(body["text"], str) or not body["text"].strip() or len(body["text"]) > MAX_TEXT_LENGTH:
-        raise FeedbackError(400, "Invalid feedback text")
-    for key in ("choice", "sample_id"):
-        if key in body and (not isinstance(body[key], str) or not body[key] or len(body[key]) > 1024):
-            raise FeedbackError(400, f"Invalid {key}")
-    target, digest = body["target"], body["target_sha256"]
-    if target is None:
-        if digest is not None:
-            raise FeedbackError(400, "Hash requires a target")
-    elif not recognized(target) or not isinstance(digest, str) or not HASH.fullmatch(digest):
-        raise FeedbackError(400, "Invalid target or hash")
-    if body["kind"] == "response":
-        request_id = body.get("request_id")
-        if not request_id or target != f"feedback/requests/{request_id}.json":
-            raise FeedbackError(400, "Response must bind to its request")
-    record = dict(body, source="workspace")
-    folder = "responses" if body["kind"] == "response" else "incoming"
-    destination = f"feedback/{folder}/{body['id']}.json"
-
-    def existing():
-        for subdir in ("incoming", "responses"):
-            path = f"feedback/{subdir}/{body['id']}.json"
-            try:
-                saved = strict_json(reader.tree.read(path).decode("utf-8"))
-            except FileNotFoundError:
-                continue
-            if not isinstance(saved, dict):
-                raise FeedbackError(409, "Existing feedback is invalid")
-            comparison = {k: v for k, v in saved.items() if k != "created_at"}
-            if path != destination or comparison != record:
-                raise FeedbackError(409, "Feedback id already has different content")
-            return saved
-        return None
-
-    with reader.lock:
-        try:
-            saved = existing()
-            if saved is not None:
-                return saved, False
-            if target is not None:
-                files = reader._load()
-                if target not in files or files[target]["sha256"] != digest:
-                    raise FeedbackError(409, "Target is missing or stale; refresh before submitting")
-                if body["kind"] == "response":
-                    question = files[target]["content"]
-                    if question.get("status") in ("closed", "handled", "resolved", "answered", "cancelled") or any(
-                        question.get(key) for key in ("closed", "handled", "closed_at", "handled_at")
-                    ):
-                        raise FeedbackError(409, "Question is closed or handled")
-                    response_ids = [item["content"].get("id") for path, item in files.items()
-                                    if path.startswith("feedback/responses/") and
-                                    isinstance(item["content"].get("id"), str) and
-                                    item["content"].get("request_id") == request_id]
-                    if response_ids:
-                        raise FeedbackError(409, "Question already answered; submit a new comment to correct it")
-                    evidence = question.get("target")
-                    if evidence is not None and (not isinstance(evidence, str) or evidence not in files or
-                            files[evidence]["sha256"] != question.get("target_sha256")):
-                        raise FeedbackError(409, "Question evidence changed; ask Agent to refresh the question")
-                    related = response_ids + [request_id]
-                    for path, item in files.items():
-                        if path.startswith("feedback/handled/") and (
-                            Path(path).stem in related or any(
-                                item["content"].get(key) in related
-                                for key in ("request_id", "feedback_id", "response_id", "id")
-                            )
-                        ):
-                            raise FeedbackError(409, "Question has been handled")
-                    options = question.get("options", [])
-                    if not isinstance(options, list):
-                        raise FeedbackError(409, "Question options are invalid")
-                    if options:
-                        values = [option if isinstance(option, str) else
-                                  option.get("id", option.get("value")) if isinstance(option, dict)
-                                  else None for option in options]
-                        if body.get("choice") not in values:
-                            raise FeedbackError(400, "Choice is not a request option")
-            record["created_at"] = now()
-            try:
-                reader.tree.publish(destination, record)
-            except FileExistsError:
-                record.pop("created_at")
-                saved = existing()
-                if saved is None:
-                    raise FeedbackError(409, "Feedback publication conflict")
-                return saved, False
-            return record, True
-        except (OSError, ValueError, RecursionError) as exc:
-            raise FeedbackError(409, f"Cannot safely save feedback: {exc}") from exc
+            raise RequestError(409, f"Cannot safely save project name: {exc}") from exc
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -525,30 +423,26 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             if self.headers.get_all("Origin", []) != ["http://" + self.headers["Host"]]:
-                raise FeedbackError(403, "Same Origin required")
-            if self.path not in ("/api/feedback", "/api/project/name"):
-                raise FeedbackError(404, "Not found")
+                raise RequestError(403, "Same Origin required")
+            if self.path != "/api/project/name":
+                raise RequestError(404, "Not found")
             if self.headers.get_all("Transfer-Encoding"):
-                raise FeedbackError(400, "Transfer-Encoding is not supported")
+                raise RequestError(400, "Transfer-Encoding is not supported")
             types = self.headers.get_all("Content-Type", [])
             if len(types) != 1 or types[0].split(";", 1)[0].strip().lower() != "application/json":
-                raise FeedbackError(415, "application/json required")
+                raise RequestError(415, "application/json required")
             lengths = self.headers.get_all("Content-Length", [])
             if len(lengths) != 1 or not re.fullmatch(r"[0-9]{1,10}", lengths[0]):
-                raise FeedbackError(411, "A single Content-Length is required")
+                raise RequestError(411, "A single Content-Length is required")
             length = int(lengths[0])
             if not 0 < length <= MAX_BODY_BYTES:
-                raise FeedbackError(413, "Feedback body exceeds limit")
+                raise RequestError(413, "Request body exceeds limit")
             raw = self.rfile.read(length)
             if len(raw) != length:
-                raise FeedbackError(400, "Incomplete body")
+                raise RequestError(400, "Incomplete body")
             body = strict_json(raw.decode("utf-8"))
-            if self.path == "/api/project/name":
-                self.reply(200, save_project_name(self.server.reader, body))
-            else:
-                record, created = save_feedback(self.server.reader, body)
-                self.reply(201 if created else 200, record)
-        except FeedbackError as exc:
+            self.reply(200, save_project_name(self.server.reader, body))
+        except RequestError as exc:
             self.reply(exc.status, {"error": str(exc)})
         except (ValueError, RecursionError):
             self.reply(400, {"error": "Invalid JSON body"})
@@ -569,6 +463,7 @@ def main(argv=None):
     parser.add_argument("--project", required=True, type=Path)
     parser.add_argument("--assets", type=Path, default=Path(__file__).parent / "assets")
     parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--open", action="store_true", help="Open the local panel in the default browser")
     args = parser.parse_args(argv)
     args.project = args.project.absolute()
     if not args.project.is_dir() or args.project.is_symlink():
@@ -595,6 +490,8 @@ def main(argv=None):
         tree.publish(runtime, {"project": str(args.project), "pid": os.getpid(), "url": url}, internal=True)
         published = True
         print(url, flush=True)
+        if args.open:
+            threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
         server.serve_forever()
     except KeyboardInterrupt:
         pass

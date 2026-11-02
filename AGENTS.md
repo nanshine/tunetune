@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-TuneTune is a file-driven research workspace: agents operate research records, while the UI displays them and saves feedback without starting training or maintaining a business database.
+TuneTune is a file-driven research workspace: agents operate research records, while the UI provides read-only research views and result comparisons. Its only write action is direct editing of the project name (`project.json.name`); it does not collect feedback, start training, or maintain a business database. Goal/resource clarification, evaluation answers, candidate/experiment feedback, research reviews, and acceptance generation requests, preferences, and decisions belong in the Agent client, not panel forms or a review entry point.
 
 - `workspace/src/`: React and TypeScript components, model logic, CSS, and colocated Vitest tests; `workspace/workspace.py` provides the Python standard-library file service.
 - `skills/`: four research workflows plus the shared `research-workspace` skill. Its `references/records.md` is the canonical record contract, and `scripts/records.py` implements record utilities.
@@ -38,4 +38,4 @@ Git history contains only `Initial commit`; use concise imperative subjects. PRs
 
 ## Record & Distribution Safety
 
-Preserve conflict detection, immutable results, path and symlink protections, and project isolation. Edit the canonical contract rather than generated copies, and exclude secrets, research outputs, source files, and dependencies from release kits.
+Preserve conflict detection, immutable results, path and symlink protections, and project isolation. Keep research materials, Agent review capabilities, historical feedback, and the feedback file protocol. Agents may record necessary decision evidence from user conversations, with its source and context, but conversational opinions and recorded feedback do not automatically authorize execution. Edit the canonical contract rather than generated copies, and exclude secrets, research outputs, source files, and dependencies from release kits.

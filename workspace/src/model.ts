@@ -3,7 +3,6 @@ export type ResearchFile = { content: unknown; sha256: string };
 export type Snapshot = { files: Record<string, ResearchFile>; revision: string; synced_at: string; error: string | null };
 export type Experiment = { id: string; title: string; parent: string | null; state: string; updatedAt: string; configPath: string; artifact: string };
 export type Assessment = { id: string; experimentId: string; version: string; state: string; metrics: Record<string, number>; metricLabels: Record<string, string>; path: string };
-export type FeedbackTarget = { kind: 'comment' | 'change' | 'response' | 'preference' | 'acceptance'; target: string | null; request_id?: string; sample_id?: string; title: string; options?: string[]; choices?: { value: string; label: string }[]; context?: string };
 
 export function object(value: unknown): JsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
@@ -61,12 +60,6 @@ export function assessments(files: Snapshot['files']): Assessment[] {
     const metricLabels = Object.fromEntries(definitions.map(metric => [text(metric.id), text(metric.label, text(metric.id))]));
     return { id: path.split('/')[1], experimentId: text(config.experiment_id), version, state, metrics, metricLabels, path };
   });
-}
-
-export function resolvedFeedback(files: Snapshot['files']): Set<string> {
-  const records = collection(files, /^feedback\/handled\/[^/]+\.json$/).map(([, entry]) => entry);
-  return new Set(records.filter(entry => ['adopted', 'rejected'].includes(text(entry.disposition))
-    && records.filter(other => other.feedback_id === entry.feedback_id).length === 1).map(entry => text(entry.feedback_id)));
 }
 
 export function layout(items: Experiment[]): Map<string, { x: number; y: number }> {

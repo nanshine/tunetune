@@ -42,8 +42,8 @@ class RecordsTests(unittest.TestCase):
         return hashlib.sha256((self.root / path).read_bytes()).hexdigest()
 
     def goal(self, revision=1):
-        return dict(revision=revision, context="Synthetic unittest fixture only",
-                    expected_result="No real research performed", examples=[], sources=[])
+        return dict(revision=revision, summary="Synthetic unittest fixture only",
+                    sections=[], examples=[], proposal="")
 
     def status(self, state):
         return dict(state=state, updated_at=STAMP)
@@ -299,6 +299,26 @@ class RecordsTests(unittest.TestCase):
             self.assertIn("error", json.loads(result.stderr))
             self.assertFalse((self.root / "goal.json").exists())
         self.assertEqual(self.cli(*args).returncode, 0)
+
+    def test_open_goal_and_resource_contract(self):
+        goal = dict(self.goal(), sections=[dict(title="Usage", body="Daily messages")],
+                    examples=[dict(id="example-1", input="A message")], proposal="Investigate public data")
+        self.put("goal.json", goal, create=True)
+        resource = dict(id="data-1", title="Public data", type="dataset", purpose="Explore categories", status="available")
+        self.put("resources.json", dict(items=[resource]), create=True)
+        for state in ("unknown", "preparing", "ready", "unavailable"):
+            resource["status"] = state
+            self.put("resources.json", dict(items=[resource]), expected=self.sha("resources.json"))
+        for invalid in (dict(resource, status="downloaded"), dict(resource, purpose=3)):
+            with self.assertRaises(ValueError):
+                self.put("resources.json", dict(items=[invalid]), expected=self.sha("resources.json"))
+        with self.assertRaises(ValueError):
+            self.put("resources.json", dict(items=[resource, resource]), expected=self.sha("resources.json"))
+        with self.assertRaises(ValueError):
+            self.put("goal.json", dict(goal, revision=2, sections=[dict(title="Missing body")]), expected=self.sha("goal.json"))
+        self.put("workspace.json", dict(title="Workspace", metric_columns=[], presentation=dict(id="init-1", panel="goal")), create=True)
+        with self.assertRaises(ValueError):
+            self.put("workspace.json", dict(title="Workspace", metric_columns=[], presentation=dict(id="init-2", panel="execute")), expected=self.sha("workspace.json"))
 
     def test_structure_and_strict_json_rejected(self):
         cases = [

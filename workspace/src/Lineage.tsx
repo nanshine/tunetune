@@ -6,7 +6,7 @@ import { layout, statusLabel, text } from './model';
 import type { Assessment, Experiment, JsonObject } from './model';
 
 type ExperimentNode = Node<{ experiment: Experiment; assessments: Assessment[]; deltas: Record<string, Record<string, number>>; released: boolean; onSelect: () => void; onAccept: () => void }, 'experiment'>;
-type CandidateNode = Node<{ candidate: JsonObject; onFeedback: () => void }, 'candidate'>;
+type CandidateNode = Node<{ candidate: JsonObject }, 'candidate'>;
 
 function StateIcon({ state }: { state: string }) {
   if (state === 'succeeded') return <CheckCircle2 size={16} />;
@@ -25,13 +25,13 @@ function ExperimentCard({ data, selected }: NodeProps<ExperimentNode>) {
       return <span key={key}>{Object.hasOwn(assessment.metricLabels, key) ? assessment.metricLabels[key] : key}<strong>{value.toLocaleString()}</strong>{delta !== undefined && delta !== 0 && <small className={delta > 0 ? 'delta-positive' : 'delta-negative'}>{delta > 0 ? '+' : ''}{delta.toLocaleString(undefined, { maximumFractionDigits: 3 })}</small>}</span>;
     })}</div></div>)}
     {experiment.artifact && <div className="artifact-row"><Box size={14} /><span>产物</span><span className="mono">{experiment.artifact}</span></div>}
-    <div className="node-actions"><button className="primary nodrag" onClick={data.onSelect} aria-label={`查看实验 ${experiment.id}`}>查看结果<ArrowUpRight size={14} /></button>{data.released && <button className="nodrag" onClick={data.onAccept}>验收</button>}</div>
+    <div className="node-actions"><button className="primary nodrag" onClick={data.onSelect} aria-label={`查看实验 ${experiment.id}`}>查看结果<ArrowUpRight size={14} /></button>{data.released && <button className="nodrag" onClick={data.onAccept}>对比</button>}</div>
     <Handle type="source" position={Position.Right} />
   </article>;
 }
 function CandidateCard({ data }: NodeProps<CandidateNode>) {
   const candidate = data.candidate;
-  return <article className="candidate-card"><Handle type="target" position={Position.Left} /><span className="node-icon"><CircleDashed size={19} /></span><div><span className="eyebrow">候选方案</span><h3>{text(candidate.title, '待命名方案')}</h3><p>{text(candidate.hypothesis, '等待讨论与验证')}</p>{text(candidate.parent_experiment_id) && <small>起点 · {text(candidate.parent_experiment_id)}</small>}<button className="text-button nodrag" onClick={data.onFeedback}>提出调整建议<ArrowUpRight size={13} /></button></div></article>;
+  return <article className="candidate-card"><Handle type="target" position={Position.Left} /><span className="node-icon"><CircleDashed size={19} /></span><div><span className="eyebrow">候选方案</span><h3>{text(candidate.title, '待命名方案')}</h3><p>{text(candidate.hypothesis, '等待讨论与验证')}</p>{text(candidate.parent_experiment_id) && <small>起点 · {text(candidate.parent_experiment_id)}</small>}</div></article>;
 }
 const nodeTypes = { experiment: ExperimentCard, candidate: CandidateCard };
 
@@ -41,7 +41,7 @@ function CanvasControls() {
   return <div className="canvas-controls" aria-label="画布缩放"><button className="icon-button" aria-label="缩小画布" onClick={() => zoomOut({ duration: 0 })}><Minus size={16} /></button><span>{Math.round(zoom * 100)}%</span><button className="icon-button" aria-label="放大画布" onClick={() => zoomIn({ duration: 0 })}><Plus size={16} /></button><span className="control-divider" /><button className="fit-button" onClick={() => fitView({ padding: 0.2, duration: 0 })}><Maximize2 size={15} />回到全图</button></div>;
 }
 
-export function Lineage({ items, results, candidates, selected, releases, onSelect, onAccept, onCandidateFeedback }: { items: Experiment[]; results: Assessment[]; candidates: JsonObject[]; selected: string | null; releases: Set<string>; onSelect: (id: string) => void; onAccept: (id: string) => void; onCandidateFeedback: () => void }) {
+export function Lineage({ items, results, candidates, selected, releases, onSelect, onAccept }: { items: Experiment[]; results: Assessment[]; candidates: JsonObject[]; selected: string | null; releases: Set<string>; onSelect: (id: string) => void; onAccept: (id: string) => void }) {
   const topology = JSON.stringify(items.map(({ id, parent }) => ({ id, parent })));
   const positions = useMemo(() => layout(JSON.parse(topology) as Experiment[]), [topology]);
   const [dimensions, setDimensions] = useState<Record<string, { width: number; height: number }>>({});
@@ -63,14 +63,14 @@ export function Lineage({ items, results, candidates, selected, releases, onSele
     const parentPosition = positions.get(parent);
     const position = parentPosition ? { x: parentPosition.x + 340, y: parentPosition.y + 160 + sibling * 190 } : { x: maxX + 360, y: 160 + index * 200 };
     const id = text(candidate.id, `candidate-${index}`);
-    return { id: `candidate:${id}`, type: 'candidate', measured: dimensions[`candidate:${id}`], position, data: { candidate, onFeedback: onCandidateFeedback } };
+    return { id: `candidate:${id}`, type: 'candidate', measured: dimensions[`candidate:${id}`], position, data: { candidate } };
   });
   const experimentEdges = items.filter(item => item.parent && items.some(parent => parent.id === item.parent)).map(item => ({ id: `${item.parent}-${item.id}`, source: item.parent!, target: item.id, type: 'smoothstep' }));
   const candidateEdges = candidates.map((candidate, index) => ({ candidate, index })).filter(({ candidate }) => items.some(item => item.id === text(candidate.parent_experiment_id))).map(({ candidate, index }) => ({ id: `candidate-edge-${text(candidate.id, String(index))}`, source: text(candidate.parent_experiment_id), target: `candidate:${text(candidate.id, `candidate-${index}`)}`, type: 'smoothstep', animated: false, style: { strokeDasharray: '6 5' } }));
   return <ReactFlow nodes={[...experimentNodes, ...candidateNodes]} edges={[...experimentEdges, ...candidateEdges]} nodeTypes={nodeTypes} onNodesChange={changes => {
     const measured = changes.flatMap(change => change.type === 'dimensions' && change.dimensions ? [[change.id, change.dimensions]] : []);
     if (measured.length) setDimensions(previous => ({ ...previous, ...Object.fromEntries(measured) }));
-  }} onNodeClick={(_, node) => { if (node.type === 'experiment') onSelect(node.id); }} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null} minZoom={0.25} maxZoom={1.5} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} ariaLabelConfig={{ 'node.a11yDescription.default': '只读研究节点。使用节点内按钮查看详情或反馈。', 'node.a11yDescription.keyboardDisabled': '只读研究节点。使用节点内按钮查看详情或反馈。', 'edge.a11yDescription.default': '实线为实验派生关系，虚线为候选拟议关系。' }} proOptions={{ hideAttribution: false }}>
+  }} onNodeClick={(_, node) => { if (node.type === 'experiment') onSelect(node.id); }} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null} minZoom={0.25} maxZoom={1.5} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} ariaLabelConfig={{ 'node.a11yDescription.default': '只读研究节点。实验节点内可查看详情或比较结果。', 'node.a11yDescription.keyboardDisabled': '只读研究节点。实验节点内可查看详情或比较结果。', 'edge.a11yDescription.default': '实线为实验派生关系，虚线为候选拟议关系。' }} proOptions={{ hideAttribution: false }}>
     <Background gap={24} size={1} color="#d8dee8" />
     <CanvasControls />
   </ReactFlow>;
