@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react';
 import { Background, Handle, Position, ReactFlow, useReactFlow, useViewport } from '@xyflow/react';
 import type { Node, NodeProps } from '@xyflow/react';
 import { ArrowUpRight, CheckCircle2, Clock3, FlaskConical, Maximize2, Minus, Plus, XCircle } from 'lucide-react';
-import { outcomeLabels, layout, preferredEvaluation, statusLabel } from './model';
+import { outcomeLabels, layout, compatibleMeasurements, preferredEvaluation, roleLabels, statusLabel } from './model';
+import { UsageView } from './UsageView';
 import type { Analysis, EvaluationRun, Experiment } from './model';
 
-type ExperimentNode = Node<{ experiment: Experiment; evaluation?: EvaluationRun; currentVersion: string; delivered: boolean; onSelect: () => void; onCompare: () => void }, 'experiment'>;
+type ExperimentNode = Node<{ experiment: Experiment; evaluation?: EvaluationRun; currentVersion: string; delivered: boolean; comparisonWarning?: boolean; onSelect: () => void; onCompare: () => void }, 'experiment'>;
 
 export function StateIcon({ state }: { state: string }) {
   if (state === 'succeeded') return <CheckCircle2 size={16} aria-hidden="true" />;
@@ -16,15 +17,18 @@ export function OutcomeBadge({ analysis }: { analysis: Analysis }) {
   return <span className={`record-badge outcome-${analysis.outcome}`}>{outcomeLabels[analysis.outcome]}</span>;
 }
 
-export function ExperimentSummary({ experiment, evaluation, currentVersion, delivered, onSelect, onCompare }: ExperimentNode['data']) {
+export function ExperimentSummary({ experiment, evaluation, currentVersion, delivered, comparisonWarning, onSelect, onCompare }: ExperimentNode['data']) {
   const sameVersion = evaluation?.version === currentVersion ? evaluation : undefined;
   return <>
     <div className="card-heading"><span className="node-icon"><FlaskConical size={18} aria-hidden="true" /></span><div><span className="mono">{experiment.id}</span><h3>{experiment.title}</h3></div>{delivered && <span className="badge">已交付</span>}</div>
+    <div className="role-list">{experiment.role && <span className="record-badge">{roleLabels[experiment.role] || experiment.role}</span>}{experiment.targetKind && <span className="record-badge">{experiment.targetKind === 'api' ? '在线 API' : '本地模型'}</span>}</div>
+    <UsageView usage={experiment.usage} />
     <div className="result-row"><span>执行</span><span className={`status ${experiment.state}`}><StateIcon state={experiment.state} />{statusLabel(experiment.state)}</span></div>
     <div className="result-row"><span>结论</span><OutcomeBadge analysis={experiment.analysis} /></div>
     {(experiment.modelName || experiment.method) && <p className="node-method">{[experiment.modelName, experiment.method].filter(Boolean).join(' · ')}</p>}
     {sameVersion ? <div className="evaluation-summary"><div className="result-row"><span>评测 <strong>{sameVersion.version}</strong></span><span className={`status ${sameVersion.state}`}><StateIcon state={sameVersion.state} />{statusLabel(sameVersion.state)}</span></div>{sameVersion.state === 'succeeded' && <div className="metric-list">{Object.entries(sameVersion.metrics).slice(0, 3).map(([key, value]) => <span key={key}>{Object.hasOwn(sameVersion.metricLabels, key) ? sameVersion.metricLabels[key] : key}<strong>{value.toLocaleString()}</strong></span>)}</div>}</div> : <div className="result-row muted"><span>评测 {currentVersion}</span><span>尚无同版本结果</span></div>}
-    <div className="node-actions"><button className="primary nodrag" onClick={event => { event.stopPropagation(); onSelect(); }} aria-label={`查看实验 ${experiment.id}`}>查看详情<ArrowUpRight size={14} /></button>{delivered && <button className="nodrag" onClick={event => { event.stopPropagation(); onCompare(); }}>模型对比</button>}</div>
+    {comparisonWarning && <p className="muted">评测内容或输入不同，分数不宜直接比较。</p>}
+    <div className="node-actions"><button className="primary nodrag" onClick={event => { event.stopPropagation(); onSelect(); }} aria-label={`查看实验 ${experiment.id}`}>查看详情<ArrowUpRight size={14} /></button>{experiment.state === 'succeeded' && experiment.targetKind && <button className="nodrag" onClick={event => { event.stopPropagation(); onCompare(); }}>模型对比</button>}</div>
   </>;
 }
 
@@ -51,6 +55,11 @@ export function Lineage({ items, results, currentVersion, selected, deliveries, 
     id: experiment.id, type: 'experiment', measured: dimensions[experiment.id], position: positions.get(experiment.id)!, selected: selected === experiment.id,
     data: { experiment, evaluation: preferredEvaluation(results.filter(result => result.experimentId === experiment.id), currentVersion), currentVersion, delivered: deliveries.has(experiment.id), onSelect: () => onSelect(experiment.id), onCompare: () => onCompare(experiment.id) },
   }));
+  const measured = nodes.flatMap(node => node.data.evaluation?.state === 'succeeded' ? [node.data.evaluation] : []);
+  for (const node of nodes) {
+    const result = node.data.evaluation;
+    if (result?.state === 'succeeded') node.data.comparisonWarning = measured.some(other => other.experimentId !== result.experimentId && !compatibleMeasurements(result, other));
+  }
   const edges = items.filter(item => item.parent && items.some(parent => parent.id === item.parent)).map(item => ({ id: `${item.parent}-${item.id}`, source: item.parent!, target: item.id, type: 'smoothstep' }));
   return <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changes => {
     const measured = changes.flatMap(change => change.type === 'dimensions' && change.dimensions ? [[change.id, change.dimensions]] : []);

@@ -9,9 +9,9 @@ import shutil
 import tarfile
 import tempfile
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
-SKILLS = ("research-workspace", "tunetune-init", "build-evaluation", "train", "review")
+SKILLS = ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments", "explore")
 SKILL_RESOURCES = {"references": {".md", ".json"}, "scripts": {".py"}}
 EXCLUDED_SKILL_PARTS = {"evals", "notes", "reference", "__pycache__", "cache", "node_modules"}
 ASSET_SUFFIXES = {".html", ".js", ".css", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".woff", ".woff2", ".ttf"}
@@ -25,7 +25,7 @@ def checked_file(path):
 
 def collect_skills(source):
     inputs = {}
-    for relative in ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py"):
+    for relative in ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py", "scripts/resources.py"):
         checked_file(source / "skills/research-workspace" / relative)
     for name in SKILLS:
         root = source / "skills" / name
@@ -77,7 +77,7 @@ def build(source, output):
             destination = kit / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, destination)
-        manifest = {"version": VERSION, "schema_min": 2, "schema_max": 2,
+        manifest = {"version": VERSION, "schema_min": 3, "schema_max": 3,
                     "files": [{"path": relative, "sha256": hashlib.sha256((kit / relative).read_bytes()).hexdigest()}
                               for relative in sorted(inputs)]}
         (kit / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

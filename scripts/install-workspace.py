@@ -9,7 +9,7 @@ import re
 import stat
 import tempfile
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
 
 
@@ -52,61 +52,27 @@ def record_id(value):
 
 
 def validate_business(name, data):
-    obj = json_object(data, name)
-    if name == "project.json":
-        if type(obj.get("schema_version")) is not int or obj["schema_version"] != 2:
-            raise ValueError("Incompatible project format: schema 2 required; automatic migration is not supported")
-        deliveries = obj.get("deliveries")
-        valid = (set(obj) == {"schema_version", "name", "language", "current_evaluation", "deliveries"}
-                 and isinstance(obj.get("name"), str) and bool(obj["name"].strip())
-                 and isinstance(obj.get("language"), str) and bool(obj["language"].strip())
-                 and (obj.get("current_evaluation") is None or record_id(obj["current_evaluation"]))
-                 and obj.get("current_evaluation") != "draft"
-                 and isinstance(deliveries, list) and all(record_id(item) for item in deliveries)
-                 and len(set(deliveries)) == len(deliveries))
-    elif name == "proposal.json":
-        sections, examples = obj.get("sections"), obj.get("examples")
-        valid = (set(obj) <= {"summary", "sections", "examples", "feasibility"}
-                 and isinstance(obj.get("summary"), str)
-                 and isinstance(sections, list)
-                 and all(isinstance(item, dict) and set(item) == {"title", "body"}
-                         and all(isinstance(item[key], str) for key in ("title", "body")) for item in sections)
-                 and isinstance(examples, list)
-                 and all(isinstance(item, dict) and {"id", "input"} <= set(item)
-                         and set(item) <= {"id", "input", "expected_output"}
-                         and record_id(item["id"]) for item in examples)
-                 and len({item["id"] for item in examples}) == len(examples))
-        if "feasibility" in obj:
-            feasibility = obj["feasibility"]
-            valid = (valid and isinstance(feasibility, dict) and set(feasibility) == {"verdict", "reason"}
-                     and feasibility["verdict"] in ("feasible", "conditional", "infeasible", "unknown")
-                     and isinstance(feasibility["reason"], str))
-    elif name == "resources.json":
-        items = obj.get("items")
-        valid = (set(obj) == {"items"} and isinstance(items, list)
-                 and all(isinstance(item, dict) and record_id(item.get("id"))
-                         and all(isinstance(item.get(key), str) and bool(item[key].strip()) for key in ("title", "type"))
-                         and item.get("status") in ("ready", "missing", "changed", "busy", "unknown")
-                         and set(item) <= {"id", "title", "type", "status", "path", "location", "version", "size", "monitor"}
-                         and all(isinstance(item[key], str) for key in ("path", "location", "version", "size") if key in item)
-                         and not ("path" in item and "location" in item)
-                         and ("location" not in item or (item["location"].strip() and "\x00" not in item["location"])) for item in items)
-                 and len({item["id"] for item in items}) == len(items))
-        if valid:
-            for item in items:
-                if "path" in item:
-                    safe_path(item["path"])
-                if "monitor" in item:
-                    monitor = item["monitor"]
-                    valid = (isinstance(monitor, dict) and set(monitor) <= {"kind", "index"}
-                             and monitor.get("kind") in ("file", "memory", "nvidia_gpu", "python")
-                             and ("index" not in monitor or (type(monitor["index"]) is int and monitor["index"] >= 0)))
-                    if not valid:
-                        break
-    else:
-        valid = False
-    if not valid:
-        raise ValueError(f"Conflicting or unsupported research file: {name}")
+    # One canonical schema serves both installation and research writes.
+    import importlib.util
+    roots = (Path(__file__).resolve().parent, Path(__file__).resolve().parents[1])
+    source = next((root / "skills/research-workspace/scripts/records.py" for root in roots
+                   if (root / "skills/research-workspace/scripts/records.py").is_file()), None)
+    if source is None:
+        raise ValueError("Missing canonical record validator")
+    spec = importlib.util.spec_from_file_location("kit_records", source)
+    records = importlib.util.module_from_spec(spec)
+    import sys
+    previous = sys.dont_write_bytecode
+    try:
+        sys.dont_write_bytecode = True
+        spec.loader.exec_module(records)
+    finally:
+        sys.dont_write_bytecode = previous
+    obj = records.shape(name, data)
+    if name == "project.json" and not all(obj[key].strip() for key in ("name", "language")):
+        raise ValueError("Project name and language must not be empty")
+    if name == "resources.json" and any(not item[key].strip() for item in obj["items"] for key in ("title", "type")):
+        raise ValueError("Resource title and type must not be empty")
     return obj
 
 
@@ -122,8 +88,8 @@ def verify_kit(kit):
     manifest = json_object(manifest_bytes, "manifest.json")
     if (manifest.get("version") != VERSION or type(manifest.get("schema_min")) is not int
             or type(manifest.get("schema_max")) is not int
-            or manifest["schema_min"] != 2 or manifest["schema_max"] != 2):
-        raise ValueError("Unsupported kit version or schema range; kit 0.4.0 requires schema 2 only")
+            or manifest["schema_min"] != 3 or manifest["schema_max"] != 3):
+        raise ValueError("Unsupported kit version or schema range; kit 0.5.0 requires schema 3 only")
     entries = manifest.get("files")
     if not isinstance(entries, list):
         raise ValueError("Manifest files must be a list of {path, sha256}")
@@ -140,7 +106,7 @@ def verify_kit(kit):
                    or relative in ("workspace/workspace.py", "workspace/monitor.py", "install-workspace.py")
                    or relative.startswith("workspace/assets/")
                    or (relative.startswith("skills/") and len(PurePosixPath(relative).parts) >= 3
-                       and PurePosixPath(relative).parts[1] in ("research-workspace", "tunetune-init", "build-evaluation", "train", "review")))
+                       and PurePosixPath(relative).parts[1] in ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments", "explore")))
         if not allowed or not isinstance(entry["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
             raise ValueError(f"Unexpected manifest file: {relative}")
         file = kit / relative
@@ -153,9 +119,9 @@ def verify_kit(kit):
         payload[relative] = data
     required = {f"template/{name}" for name in TEMPLATES} | {
         "workspace/workspace.py", "workspace/monitor.py", "workspace/assets/index.html", "install-workspace.py"}
-    required |= {f"skills/{name}/SKILL.md" for name in ("research-workspace", "tunetune-init", "build-evaluation", "train", "review")}
+    required |= {f"skills/{name}/SKILL.md" for name in ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments", "explore")}
     required |= {"skills/research-workspace/" + path for path in
-                 ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py")}
+                 ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py", "scripts/resources.py")}
     if not required <= payload.keys():
         raise ValueError("Kit is missing required files")
     expected = set(payload) | {"manifest.json"}
@@ -280,6 +246,13 @@ def main():
     except (OSError, ValueError) as error:
         parser.exit(1, f"Installation refused: {error}\n")
     print(f"Installed {count} missing files in {args.project.absolute()}")
+    print("Files installed. Skill discovery still needs to be checked in your coding app.")
+    print("Skills: research-workspace, tunetune-init, build-evaluation, run-experiments, explore")
+    if args.host == "claude":
+        print("Use /reload-skills if needed, then check that these skills can be selected.")
+    else:
+        print("Check the skills list; if missing, reopen a chat in this same directory.")
+    print("Continue: Read the current proposal and my original request, then use tunetune-init to continue.")
     print("Start from the project: python3 .workspace/app/workspace.py --project . --port 0")
 
 

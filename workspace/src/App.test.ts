@@ -9,12 +9,12 @@ const workspace = vi.hoisted(() => ({ snapshot: null as Snapshot | null, connect
 vi.mock('./useWorkspace', () => ({ useWorkspace: () => workspace }));
 const file = (content: unknown): ResearchFile => ({ content, sha256: 'a'.repeat(64) });
 const files: Snapshot['files'] = {
-  'project.json': file({ schema_version: 2, name: '研究空间主题', deliveries: ['first', 'second'] }),
+  'project.json': file({ schema_version: 3, name: '研究空间主题', deliveries: ['first', 'second'] }),
   'proposal.json': file({ summary: '整理客户留言', sections: [], examples: [] }),
   'experiments/first/config.json': file({ title: '基础模型', model_name: 'SmallLM', method: '固定规则' }),
-  'experiments/first/status.json': file({ state: 'succeeded', model_path: 'experiments/first/model/output.bin' }),
+  'experiments/first/status.json': file({ state: 'succeeded', target: { kind: 'local', path: 'experiments/first/model/output.bin', sha256: 'a'.repeat(64) } }),
   'experiments/second/config.json': file({ title: '领域适配模型', model_name: 'SmallLM', method: 'LoRA' }),
-  'experiments/second/status.json': file({ state: 'succeeded', model_path: 'experiments/second/model/output.bin' }),
+  'experiments/second/status.json': file({ state: 'succeeded', target: { kind: 'local', path: 'experiments/second/model/output.bin', sha256: 'a'.repeat(64) } }),
   'comparison/outputs.jsonl': file([
     { sample_id: 'hidden-first-sample', input: '客户留言', outputs: { first: '第一版输出', second: '第二版输出' } },
     { sample_id: 'hidden-second-sample', input: '另一条留言', outputs: { first: '另一个输出' } },
@@ -49,7 +49,7 @@ describe('read-only research panel', () => {
     expect(empty).toContain('模型对比');
   });
   it('always exposes comparison even without deliveries', () => {
-    workspace.snapshot = { files: { 'project.json': file({ schema_version: 2, name: '新研究', deliveries: [] }) }, revision: '2', synced_at: '', error: null };
+    workspace.snapshot = { files: { 'project.json': file({ schema_version: 3, name: '新研究', deliveries: [] }) }, revision: '2', synced_at: '', error: null };
     const html = renderToStaticMarkup(createElement(App));
     expect(html).toContain('模型对比');
     expect(html).toContain('实验谱系画布');
@@ -70,7 +70,7 @@ describe('dedicated model output comparison', () => {
     expect(html).not.toContain('<form');
   });
   it('explains a single-model comparison and disables swap', () => {
-    const html = renderToStaticMarkup(createElement(ComparisonView, { ...baseProps, files: { ...files, 'project.json': file({ deliveries: ['first'] }) } }));
+    const html = renderToStaticMarkup(createElement(ComparisonView, { ...baseProps, files: { ...files, 'experiments/second/status.json': file({ state: 'failed' }) } }));
     expect(html).toContain('左右为同一模型');
     expect(html).toMatch(/aria-label="交换左右模型" disabled/);
     expect(html).not.toContain('第二版输出');
@@ -84,14 +84,13 @@ describe('dedicated model output comparison', () => {
     const empty = renderToStaticMarkup(createElement(ComparisonView, { ...baseProps, files: { ...missing, 'comparison/outputs.jsonl': file([]) } }));
     expect(empty).toContain('对照输出文件为空');
   });
-  it('shows shared inputs but no model output if deliveries are empty or not usable', () => {
+  it('shows shared inputs but no model output if no model is usable', () => {
     for (const overrides of [
-      { 'project.json': file({ deliveries: [] }) },
-      { 'project.json': file({ deliveries: ['first'] }), 'experiments/first/status.json': file({ state: 'completed', model_path: 'experiments/first/model/output.bin' }) },
+      { 'project.json': file({ deliveries: ['first'] }), 'experiments/first/status.json': file({ state: 'completed', target: { kind: 'local', path: 'experiments/first/model/output.bin', sha256: 'a'.repeat(64) } }) },
       { 'project.json': file({ deliveries: ['first'] }), 'experiments/first/status.json': file({ state: 'succeeded' }) },
     ] as Snapshot['files'][]) {
-      const html = renderToStaticMarkup(createElement(ComparisonView, { ...baseProps, files: { ...files, ...overrides } }));
-      expect(html).toContain('暂无可对比的交付模型');
+      const html = renderToStaticMarkup(createElement(ComparisonView, { ...baseProps, files: { ...files, ...overrides, 'experiments/second/status.json': file({ state: 'failed' }) } }));
+      expect(html).toContain('暂无可对比的模型');
       expect(html).toContain('输入（两侧相同）');
       expect(html).toContain('客户留言');
       expect(html).not.toContain('第一版输出');

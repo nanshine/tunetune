@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a local synthetic classical-classifier demo in a fresh format-2 project.
+"""Create a local synthetic classical-classifier demo in a fresh format-3 project.
 
 No dependencies, network access, installation, or model downloads. Existing research
 is refused, including partial prior demo runs. Invoke only after installing a kit:
@@ -404,8 +404,8 @@ class Demo:
             self.records.shape(path, data)
             self.initial[path] = self.records.digest(data)
         manifest = self.read_json(".workspace/manifest.json")
-        if not manifest.get("schema_min", 3) <= 2 <= manifest.get("schema_max", 0):
-            raise ValueError("Installed kit does not support schema 2")
+        if not manifest.get("schema_min", 4) == 3 == manifest.get("schema_max", 0):
+            raise ValueError("Installed kit does not support schema 3")
         for path in ("AGENTS.md", ".workspace/app/workspace.py", ".workspace/app/monitor.py",
                      ".workspace/app/assets/index.html", HELPERS + "/run.py"):
             if not self.tree.read(path):
@@ -418,7 +418,7 @@ class Demo:
         project, proposal = self.read_json("project.json"), self.read_json("proposal.json")
         if (project["current_evaluation"] is not None or project["deliveries"]
                 or proposal["summary"] or proposal["sections"] or proposal["examples"] or "feasibility" in proposal
-                or self.read_json("resources.json")["items"]):
+                or proposal.get("approaches") or self.read_json("resources.json")["items"]):
             raise ValueError("Refusing an existing proposal, evaluation, delivery, or resource inventory")
         report = self.records.validate(self.tree)
         if not report["valid"]:
@@ -505,6 +505,11 @@ class Demo:
             ],
             "examples": [{"id": "task", "input": "Please send the invoice copy", "expected_output": "todo"},
                          {"id": "receipt", "input": "Receipt for groceries total 18 dollars", "expected_output": "expense"}],
+            "approaches": [
+                {"id": "rules", "title": "关键词规则", "roles": ["baseline"], "rationale": "无额外依赖，检查完整输入输出和评分通路。"},
+                {"id": "local", "title": "轻量监督分类器", "roles": ["recommended"], "rationale": "在本地 CPU 比较特征与训练数据干预，保留实际输出。"},
+                {"id": "semantic", "title": "语义模型或强语言模型", "roles": ["reference", "challenge"], "rationale": "真实研究可检验语义能力差距。", "limitations": "本演示仅使用标准库与合成数据，不下载权重、不调用 API；此路线未运行，不宣称效果。"},
+            ],
             "feasibility": {"verdict": "feasible", "reason": "此微型任务可用Python标准库在本地CPU完成，无依赖下载、网络或付费服务。"},
         }, self.initial["proposal.json"])
         training = rows(TRAIN, "train")
@@ -569,7 +574,7 @@ class Demo:
                 "--parameters", snapshot + "/parameters.json", "--output", model_path]
         self.record(base + "/config.json", {
             "id": ident, "title": title, "parent_experiment_id": f"exp-{parent:03d}" if parent else None,
-            "hypothesis": hypothesis, "method": title,
+            "hypothesis": hypothesis, "method": title, "role": "baseline" if number == 1 else "candidate",
             "model_name": "关键词分类器" if number == 1 else "多项式朴素贝叶斯", "framework": "Python 标准库 · CPU",
             "parameters": parameters, "inputs": [{"path": "data/train.jsonl", "sha256": self.sha("data/train.jsonl")}],
             "snapshot_sha256": self.sha(snapshot + "/manifest.json"), "execution": self.execution(argv),
@@ -584,7 +589,7 @@ class Demo:
                 raise ValueError("Generated model does not match its declared training inputs")
             model_hash = self.sha(model_path)
             self.records.verify_hash(self.tree, model_path, model_hash)
-            self.finish(base, model_path=model_path, model_sha256=model_hash)
+            self.finish(base, target={"kind": "local", "path": model_path, "sha256": model_hash})
         except Exception as exc:
             self.fail(base, exc)
             raise
@@ -599,7 +604,7 @@ class Demo:
         argv = [self.python, "-B", evaluation + "/evaluate.py", "--model", model["path"], "--samples", evaluation + "/samples.jsonl"]
         evaluation_hash = self.sha(evaluation + "/manifest.json")
         self.record(base + "/config.json", {"id": ident, "evaluation_version": version,
-                    "model_sha256": model["sha256"], "evaluation_sha256": evaluation_hash, "execution": self.execution(argv)})
+                    "target_sha256": model["sha256"], "evaluation_sha256": evaluation_hash, "execution": self.execution(argv)})
         self.record(base + "/status.json", {"state": "pending", "updated_at": now()})
         try:
             self.run(base)
@@ -715,7 +720,7 @@ def generate(project):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project", required=True, type=Path, help="Fresh already-installed format-2 project (agents host)")
+    parser.add_argument("--project", required=True, type=Path, help="Fresh already-installed format-3 project (agents host)")
     args = parser.parse_args(argv)
     try:
         result = generate(args.project)

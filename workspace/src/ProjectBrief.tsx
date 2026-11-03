@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, CircleHelp, Clock3, RefreshCw, XCircle } from 'lucide-react';
-import { array, object, resourceObservation, resourceStates, text } from './model';
+import { array, object, resourceObservation, resourceStates, roleLabels, text } from './model';
 import type { JsonObject, Observations } from './model';
-import { RecordView } from './RecordView';
+import { LinkedText, RecordView } from './RecordView';
 
 const feasibilityLabels: Record<string, string> = { feasible: '可行', conditional: '有条件可行', infeasible: '不可行', unknown: '待评估' };
 
-export function ProposalView({ proposal }: { proposal: JsonObject }) {
+export function ProposalView({ proposal, resources }: { proposal: JsonObject; resources?: JsonObject }) {
+  const resourceTitles = new Map(array(resources?.items).map(object).map(resource => [text(resource.id), text(resource.title)]));
   const feasibility = object(proposal.feasibility);
   const verdict = text(feasibility.verdict, 'unknown');
   return <div className="project-brief">
-    <p className="proposal-summary">{text(proposal.summary) || '和 Agent 聊聊你想完成的事，研究提案会逐步整理在这里。'}</p>
-    {array(proposal.sections).map(object).map((section, index) => <section className="panel-section" key={index}><h3>{text(section.title)}</h3><p className="brief-text">{text(section.body)}</p></section>)}
+    <p className="proposal-summary">{text(proposal.summary) ? <LinkedText value={text(proposal.summary)} /> : '和 Agent 聊聊你想完成的事，研究提案会逐步整理在这里。'}</p>
+    {!!array(proposal.approaches).length && <section className="panel-section"><h3>方案与取舍</h3>{array(proposal.approaches).map(object).map((approach, index) => <article className="approach-card" key={text(approach.id, String(index))}><h4>{text(approach.title)}</h4><div className="role-list">{array(approach.roles).map(role => <span className="record-badge" key={String(role)}>{roleLabels[String(role)] || String(role)}</span>)}</div><p className="brief-text"><LinkedText value={text(approach.rationale)} /></p>{!!array(approach.resource_ids).filter(id => resourceTitles.has(String(id))).length && <p className="resource-facts">所需资源：{array(approach.resource_ids).map(id => resourceTitles.get(String(id))).filter(Boolean).join('、')}</p>}{text(approach.limitations) && <p className="muted"><LinkedText value={text(approach.limitations)} /></p>}</article>)}</section>}
+    {array(proposal.sections).map(object).map((section, index) => <section className="panel-section" key={index}><h3>{text(section.title)}</h3><p className="brief-text"><LinkedText value={text(section.body)} /></p></section>)}
     {!!Object.keys(feasibility).length && <section className="panel-section"><h3>可行性 <span className="record-badge">{Object.hasOwn(feasibilityLabels, verdict) ? feasibilityLabels[verdict] : '待评估'}</span></h3>{text(feasibility.reason) && <p className="brief-text">{text(feasibility.reason)}</p>}</section>}
     {!!array(proposal.examples).length && <details className="proposal-examples"><summary>输入 / 输出示例 <span className="count">{array(proposal.examples).length}</span></summary>{array(proposal.examples).map(object).map((example, index) => <article className="brief-example" key={text(example.id, String(index))}>
       <h4>例子 {index + 1}</h4>
@@ -21,7 +23,7 @@ export function ProposalView({ proposal }: { proposal: JsonObject }) {
   </div>;
 }
 
-const resourceTypes: Record<string, string> = { data: '数据', dataset: '数据', model: '模型', environment: '环境', hardware: '硬件', tool: '工具', other: '其他' };
+const resourceTypes: Record<string, string> = { data: '数据', dataset: '数据', model: '模型', environment: '环境', hardware: '硬件', tool: '代码与工具', api: 'API 服务', annotation: '标注与审核', storage: '存储', credential: '凭证配置', other: '其他' };
 const resourceIcons = { ready: CheckCircle2, missing: XCircle, changed: RefreshCw, busy: Clock3, unknown: CircleHelp };
 
 export function groupResources(items: JsonObject[]): [string, JsonObject[]][] {
@@ -71,6 +73,10 @@ export function ResourcesView({ resources, observations }: { resources: JsonObje
       const showDetail = object(resource.monitor).kind !== 'file' && state !== 'unknown' && state !== 'missing';
       return <article className="brief-resource" key={text(resource.id, String(index))}>
         <div className="resource-heading"><h4>{name}</h4><span className={`resource-state ${state}`} role="img" title={description} aria-label={resourceStates[state]}><Icon size={18} aria-hidden="true" /></span></div>
+        {text(resource.purpose) && <p className="brief-text">{text(resource.purpose)}</p>}
+        {text(resource.source) && <p className="resource-facts">来源：<LinkedText value={text(resource.source)} /></p>}
+        {text(resource.preparation) && <p className="resource-facts">准备计划：<LinkedText value={text(resource.preparation)} /></p>}
+        {text(resource.access) && <p className="resource-facts">使用条件：{text(resource.access)}</p>}
         {(location || size) && <p className="resource-facts">{[location, size].filter(Boolean).join(' · ')}</p>}
         {showDetail && detail && detail !== name && <p className="resource-facts">{detail}</p>}
       </article>;

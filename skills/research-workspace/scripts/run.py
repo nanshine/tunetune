@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute one prepared format-2 config; never infer scientific success."""
+"""Execute one prepared format-3 config; never infer scientific success."""
 import argparse
 from datetime import datetime, timezone
 import json
@@ -95,7 +95,7 @@ def execute(tree, path):
             require(not tree.files(path + "/model"), "Attempt already has model files; use a new ID")
         if tree.exists(path + "/status.json"):
             status = read_record(tree, path + "/status.json")
-            require(status["state"] == "pending" and not any(k in status for k in (*PROCESS, "model_path", "metrics")),
+            require(status["state"] == "pending" and not any(k in status for k in (*PROCESS, "target", "metrics", "usage")),
                     "Attempt already started or completed; use a new ID")
         verify_inputs(tree, path, config)
         cwd = [] if execution["cwd"] == "." else parts(execution["cwd"])

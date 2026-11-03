@@ -1,18 +1,20 @@
 ---
 name: build-evaluation
-description: Build, calibrate or change executable TuneTune evaluations. Use to define useful results, test scoring rules and representative samples, or repair measurement gaps; unchanged-model retests belong in train.
+description: Design, calibrate or change executable TuneTune evaluations, representative samples and data separation before comparing models.
 ---
 
-# Make useful results measurable
+# Make useful behavior measurable
 
-Load [research-workspace](../research-workspace/SKILL.md), then read the proposal, relevant resources, existing evaluation and conversation. Define what a useful output does, which failures matter and which trade-offs need measurement. Explain what each metric captures and misses. Evaluation should follow the task, not the training algorithm's preferred data format.
+Load [research-workspace](../research-workspace/SKILL.md), the proposal, resources, conversation and existing measurement. Define useful outputs, consequential failures and trade-offs independently of the preferred algorithm. Explain what metrics measure and miss; labels are not required for every task.
 
-Prepare representative successes, failures and boundary cases, with references or executable checks where appropriate. Labels are not mandatory for every task. Keep stable sample identities and explain sources, processing and coverage limits. Separate development and calibration material from independent final checks at the source or grouping level needed to avoid leakage. An example used to steer tuning is exposed, even if its filename says test.
+Prepare representative successes, failures and boundary cases, with stable sample identities and justified references or executable checks. For subjective judgments, show consequential disagreements to the person before treating your draft labels as their preferences. A strong model can assist annotation but cannot make its own answers independent truth.
 
-Implement repeatable preparation, inference, scoring and aggregation. Trace the real path from model loading through preprocessing and output parsing to individual judgments and totals. Distinguish missing output, parser or process failure from a genuine low score; unavailable measurements are not zero. Preserve real outputs and diagnostics.
+Separate development and calibration inputs from final checks at the source or grouping level needed to avoid leakage. Make the split before inspecting material for tuning when possible. Store preparation and split material under evaluation, pin the actual content and enforce exclusions in training preparation. Explain exposed or nonrepresentative evidence honestly; a reserved filename does not make a sample unseen. Read the relevant technical-map domain for leakage risks.
 
-Calibrate this actual path with justified positive, negative and trade-off examples, including a small end-to-end model check. Inspect disagreements and judge repeatability where material. Investigate contradictory scores before moving thresholds. Ask the person about unresolved consequential judgments in conversation, using recognizable outputs rather than requiring exhaustive annotation. Synthetic examples or a smoke test alone do not establish real-world quality.
+Implement repeatable preparation, model loading, preprocessing, inference, parsing, scoring and aggregation. Distinguish process, parser and missing-output failures from low quality; absent measurements are not zero. Keep real outputs and diagnostics. Local candidates and API references need compatible input and scoring conditions, with cost and latency retained when measured.
 
-Use the shared [record guide](../research-workspace/references/records.md) and [tools](../research-workspace/references/tools.md) to freeze an immutable `evaluation/<version>/` with its definition, fixed `samples.jsonl`, scoring scripts and verified manifest. Include only samples suitable for display; keep protected or large inputs elsewhere and pin those actually used. Verify the package runs without mutable draft files. Describe calibration evidence and limitations with the evaluation's research explanation.
+Calibrate the actual path with justified positive, negative and trade-off examples and a small end-to-end model check. Inspect disagreement and repeatability where material. Before freezing, check task coverage, reference provenance, split isolation, metric meaning, runtime dependencies and package independence from mutable drafts. A smoke test proves execution, not real-world quality.
 
-Select `project.current_evaluation` with conflict detection within the existing authorization. Changed samples or scoring require a new version and appropriate remeasurement, never replacement of old results. Hand the version and actual model interface to [train](../train/SKILL.md). Compare only compatible measurement and inference conditions; an existing model can be evaluated again without retraining. Report what is runnable, what the evidence supports and any remaining blocker.
+Use the shared record tools to freeze evaluation only after these checks. Include displayable samples, necessary scripts and fixed preparation evidence; exclude caches, secrets and unrelated inputs. Keep protected or large media elsewhere through explicit pinned references. Changed samples or scoring require a new version, never overwriting frozen evidence.
+
+Select the evaluation with conflict detection and pass the runnable interface to [run-experiments](../run-experiments/SKILL.md) within authorization. Explain measurement limits and continue; ask only for a consequential unresolved judgment, presenting concrete examples and a recommendation.

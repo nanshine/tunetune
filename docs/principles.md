@@ -1,39 +1,47 @@
 # TuneTune principles
 
-## A useful model, not just an experiment
+## Useful outcomes and ambitious research
 
-Help a beginner turn an everyday need into a useful private model with an Agent. Start with recognizable inputs, desired outputs and an intended way to use the result. The Agent investigates technical choices and performs routine commands; the person decides consequential preferences and boundaries. Explain recommendations and uncertainty in ordinary language.
+Help a beginner turn a real need into a useful private model with an Agent. Begin with recognizable inputs, desired outputs and intended use. The Agent owns technical investigation and routine preparation; the person decides consequential preferences and boundaries. Distinguish their requirements from proposed defaults and unresolved assumptions.
 
-The smallest complete journey is a researched proposal, calibrated evaluation, a baseline, bounded experiments and a usable delivery. Training is one possible intervention, not evidence of usefulness by itself. An untrained baseline does not fulfill an explicit training request. Failure to meet the goal is an honest research outcome.
+The complete journey is a researched proposal and resource plan, calibrated evaluation, a credible baseline, bounded informative experiments and verified delivery. A baseline is a starting point, not a reason to stop. Consider a recommended improvement and strong quality reference or challenge route, using relevant evidence rather than complexity as a proxy for quality. Roles can coincide. An API model can reveal useful headroom but is not a proven ceiling or private local delivery.
 
-## One body of evidence
+Training is one possible intervention. A fixed-rule fallback does not fulfill an explicit training request. Failure to reach the goal is an honest result, paired with a concrete explanation and worthwhile next decision.
 
-Project files describe the study. The Agent maintains them; the panel makes them easier to understand through an infinite experiment canvas and views of the proposal, resources, evaluation and model comparisons. Its only write action is changing the project name. Questions, requests and user decisions stay in the Agent conversation, not another filesystem workflow.
+## One understandable body of evidence
 
-Keep the current proposal understandable and sufficient for the next step. Explain the recommendation, evidence, alternatives, constraints and unresolved conditions without requiring exhaustive research before beginning. Update that account when understanding changes. Optional resource observations show limited facts such as file existence or memory availability; they do not establish data suitability or scientific feasibility.
+The Agent maintains project files; the panel observes the same evidence through an infinite experiment canvas and readable proposal, resource, evaluation and comparison views. Its only write action changes the project name. Questions, requests, authorization and user decisions remain in conversation, not another filesystem workflow or panel control.
 
-## Improvement must be measured honestly
+Keep one current proposal with a grounded recommendation, alternatives, sources, resource references, finite budget, stopping conditions and next validation. Keep resource preparation facts in the inventory rather than duplicating them in prose. Use coherent human explanations; optional resource observations establish limited facts such as file existence, not usability or scientific feasibility.
 
-Calibrate the actual scoring path with recognizable successes, failures and trade-offs. Evaluation follows the task, not the training format. Separate development examples from independent final checks; repeatedly inspected examples are no longer unseen evidence.
+## Measurement before claims
 
-Freeze evaluation versions and execution inputs. Compare results only under compatible measurement, data and inference conditions. A model can be evaluated again without training again. Method ancestry, inherited weights and comparison evidence are different relationships.
+Calibrate the actual model-to-score path with justified successes, failures and trade-offs. Evaluation follows intended behavior rather than an algorithm's preferred training format. Resolve consequential subjective disagreements with recognizable examples. Strong-model annotations are draft evidence, not independent truth.
 
-Keep process facts, measured behavior and interpretation distinct. Preserve final measurements while updating interpretations with conflict detection. A successful command is not yet a verified usable model, and an uncertain score difference should not displace a working result.
+Separate development from independent final checks at the appropriate source, entity or temporal grouping, pin actual content and enforce exclusions in preparation. Repeatedly inspected examples are exposed. Finish calibration and coverage checks before freezing. Preserve configurations, inputs and final measurements; compare only compatible measurement and inference conditions. An unchanged model can be retested without training again.
 
-## Autonomy has real boundaries
+Keep process facts, observed quality and interpretation distinct. Missing measurements are not zero. Exit success is not a verified usable model. Keep an incumbent when apparent gains are uncertain. Method ancestry, weight inheritance and comparison evidence are different relationships.
 
-A clear request can authorize several skills and a bounded experiment loop. Continue within it rather than asking permission at every transition. Ask when a consequential decision is missing or access, privacy, scope or spending would change. Suggestions do not expand authority.
+## Initiative within a concrete scope
 
-The Agent chooses hypotheses and interprets evidence. Deterministic tools handle repeated mechanics, fixed-input checks, safe publication, execution timeouts, logs and status. They are not a sandbox or an authorization engine. Count preparation, failures and retests against the same budget and deadline; reserve capacity for final validation. Do not promise background continuation the host cannot provide.
+A new study normally has one decision point after the person can review the proposal and resource plan. Explicit delegation covering that scope can supply the decision already. Preparation states sources, estimated transfer and disk use, destinations, data disclosures and costs where relevant; unknowns remain visible. A credential does not authorize unspecified spending.
 
-## Delivery is concrete and limited
+Once covered, continue across skills and bounded rounds without repeated approvals. Ask only for consequential missing judgments or changed access, privacy, scope, time or cost boundaries. Use available conversational capabilities without depending on one application's tool names. End stages with authorized action, a specific decision and recommendation, or completed delivery rather than bare missing-work reports.
 
-Verify the actual model, required dependencies and intended inference interface. Show real same-input outputs where comparison helps, reusing existing evidence when suitable. Selected models remain inside their experiments; a delivery list is a choice of verified results, not copying, deployment or proof of user satisfaction. Export a standalone bundle only when requested.
+The Agent chooses hypotheses and interprets evidence. Deterministic helpers handle repeatable preparation, safe acquisition, fixed inputs, conditional publication, execution timeouts, logs and status. They are neither a sandbox nor an authorization engine. Count preparation, failures and retests against the budget and reserve final-validation capacity. Do not promise background continuation the application cannot provide.
 
-Explain what improved, what remains uncertain and what did not meet the request. Label synthetic examples and demonstrations clearly: a working prototype proves the workflow runs, not real-world model quality.
+## Concrete and honest delivery
 
-## Minimal machinery
+Verify actual local model files, dependencies and intended inference behavior. Select only verified local experiments as deliveries; models stay experiment-local. Selection does not copy, export, deploy or prove user satisfaction. Export separately when requested.
 
-Create research outputs only when needed. Keep conflict detection, immutable final evidence, project isolation, path and symlink protections. Keep secrets, unrelated code and large private inputs out of snapshots and distribution kits.
+API experiments preserve the provider/model identity, calling configuration, actual outputs, time and available usage/cost. A local description hash cannot establish immutable remote weights. Keep online references visible but distinct from private local delivery. Credentials never belong in conversation, records, snapshots or logs.
 
-The format guide lives only in the shared skill at `skills/research-workspace/references/records.md`; mechanics belong in its tools, not duplicated instructions. Format 2 is incompatible with older projects: refuse them explicitly rather than silently migrating. Test execution and behavior as well as record validity; a valid file cannot prove sound science or a useful result.
+Show real same-input outputs and label synthetic examples. Multi-modal media use explicit safe references, not hidden transfers or large JSON payloads. A working demonstration proves execution, not business quality.
+
+## Minimal, discoverable machinery
+
+Maintain five concise skills: research-workspace, tunetune-init, build-evaluation, run-experiments and explore. Put stable technical decision guidance in relevant references, verify current official details during research and avoid exhaustive model catalogs or fixed recipes. File mechanics live only in the shared canonical guide and deterministic tools.
+
+Create research outputs when needed. Preserve conditional writes, immutable evidence, project isolation and path/symlink protections. Keep unrelated code, caches, private inputs and secrets out of snapshots and distribution. Format 3 is explicitly incompatible with old projects; refuse them without automatic migration or overwrite.
+
+The default installation uses the current conversation directory and a prebuilt official kit. Verify file installation and actual application skill discovery separately; never infer visibility from files alone. Explain necessary refresh or reopen actions in ordinary user language, preserving the original request. Test execution and Agent behavior as well as record validity: a valid file does not prove sound research.

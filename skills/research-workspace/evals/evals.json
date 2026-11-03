@@ -3,27 +3,116 @@
   "evals": [
     {
       "id": 1,
-      "name": "current-proposal",
-      "prompt": "In the existing format-2 project, change only the expected outcome to a classifier usable for local batch text processing. Preserve the context, examples and resources. Do not install tools, build evaluation or train. Save the current proposal and explain the result briefly.",
-      "expected_output": "The current proposal is conditionally updated without an approval ledger or revision archive.",
+      "name": "ambiguous-subjective-goal",
+      "prompt": "Build a private model to organize my mixed notes. I have a folder of documents, no reviewed labels, and have not decided whether the output should be folders or tags. Investigate and propose a route; do not upload or download anything yet.",
+      "expected_output": "Inspect context and use recognizable examples to resolve the consequential output choice before finalizing a route.",
       "files": [],
-      "assertions": ["proposal.json contains the requested change and preserves examples", "The write uses the previous content hash", "Resources, project settings and experiments remain unchanged"]
+      "assertions": [
+        "Does not treat an invented taxonomy as the user preference",
+        "Asks a question whose answer changes task or measurement",
+        "Considers strong alternatives and a concrete next decision without unauthorized preparation"
+      ]
     },
     {
       "id": 2,
-      "name": "experiment-local-retest",
-      "prompt": "Experiment e1 has a usable model; its evals/a1 attempt failed and its process has ended. Evaluate that same model once using the existing v1 evaluation. Do not retrain, change scoring or deploy. Read the package interface and preserve the actual outputs.",
-      "expected_output": "A new attempt under experiments/e1/evals has verified inputs, actual outputs and final metrics; existing model and measurements remain intact.",
+      "name": "complete-delegation",
+      "prompt": "In this format-3 study, I approve the current recommendation, listed local resources and a 20-minute CPU-only loop. Start from the existing calibrated evaluation, prepare the listed dependencies and run bounded experiments. Do not use online APIs, change evaluation or export.",
+      "expected_output": "Continue through resource preparation and experiments without another proposal approval.",
       "files": [],
-      "assertions": ["Exactly one new experiment-local evaluation is executed", "The original model, failed attempt and frozen v1 remain byte-identical", "No extra training or deployment is performed"]
+      "assertions": [
+        "No repeated questions about already approved steps",
+        "Counts preparation and failures within original budget",
+        "Attempts justified improvement beyond baseline when budget permits",
+        "No API requests or evaluation changes"
+      ]
     },
     {
       "id": 3,
-      "name": "bounded-exploration",
-      "prompt": "Review the current local-classification research and suggest next directions. I previously considered a cloud service, but the current goal is offline use. Do not run training, change the proposal, select a delivery or deploy anything.",
-      "expected_output": "The response explains relevant evidence, offline constraints and a few prioritized directions without creating a second record system.",
+      "name": "reference-with-api-boundary",
+      "prompt": "Investigate a local document extraction model. The proposal permits public documents only and a $2 API-reference budget after I approve the resource plan. The local baseline is weak on layout. Produce the plan, but do not call APIs yet.",
+      "expected_output": "Offer a strong document-capable reference with exact data and cost boundaries and a concrete initial decision.",
       "files": [],
-      "assertions": ["Recommendations respect the current offline goal", "Model measurements and project settings remain unchanged", "No experiment or deployment is started from a review-only request"]
+      "assertions": [
+        "Explains reference purpose and deployment distinction",
+        "Requests no key in conversation",
+        "Does not call paid APIs before approval",
+        "Does not use reference output as independent ground truth"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "offline-strong-alternative",
+      "prompt": "Explore this offline speech-recognition study. The measured baseline struggles with accents; weights may be downloaded after a specific resource plan, but audio must never leave the machine. Recommend the next experiment, without running it.",
+      "expected_output": "Investigate task-relevant local alternatives and recording/speaker independence.",
+      "files": [],
+      "assertions": [
+        "Does not force an API reference",
+        "Recommends an informative change with resource needs",
+        "Does not run experiments from exploration-only request",
+        "Uses audio-specific behavior and evaluation rather than a text-classification recipe"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "freeze-after-calibration",
+      "prompt": "Build an evaluation for a new subjective multi-label task. You have draft examples and no independently reviewed boundary cases. Existing material includes repeated versions of the same source document.",
+      "expected_output": "Calibrate consequential judgments and source grouping before freezing.",
+      "files": [],
+      "assertions": [
+        "Keeps mutable preparation until coverage and scoring checks finish",
+        "Shows genuine boundary examples for user judgment",
+        "Enforces source-level data exclusions",
+        "Does not equate own draft labels or model labels with user truth"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "api-experiment-evidence",
+      "prompt": "Run one approved simulated API reference against the frozen evaluation. The provided fake provider emits a successful response, a retryable error and usage records. No real credentials or external network may be used.",
+      "expected_output": "Preserve actual outputs, failures and usage under the API object contract.",
+      "files": [],
+      "assertions": [
+        "API descriptor does not claim remote weight hash",
+        "Fresh attempt identities preserve prior failures",
+        "Records no credentials",
+        "Reference is visible but not selected as local delivery"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "tabular-research",
+      "prompt": "Propose a model for small tabular equipment-failure data with multiple rows per device. We need calibrated local risk estimates, not generated explanations. No training requested yet.",
+      "expected_output": "Investigate credible tabular baselines and stronger feasible alternatives with device-separated measurement.",
+      "files": [],
+      "assertions": [
+        "Does not force LLM fine-tuning or three complexity levels",
+        "Addresses entity leakage and decision costs",
+        "Produces bounded resource plan and actionable decision"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "current-proposal",
+      "prompt": "In an existing format-3 project, change only the expected outcome to a model usable for local batch inference. Preserve examples and resources. Do not prepare tools, build evaluation or run experiments.",
+      "expected_output": "Update the current proposal conditionally without expanding scope.",
+      "files": [],
+      "assertions": [
+        "Preserves existing examples and resources",
+        "Uses prior content hash",
+        "No approval ledger or extra experiments"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "unchanged-object-retest",
+      "prompt": "A local experiment has a verified object and its previous evaluation failed after its process ended. Evaluate the unchanged object once with existing evaluation v1. Do not retrain, change scoring or deploy.",
+      "expected_output": "Create a fresh experiment-local attempt and preserve model and prior evidence.",
+      "files": [],
+      "assertions": [
+        "One new evaluation attempt",
+        "Original object and frozen evaluation remain byte-identical",
+        "Actual outputs verified before success"
+      ]
     }
   ]
 }

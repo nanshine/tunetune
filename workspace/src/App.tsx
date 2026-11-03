@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ClipboardCheck, Columns2, Files, FlaskConical, Target, X } from 'lucide-react';
 import { useWorkspace } from './useWorkspace';
-import { deliveryIds, document, evaluationRuns, experiments, text } from './model';
+import { deliveredModels, document, evaluationRuns, experiments, text } from './model';
 import type { Snapshot } from './model';
 import { Lineage } from './Lineage';
 import { ComparisonView } from './ComparisonView';
@@ -19,7 +19,7 @@ export function App() {
   const project = document(files, 'project.json');
   const items = experiments(files);
   const results = evaluationRuns(files);
-  const deliveries = new Set(deliveryIds(files));
+  const deliveries = new Set(deliveredModels(files).map(item => item.id));
   const [panel, setPanel] = useState<Panel>('proposal');
   // Open the proposal once, not again on file refreshes or navigation back to the canvas.
   const [panelOpen, setPanelOpen] = useState(true);
@@ -79,7 +79,7 @@ export function App() {
           <aside id="left-panel-content" className="drawer left-drawer" aria-labelledby="drawer-title" aria-hidden={!panelOpen} inert={!panelOpen}>
             <div className="drawer-header"><h2 ref={drawerHeading} id="drawer-title" tabIndex={-1}>{panelTitles[panel]}</h2><button className="icon-button" aria-label={`关闭${panelTitles[panel]}`} onClick={closePanel}><X size={19} /></button></div>
             <div className="drawer-content" key={panel}>
-              {panel === 'proposal' && <ProposalView proposal={document(files, 'proposal.json')} />}
+              {panel === 'proposal' && <ProposalView proposal={document(files, 'proposal.json')} resources={document(files, 'resources.json')} />}
               {panel === 'resources' && <ResourcesView resources={document(files, 'resources.json')} observations={snapshot?.observations} />}
               {panel === 'evaluation' && <EvaluationView files={files} currentVersion={version} selection={evaluationSelection} onSelect={setEvaluationSelection} />}
             </div>

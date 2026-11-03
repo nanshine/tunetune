@@ -18,7 +18,7 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, parse_qs
 import unicodedata
 import uuid
 
@@ -192,6 +192,31 @@ class SafeTree:
                     pass
 
 
+def media_reference(snapshot, path):
+    """Only explicit references in current display records expose project media."""
+    if snapshot.get("error"):
+        return False
+    def contains(value, depth=0):
+        if depth > 8:
+            return False
+        if isinstance(value, dict):
+            if value.get("type") in ("image", "audio", "video", "file") and value.get("path") == path:
+                return True
+            return any(contains(child, depth + 1) for child in value.values())
+        return isinstance(value, list) and any(contains(child, depth + 1) for child in value)
+    visible = []
+    for name, item in snapshot["files"].items():
+        content = item["content"]
+        if name == "proposal.json":
+            for example in content.get("examples", []):
+                if isinstance(example, dict):
+                    visible.extend(example[key] for key in ("input", "expected_output") if key in example)
+        elif name == "comparison/outputs.jsonl" or name.endswith("/samples.jsonl") or name.endswith("/outputs.jsonl"):
+            for row in content:
+                visible.extend(row[key] for key in ("input", "reference", "output", "outputs") if key in row)
+    return any(contains(value) for value in visible)
+
+
 class Reader:
     def __init__(self, root: Path):
         self.tree = SafeTree(root)
@@ -260,9 +285,9 @@ class Reader:
                     if not isinstance(content, dict):
                         raise ValueError("JSON must be an object")
                     if "schema_version" in content and (
-                        type(content["schema_version"]) is not int or content["schema_version"] != 2
+                        type(content["schema_version"]) is not int or content["schema_version"] != 3
                     ):
-                        raise ValueError("Unsupported schema_version (expected 2)")
+                        raise ValueError("Unsupported schema_version (expected 3)")
                     field = {"proposal.json": "examples", "resources.json": "items", "project.json": "deliveries"}.get(path)
                     if field in content and not isinstance(content[field], list):
                         raise ValueError(f"{field} must be an array")
@@ -288,8 +313,8 @@ class Reader:
             files[path] = {"content": content, "sha256": hashlib.sha256(raw).hexdigest()}
         if "project.json" not in files:
             raise ValueError("Missing required project.json")
-        if files["project.json"]["content"].get("schema_version") != 2:
-            raise ValueError("project.json requires schema_version=2")
+        if files["project.json"]["content"].get("schema_version") != 3:
+            raise ValueError("project.json requires schema_version=3")
         return files
 
     def snapshot(self):
@@ -350,8 +375,8 @@ def save_project_name(reader, body):
                     if version(before) != version(os.fstat(stream.fileno())):
                         raise ValueError("project.json changed while reading")
                 project = strict_json(raw.decode("utf-8"))
-                if not isinstance(project, dict) or type(project.get("schema_version")) is not int or project["schema_version"] != 2:
-                    raise ValueError("project.json requires schema_version=2")
+                if not isinstance(project, dict) or type(project.get("schema_version")) is not int or project["schema_version"] != 3:
+                    raise ValueError("project.json requires schema_version=3")
                 if hashlib.sha256(raw).hexdigest() != expected:
                     raise RequestError(409, "Project is stale; refresh before renaming")
                 project["name"] = name
@@ -411,7 +436,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; "
                          "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-                         "connect-src 'self'; object-src 'none'; base-uri 'none'; "
+                         "connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'none'; "
                          "frame-ancestors 'none'; form-action 'self'")
         self.end_headers()
         self.wfile.write(data)
@@ -424,6 +449,23 @@ class Handler(BaseHTTPRequestHandler):
             path = unquote(parsed.path, errors="strict")
             if path == "/api/state":
                 self.reply(200, self.server.reader.snapshot())
+                return
+            if path == "/api/media":
+                query = parse_qs(parsed.query, strict_parsing=True)
+                if set(query) != {"path"} or len(query["path"]) != 1:
+                    raise ValueError("Expected one media path")
+                relative = query["path"][0]
+                parts(relative)
+                suffix = Path(relative).suffix.lower()
+                allowed = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+                           ".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".flac": "audio/flac",
+                           ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+                           ".glb": "application/octet-stream", ".gltf": "application/octet-stream", ".obj": "application/octet-stream",
+                           ".stl": "application/octet-stream", ".ply": "application/octet-stream"}
+                if suffix not in allowed or not media_reference(self.server.reader.snapshot(), relative):
+                    raise ValueError("Media is not shared in research records")
+                data = self.server.reader.tree.read(relative, limit=64 * 1024 * 1024)
+                self.reply(200, data, allowed[suffix])
                 return
             if path.startswith("/api/"):
                 self.reply(404, {"error": "Not found"})

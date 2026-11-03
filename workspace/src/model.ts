@@ -6,8 +6,10 @@ export type Observations = { checked_at: string; items: ResourceObservation[] };
 export type Snapshot = { files: Record<string, ResearchFile>; revision: string; synced_at: string; error: string | null; observations?: Observations };
 export type Outcome = 'baseline' | 'keep' | 'discard' | 'inconclusive' | 'invalid';
 export type Analysis = { outcome: Outcome | 'unknown'; summary: string };
-export type Experiment = { id: string; title: string; parent: string | null; state: string; modelPath: string; method: string; modelName: string; framework: string; hypothesis: string; parameters: JsonObject; analysis: Analysis };
-export type EvaluationRun = { id: string; experimentId: string; version: string; state: string; metrics: Record<string, number>; metricLabels: Record<string, string>; path: string; recordedAt: string };
+export type Usage = { requests?: number; input_tokens?: number; output_tokens?: number; cost?: number; currency?: string; latency_seconds?: number };
+export const roleLabels: Record<string, string> = { baseline: '基线', candidate: '候选改进', reference: '质量参照', recommended: '推荐路线', challenge: '挑战路线' };
+export type Experiment = { id: string; title: string; parent: string | null; state: string; modelPath: string; targetKind: 'local' | 'api' | ''; role: string; usage: Usage; method: string; modelName: string; framework: string; hypothesis: string; parameters: JsonObject; analysis: Analysis };
+export type EvaluationRun = { id: string; experimentId: string; version: string; state: string; metrics: Record<string, number>; metricLabels: Record<string, string>; path: string; recordedAt: string; evaluationHash: string; inputFingerprint: string; usage: Usage };
 
 export const outcomeLabels: Record<Outcome | 'unknown', string> = { baseline: '基线', keep: '保留', discard: '舍弃', inconclusive: '暂不确定', invalid: '无效', unknown: '尚无结论' };
 export const resourceStates: Record<ResourceState, string> = { ready: '已就绪', missing: '缺失', changed: '已变化', busy: '使用中', unknown: '未知' };
@@ -35,10 +37,19 @@ export function parseSnapshot(value: unknown): Snapshot {
     if (/^experiments\/[^/]+\/(?:evals\/[^/]+\/)?status\.json$/.test(path)) {
       const state = text(object(file.content).state);
       if (!Object.hasOwn(stateLabels, state) || state === 'unknown') throw new Error(`${path}：无效执行状态`);
+      const status = object(file.content);
+      if (status.target !== undefined) {
+        const target = object(status.target);
+        if (!['local', 'api'].includes(text(target.kind)) || !text(target.path) || !/^[a-f0-9]{64}$/.test(text(target.sha256))) throw new Error(`${path}：模型记录不完整`);
+      }
+      if (status.usage !== undefined) {
+        const usage = object(status.usage);
+        if (!status.usage || typeof status.usage !== 'object' || Array.isArray(status.usage) || Object.entries(usage).some(([key, value]) => key === 'currency' ? typeof value !== 'string' : !['requests', 'input_tokens', 'output_tokens', 'cost', 'latency_seconds'].includes(key) || typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error(`${path}：运行用量记录无效`);
+      }
     }
   }
   const files = data.files as Snapshot['files'];
-  if (Object.keys(files).length && document(files, 'project.json').schema_version !== 2) throw new Error('不支持此研究文件格式，请使用 format 2 研究文件');
+  if (Object.keys(files).length && document(files, 'project.json').schema_version !== 3) throw new Error('此研究使用旧版文件，请使用支持该版本的工具打开；新版仅支持格式 3');
   for (const [path, key] of [['resources.json', 'items'], ['proposal.json', 'sections'], ['proposal.json', 'examples'], ['project.json', 'deliveries']]) {
     if (files[path] && !Array.isArray(document(files, path)[key])) throw new Error(`${path}：${key} 必须是列表`);
   }
@@ -66,7 +77,8 @@ export function experiments(files: Snapshot['files']): Experiment[] {
     const outcome = text(record.outcome);
     return {
       id, title: text(config.title, id), parent: text(config.parent_experiment_id) || null,
-      state: text(status.state, 'pending'), modelPath: text(status.model_path),
+      state: text(status.state, 'pending'), modelPath: text(object(status.target).path),
+      targetKind: object(status.target).kind === 'local' || object(status.target).kind === 'api' ? object(status.target).kind as 'local' | 'api' : '', role: text(config.role), usage: object(status.usage) as Usage,
       method: text(config.method), modelName: text(config.model_name), framework: text(config.framework), hypothesis: text(config.hypothesis), parameters: object(config.parameters),
       analysis: { outcome: Object.hasOwn(outcomeLabels, outcome) ? outcome as Analysis['outcome'] : 'unknown', summary: text(record.summary) },
     };
@@ -82,7 +94,7 @@ export function evaluationRuns(files: Snapshot['files']): EvaluationRun[] {
     const order = [...new Set([...definitions.map(metric => text(metric.id)).filter(Boolean), ...Object.keys(rawMetrics)])];
     const metrics = Object.fromEntries(order.filter(id => Object.hasOwn(rawMetrics, id)).map(id => [id, rawMetrics[id]]));
     const metricLabels = Object.fromEntries(definitions.map(metric => [text(metric.id), text(metric.label, text(metric.id))]));
-    return { id: path.split('/')[3], experimentId: path.split('/')[1], version, state, metrics, metricLabels, path, recordedAt: text(status.completed_at, text(status.updated_at)) };
+    return { id: path.split('/')[3], experimentId: path.split('/')[1], version, state, metrics, metricLabels, path, recordedAt: text(status.completed_at, text(status.updated_at)), evaluationHash: text(config.evaluation_sha256), inputFingerprint: JSON.stringify(array(config.inputs).map(object).map(input => [text(input.path), text(input.sha256)]).sort(([a, b], [c, d]) => a.localeCompare(c) || b.localeCompare(d))), usage: object(status.usage) as Usage };
   });
 }
 export function recentEvaluations(results: EvaluationRun[]): EvaluationRun[] {
@@ -104,7 +116,7 @@ export function deliveredModels(files: Snapshot['files']): Experiment[] {
   const byId = new Map(experiments(files).map(item => [item.id, item]));
   return deliveryIds(files).flatMap(id => {
     const item = byId.get(id);
-    return item?.state === 'succeeded' && item.modelPath ? [item] : [];
+    return item?.state === 'succeeded' && item.targetKind === 'local' && item.modelPath ? [item] : [];
   });
 }
 
@@ -138,4 +150,27 @@ export function layout(items: Pick<Experiment, 'id' | 'parent'>[]): Map<string, 
     rows.set(level, row + 1);
     return [item.id, { x: level * 360 + 48, y: row * 360 + 160 }];
   }));
+}
+
+export function comparableModels(files: Snapshot['files']): Experiment[] {
+  return experiments(files).filter(item => item.state === 'succeeded' && item.targetKind && item.modelPath);
+}
+export function compatibleMeasurements(left: EvaluationRun | undefined, right: EvaluationRun | undefined): boolean {
+  return !!left && !!right && left.state === 'succeeded' && right.state === 'succeeded' && !!left.evaluationHash && left.evaluationHash === right.evaluationHash && left.version === right.version && left.inputFingerprint === right.inputFingerprint;
+}
+
+export function comparisonSamples(files: Snapshot['files'], leftId: string, rightId: string, version: string): JsonObject[] {
+  const explicit = files['comparison/outputs.jsonl'];
+  if (explicit) return array(explicit.content).map(object);
+  const results = evaluationRuns(files);
+  const left = preferredEvaluation(results.filter(run => run.experimentId === leftId), version);
+  const right = preferredEvaluation(results.filter(run => run.experimentId === rightId), version);
+  if (!compatibleMeasurements(left, right)) return [];
+  const leftRows = array(files[left!.path.replace('/config.json', '/outputs.jsonl')]?.content).map(object);
+  const rightRows = new Map(array(files[right!.path.replace('/config.json', '/outputs.jsonl')]?.content).map(object).map(row => [text(row.sample_id), row]));
+  return leftRows.flatMap(row => {
+    const other = rightRows.get(text(row.sample_id));
+    if (!other || JSON.stringify(row.input) !== JSON.stringify(other.input)) return [];
+    return [{ sample_id: row.sample_id, input: row.input, outputs: { [leftId]: row.output, [rightId]: other.output } }];
+  });
 }

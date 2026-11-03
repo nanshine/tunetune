@@ -34,7 +34,7 @@ class RunTests(unittest.TestCase):
         self.root.mkdir()
         self.tree = records.Tree(self.root)
         self.addCleanup(self.tree.close)
-        self.raw("project.json", dict(schema_version=2, name="Synthetic", language="en", current_evaluation=None, deliveries=[]))
+        self.raw("project.json", dict(schema_version=3, name="Synthetic", language="en", current_evaluation=None, deliveries=[]))
         self.raw("proposal.json", dict(summary="Fixture", sections=[], examples=[]))
         self.raw("resources.json", dict(items=[]))
         source = self.base / "evaluation"
@@ -79,9 +79,9 @@ class RunTests(unittest.TestCase):
         model_hash = self.sha("experiments/e1/model/rule.txt")
         path = "experiments/e1/status.json"
         previous = records.read_record(self.tree, path) if self.tree.exists(path) else {}
-        self.publish(path, dict(previous, state="succeeded", updated_at=STAMP, model_path="experiments/e1/model/rule.txt",
-                                model_sha256=model_hash), create=not self.tree.exists(path))
-        config = dict(id="r1", evaluation_version="v1", model_sha256=model_hash, evaluation_sha256=self.evaluation_hash,
+        self.publish(path, dict(previous, state="succeeded", updated_at=STAMP, target=dict(kind="local", path="experiments/e1/model/rule.txt",
+                                sha256=model_hash)), create=not self.tree.exists(path))
+        config = dict(id="r1", evaluation_version="v1", target_sha256=model_hash, evaluation_sha256=self.evaluation_hash,
                       execution=dict(argv=[sys.executable, "-B", "evaluation/v1/evaluate.py"], cwd=".", environment={}, timeout_seconds=5))
         self.publish(EVAL + "/config.json", config)
         return config
@@ -256,7 +256,7 @@ class RunTests(unittest.TestCase):
 
     def test_evaluation_checks_full_manifest_model_and_extra_inputs(self):
         config = self.evaluation()
-        for key in ("model_sha256", "evaluation_sha256"):
+        for key in ("target_sha256", "evaluation_sha256"):
             self.raw(EVAL + "/config.json", dict(config, **{key: "0" * 64}))
             with self.assertRaises(ValueError):
                 runner.execute(self.tree, EVAL)
@@ -362,8 +362,8 @@ class RunTests(unittest.TestCase):
         self.assert_unstarted()
 
     def test_incompatible_installed_metadata_refuses_execute_without_changes(self):
-        for metadata in (dict(schema_min=3, schema_max=3), dict(schema_min=1, schema_max=2),
-                         dict(schema_min=2, schema_max=3), dict(schema_min=2, schema_max=True)):
+        for metadata in (dict(schema_min=2, schema_max=2), dict(schema_min=1, schema_max=3),
+                         dict(schema_min=3, schema_max=4), dict(schema_min=3, schema_max=True)):
             with self.subTest(metadata=metadata):
                 self.raw(".workspace/manifest.json", metadata)
                 before = {p.relative_to(self.root): p.read_bytes() if p.is_file() else None

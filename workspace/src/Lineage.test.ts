@@ -16,8 +16,8 @@ vi.mock('@xyflow/react', () => ({
 const file = (content: unknown): ResearchFile => ({ content, sha256: 'a'.repeat(64) });
 const files: Snapshot['files'] = {
   'experiments/parent/config.json': file({ title: '起点实验' }),
-  'experiments/child/config.json': file({ title: '小模型适配', parent_experiment_id: 'parent', model_name: 'SmallLM', method: 'LoRA', framework: 'PyTorch', hypothesis: '适配领域表达', parameters: { rank: 8, learning_rate: 0.001, internal: { value: 'hidden-object' }, model_path: 'hidden-path' }, execution: { argv: ['hidden-command'] } }),
-  'experiments/child/status.json': file({ state: 'succeeded', model_path: 'experiments/child/model/output.bin', model_sha256: 'hidden-hash' }),
+  'experiments/child/config.json': file({ title: '小模型适配', parent_experiment_id: 'parent', model_name: 'SmallLM', method: 'LoRA', framework: 'PyTorch', hypothesis: '适配领域表达', parameters: { rank: 8, learning_rate: 0.001, internal: { value: 'hidden-object' }, target: { kind: 'local', path: 'hidden-path', sha256: 'a'.repeat(64) } }, execution: { argv: ['hidden-command'] } }),
+  'experiments/child/status.json': file({ state: 'succeeded', target: { kind: 'local', path: 'experiments/child/model/output.bin', sha256: 'a'.repeat(64) } }),
   'experiments/child/analysis.json': file({ outcome: 'keep', summary: '独立检查结果改善' }),
   'experiments/child/run.log': file('hidden-training-log'),
   'evaluation/v1/definition.json': file({ metrics: [{ id: 'quality', label: '质量' }] }),
@@ -43,6 +43,15 @@ describe('read-only experiment canvas', () => {
     const html = renderToStaticMarkup(createElement(ExperimentSummary, summary));
     for (const phrase of ['child', '小模型适配', 'SmallLM', 'LoRA', 'v1', '已交付', '质量', '50', '模型对比']) expect(html).toContain(phrase);
     for (const phrase of ['+20', 'delta', 'hidden-', '适配领域表达', '独立检查结果改善']) expect(html).not.toContain(phrase);
+  });
+  it('flags differing measurement inputs on the canvas without treating ancestry as a comparison', () => {
+    const config = (inputs: unknown[]) => file({ evaluation_version: 'v1', evaluation_sha256: 'b'.repeat(64), inputs });
+    const source = { ...files, 'experiments/parent/evals/run/config.json': config([]), 'experiments/child/evals/run/config.json': config([{ path: 'data/test', sha256: 'c'.repeat(64) }]) };
+    renderToStaticMarkup(createElement(Lineage, { items, results: evaluationRuns(source), currentVersion: 'v1', selected: 'child', deliveries: new Set<string>(), onSelect: vi.fn(), onCompare: vi.fn() }));
+    expect(flow.props?.nodes?.find(node => node.id === 'child')?.data.comparisonWarning).toBe(true);
+    const html = renderToStaticMarkup(createElement(ExperimentSummary, { ...summary, comparisonWarning: true }));
+    expect(html).toContain('分数不宜直接比较');
+    expect(html).not.toContain('+20');
   });
   it.each(Object.entries(outcomeLabels))('renders %s analysis independently of execution success', (outcome, label) => {
     const html = renderToStaticMarkup(createElement(ExperimentSummary, { ...summary, experiment: { ...child, analysis: { ...child.analysis, outcome: outcome as Outcome | 'unknown' } } }));

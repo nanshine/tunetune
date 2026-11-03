@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and publish format-2 research files without executing commands."""
+"""Validate and publish format-3 research files without executing commands."""
 import argparse
 from contextlib import contextmanager
 from datetime import datetime
@@ -215,7 +215,7 @@ class Tree:
 
 def shape(path, data):
     parts(path)
-    require(bool(RECORD.fullmatch(path)), "Path is not a format-2 research record")
+    require(bool(RECORD.fullmatch(path)), "Path is not a format-3 research record")
     if path.endswith(".jsonl"):
         rows = [strict(line) for line in data.decode("utf-8").splitlines() if line.strip()]
         ids = []
@@ -230,7 +230,7 @@ def shape(path, data):
                 require(isinstance(row["outputs"], dict), "Comparison outputs must be an object")
                 for experiment, output in row["outputs"].items():
                     identifier(experiment)
-                    require(isinstance(output, str), "Comparison output must be text")
+                    require(output is not None, "Comparison output must be present")
             elif not path.startswith("evaluation/"):
                 fields(row, required, ("reference", "scores"))
                 if "scores" in row:
@@ -243,8 +243,8 @@ def shape(path, data):
     leaf = path.split("/")[-1]
     evaluation_run = "/evals/" in path
     if path == "project.json":
-        require(type(obj.get("schema_version")) is int and obj["schema_version"] == 2,
-                "Unsupported schema_version: format 2 required; no automatic migration")
+        require(type(obj.get("schema_version")) is int and obj["schema_version"] == 3,
+                "Unsupported schema_version: format 3 required; no automatic migration")
         fields(obj, ("schema_version", "name", "language", "current_evaluation", "deliveries"))
         if obj["current_evaluation"] is not None:
             identifier(obj["current_evaluation"])
@@ -254,7 +254,7 @@ def shape(path, data):
             identifier(item)
         require(len(obj["deliveries"]) == len(set(obj["deliveries"])), "Duplicate delivery")
     elif path == "proposal.json":
-        fields(obj, ("summary", "sections", "examples"), ("feasibility",))
+        fields(obj, ("summary", "sections", "examples"), ("feasibility", "approaches"))
         require(isinstance(obj["sections"], list) and isinstance(obj["examples"], list), "sections/examples must be arrays")
         for section in obj["sections"]:
             fields(section, ("title", "body"))
@@ -265,6 +265,20 @@ def shape(path, data):
             identifier(example["id"])
             ids.append(example["id"])
         require(len(ids) == len(set(ids)), "Duplicate example ID")
+        if "approaches" in obj:
+            require(isinstance(obj["approaches"], list), "approaches must be an array")
+            approach_ids = []
+            for approach in obj["approaches"]:
+                fields(approach, ("id", "title", "roles", "rationale"), ("limitations", "resource_ids"))
+                identifier(approach["id"])
+                approach_ids.append(approach["id"])
+                require(all(isinstance(approach[k], str) for k in ("title", "rationale", "limitations") if k in approach), "Invalid approach text")
+                require(isinstance(approach["roles"], list) and approach["roles"] and len(set(approach["roles"])) == len(approach["roles"])
+                        and all(role in ("baseline", "recommended", "reference", "challenge") for role in approach["roles"]), "Invalid approach roles")
+                require(isinstance(approach.get("resource_ids", []), list), "resource_ids must be an array")
+                for resource in approach.get("resource_ids", []):
+                    identifier(resource)
+            require(len(set(approach_ids)) == len(approach_ids), "Duplicate approach ID")
         if "feasibility" in obj:
             fields(obj["feasibility"], ("verdict", "reason"))
             require(obj["feasibility"]["verdict"] in ("feasible", "conditional", "infeasible", "unknown")
@@ -274,7 +288,7 @@ def shape(path, data):
         require(isinstance(obj["items"], list), "items must be an array")
         ids = []
         for item in obj["items"]:
-            fields(item, ("id", "title", "type", "status"), ("path", "location", "version", "size", "monitor"))
+            fields(item, ("id", "title", "type", "status"), ("path", "location", "version", "size", "monitor", "purpose", "source", "preparation", "access"))
             identifier(item["id"])
             ids.append(item["id"])
             require(all(isinstance(item[k], str) for k in item if k != "monitor"), "Invalid resource text")
@@ -309,12 +323,17 @@ def shape(path, data):
         require(obj["outcome"] in ("baseline", "keep", "discard", "inconclusive", "invalid"), "Invalid analysis outcome")
     elif leaf == "config.json":
         if evaluation_run:
-            fields(obj, ("id", "evaluation_version", "model_sha256", "evaluation_sha256", "execution"), ("inputs",))
+            fields(obj, ("id", "evaluation_version", "target_sha256", "evaluation_sha256", "execution"), ("inputs",))
             identifier(obj["evaluation_version"])
             require(obj["evaluation_version"] != "draft", "Evaluation must be frozen")
         else:
             fields(obj, ("id", "title", "parent_experiment_id", "hypothesis", "parameters", "inputs", "snapshot_sha256", "execution"),
-                   ("method", "model_name", "framework"))
+                   ("method", "model_name", "framework", "role", "data_split"))
+            require(obj.get("role", "candidate") in ("baseline", "candidate", "reference"), "Invalid experiment role")
+            if "data_split" in obj:
+                fields(obj["data_split"], ("path", "sha256"))
+                parts(obj["data_split"]["path"])
+                hash_value(obj["data_split"]["sha256"])
             if obj["parent_experiment_id"] is not None:
                 identifier(obj["parent_experiment_id"])
             require(isinstance(obj["parameters"], dict), "parameters must be an object")
@@ -328,6 +347,7 @@ def shape(path, data):
         require(isinstance(execution["environment"], dict) and all(
             k and "=" not in k and "\x00" not in k and isinstance(v, str) and "\x00" not in v
             for k, v in execution["environment"].items()), "Invalid execution.environment")
+        require(not any(re.search(r"(?:^|_)(?:API_KEY|TOKEN|PASSWORD|SECRET|CREDENTIALS?)(?:$|_)", name, re.I) for name in execution["environment"]), "Pass credentials through the inherited environment, not config overrides")
         require(finite_number(execution["timeout_seconds"]) and execution["timeout_seconds"] > 0, "Invalid timeout")
         require(isinstance(obj.get("inputs", []), list), "inputs must be an array")
         paths = []
@@ -338,7 +358,7 @@ def shape(path, data):
             paths.append(item["path"])
         require(len(paths) == len(set(paths)), "Duplicate input path")
     elif leaf == "status.json":
-        fields(obj, ("state", "updated_at"), PROCESS + (("metrics",) if evaluation_run else ("model_path", "model_sha256")))
+        fields(obj, ("state", "updated_at"), PROCESS + ("usage",) + (("metrics",) if evaluation_run else ("target",)))
         require(obj["state"] in ("pending", "running", "completed", *FINAL), "Invalid execution state")
         for key in ("updated_at", "started_at", "completed_at"):
             if key in obj:
@@ -352,17 +372,25 @@ def shape(path, data):
         if obj["state"] in ("completed", "succeeded"):
             require(obj.get("returncode", 0) == 0 and not obj.get("timed_out") and "error" not in obj,
                     "Successful/completed status conflicts with process failure")
-        if "model_path" in obj:
-            parts(obj["model_path"])
+        if "usage" in obj:
+            fields(obj["usage"], (), ("requests", "input_tokens", "output_tokens", "cost", "currency", "latency_seconds"))
+            for key, value in obj["usage"].items():
+                require(isinstance(value, str) and bool(value.strip()) if key == "currency" else finite_number(value) and value >= 0, "Invalid usage value")
+            require("cost" not in obj["usage"] or "currency" in obj["usage"], "Cost requires currency")
+        if "target" in obj:
+            target = obj["target"]
+            fields(target, ("kind", "path", "sha256"))
+            require(target["kind"] in ("local", "api"), "Invalid target kind")
+            parts(target["path"])
+            hash_value(target["sha256"])
             base = path.rsplit("/", 1)[0] + "/model"
-            require(obj["model_path"] == base or obj["model_path"].startswith(base + "/"), "Model must be inside this experiment's model directory")
-        require(("model_path" in obj) == ("model_sha256" in obj), "Model path and hash must occur together")
+            require(target["path"] == base or target["path"].startswith(base + "/"), "Model must be inside this experiment's model directory")
         if "metrics" in obj:
             numbers(obj["metrics"])
     for key in ("name", "language", "title", "description", "summary", "hypothesis", "method", "model_name", "framework", "error"):
         if key in obj:
             require(isinstance(obj[key], str), f"{key} must be text")
-    for key in ("snapshot_sha256", "model_sha256", "evaluation_sha256", "config_sha256"):
+    for key in ("snapshot_sha256", "target_sha256", "evaluation_sha256", "config_sha256"):
         if key in obj:
             hash_value(obj[key])
     return obj
@@ -373,11 +401,11 @@ def read_record(tree, path):
 
 
 def check_installed_metadata(tree):
-    """Fresh, uninstalled trees are allowed; installed tools must be format 2 only."""
+    """Fresh, uninstalled trees are allowed; installed tools must be format 3 only."""
     if not tree.exists(".workspace/manifest.json"):
         return False
     kit = strict(tree.read(".workspace/manifest.json"))
-    require(isinstance(kit, dict) and all(type(kit.get(key)) is int and kit[key] == 2
+    require(isinstance(kit, dict) and all(type(kit.get(key)) is int and kit[key] == 3
             for key in ("schema_min", "schema_max")), "Incompatible kit schema range")
     return True
 
@@ -427,13 +455,40 @@ def verify_path_hash(tree, path, expected):
         verify_hash(tree, path, expected)
 
 
+def verify_target(tree, target):
+    verify_path_hash(tree, target["path"], target["sha256"])
+    if target["kind"] == "api":
+        # The directory manifest fixes the adapter as well as the descriptor, not remote weights.
+        verify_manifest(tree, target["path"], target["sha256"])
+        descriptor = strict(tree.read(target["path"] + "/api.json"))
+        fields(descriptor, ("provider", "model", "request", "credential_env", "limitations"), ("revision", "endpoint"))
+        require(all(isinstance(descriptor[key], str) and descriptor[key].strip() for key in ("provider", "model", "limitations")), "Invalid API identity")
+        require(isinstance(descriptor["request"], dict), "API request must be an object")
+        require(isinstance(descriptor["credential_env"], list) and all(isinstance(name, str) and re.fullmatch(r"[A-Z_][A-Z0-9_]*", name) for name in descriptor["credential_env"]), "Invalid credential environment names")
+        if "revision" in descriptor:
+            require(isinstance(descriptor["revision"], str), "Invalid API revision")
+        if "endpoint" in descriptor:
+            from urllib.parse import urlsplit
+            endpoint = urlsplit(descriptor["endpoint"])
+            require(endpoint.scheme in ("http", "https") and endpoint.hostname and not endpoint.username and not endpoint.password and not endpoint.query and not endpoint.fragment, "Endpoint must not contain credentials")
+        def no_credentials(value):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    require(str(key).lower().replace("-", "_") not in ("api_key", "x_api_key", "authorization", "password", "secret", "access_token", "token"), "Keep credentials out of API descriptors")
+                    no_credentials(child)
+            elif isinstance(value, list):
+                for child in value:
+                    no_credentials(child)
+        no_credentials(descriptor["request"])
+
+
 def verify_model(tree, experiment):
     read_record(tree, experiment + "/config.json")
     status = read_record(tree, experiment + "/status.json")
-    require(status["state"] == "succeeded" and "model_path" in status, "Experiment requires a succeeded model")
+    require(status["state"] == "succeeded" and "target" in status, "Experiment requires a succeeded model")
     if "config_sha256" in status:
         verify_hash(tree, experiment + "/config.json", status["config_sha256"])
-    verify_path_hash(tree, status["model_path"], status["model_sha256"])
+    verify_target(tree, status["target"])
     return status
 
 
@@ -441,7 +496,7 @@ def verify_inputs(tree, path, config):
     """Verify frozen packages, ancestry, model and any additional local inputs."""
     if "/evals/" in path:
         model = verify_model(tree, path.split("/evals/")[0])
-        require(model["model_sha256"] == config["model_sha256"], "Model reference hash differs")
+        require(model["target"]["sha256"] == config["target_sha256"], "Model reference hash differs")
         evaluation = "evaluation/" + config["evaluation_version"]
         verify_manifest(tree, evaluation, config["evaluation_sha256"])
         read_record(tree, evaluation + "/definition.json")
@@ -456,6 +511,24 @@ def verify_inputs(tree, path, config):
             parent = read_record(tree, f"experiments/{parent}/config.json")["parent_experiment_id"]
     for item in config.get("inputs", []):
         verify_path_hash(tree, item["path"], item["sha256"])
+    if "data_split" in config:
+        reference = config["data_split"]
+        verify_hash(tree, reference["path"], reference["sha256"])
+        split = strict(tree.read(reference["path"]))
+        fields(split, ("train", "reserved"))
+        for group in ("train", "reserved"):
+            require(isinstance(split[group], list), "Split groups must be arrays")
+            for item in split[group]:
+                fields(item, ("path", "sha256"))
+                verify_path_hash(tree, item["path"], item["sha256"])
+        train_paths = {item["path"] for item in split["train"]}
+        reserved_paths = {item["path"] for item in split["reserved"]}
+        require(not train_paths & reserved_paths and not {item["sha256"] for item in split["train"]} & {item["sha256"] for item in split["reserved"]}, "Training and reserved inputs overlap")
+        declared = {(item["path"], item["sha256"]) for item in config["inputs"]}
+        require(all((item["path"], item["sha256"]) in declared for item in split["train"]), "Declare every training input")
+        for item in config["inputs"]:
+            require(not any(item["path"] == reserved or reserved.startswith(item["path"] + "/") or item["path"].startswith(reserved + "/") for reserved in reserved_paths)
+                    and item["sha256"] not in {row["sha256"] for row in split["reserved"]}, "Reserved input used by experiment")
 
 
 def check_record(tree, path, obj):
@@ -467,7 +540,11 @@ def check_record(tree, path, obj):
             read_record(tree, base + "/definition.json")
             read_record(tree, base + "/samples.jsonl")
         for ident in obj["deliveries"]:
-            verify_model(tree, "experiments/" + ident)
+            require(verify_model(tree, "experiments/" + ident)["target"]["kind"] == "local", "Only local models can be deliveries")
+    elif path == "proposal.json":
+        resources = read_record(tree, "resources.json")
+        ids = {item["id"] for item in resources["items"]}
+        require(all(ident in ids for approach in obj.get("approaches", []) for ident in approach.get("resource_ids", [])), "Unknown approach resource")
     elif path == "resources.json":
         for item in obj["items"]:
             if "path" in item and tree.exists(item["path"]):
@@ -486,8 +563,8 @@ def check_record(tree, path, obj):
         if leaf == "status.json":
             if "config_sha256" in obj:
                 verify_hash(tree, base + "/config.json", obj["config_sha256"])
-            if "model_path" in obj:
-                verify_path_hash(tree, obj["model_path"], obj["model_sha256"])
+            if "target" in obj:
+                verify_target(tree, obj["target"])
             if "/evals/" in base:
                 definition = read_record(tree, f"evaluation/{config['evaluation_version']}/definition.json")
                 metrics = {m["id"] for m in definition["metrics"]}
@@ -500,7 +577,7 @@ def check_record(tree, path, obj):
                     samples = read_record(tree, f"evaluation/{config['evaluation_version']}/samples.jsonl")
                     require({r["sample_id"] for r in outputs} == {r["sample_id"] for r in samples}, "Successful evaluation requires outputs for all samples")
             elif obj["state"] == "succeeded":
-                require("model_path" in obj, "Successful experiment requires a model")
+                require("target" in obj, "Successful experiment requires a model")
             if obj["state"] == "succeeded":
                 verify_inputs(tree, base, config)
         elif leaf == "outputs.jsonl":
@@ -523,7 +600,7 @@ def mutable(path, old, tree=None):
 
 def write(tree, path, source, create=False, expected=None):
     parts(path)
-    require(bool(RECORD.fullmatch(path)), "Path is not a writable format-2 research record")
+    require(bool(RECORD.fullmatch(path)), "Path is not a writable format-3 research record")
     require(not create or expected is None, "Choose create or expected SHA-256, not both")
     require(".." not in os.fspath(source).split("/"), "Parent traversal is not allowed")
     source_path = Path(os.path.abspath(source))
@@ -548,7 +625,7 @@ def write(tree, path, source, create=False, expected=None):
                 allowed = {"pending": ("pending", "running", "completed", *FINAL),
                            "running": ("running", "completed", *FINAL), "completed": ("completed", *FINAL)}
                 require(obj["state"] in allowed[old["state"]], "Execution state cannot move backwards")
-                for key in (*PROCESS, "metrics", "model_path", "model_sha256"):
+                for key in (*PROCESS, "metrics", "target", "usage"):
                     require(key not in old or key in obj and obj[key] == old[key], f"Preserve recorded fact: {key}")
         if path.startswith("evaluation/") and not path.startswith("evaluation/draft/"):
             require(not tree.exists(path.rsplit("/", 1)[0] + "/manifest.json"), "Frozen package is immutable")
@@ -569,6 +646,11 @@ def freeze(tree, root, source, path):
     try:
         names = source_tree.files("")
         require(names and "manifest.json" not in names, "Source must be nonempty without manifest.json")
+        for name in names:
+            segments = parts(name)
+            require(not any(segment.startswith(".") or segment in ("__pycache__", "node_modules", "cache") for segment in segments)
+                    and Path(name).suffix.lower() not in (".pyc", ".pyo", ".pem", ".key")
+                    and not any(word in Path(name).name.lower() for word in ("credentials", "secrets")), "Unsafe snapshot content: " + name)
         payload = {name: source_tree.read(name, with_mode=True) for name in names}
         if path.startswith("evaluation/"):
             require("definition.json" in payload and "samples.jsonl" in payload, "Evaluation requires definition.json and samples.jsonl")

@@ -1,4 +1,4 @@
-"""Real, dependency-free demo execution in disposable format-2 installed-like trees."""
+"""Real, dependency-free demo execution in disposable format-3 installed-like trees."""
 from datetime import datetime
 import hashlib
 import importlib.util
@@ -45,7 +45,7 @@ def installed_fixture(root):
     payload = {name: (ROOT / source).read_bytes() for name, source in sources.items()}
     payload.update({
         ".workspace/app/assets/index.html": b"<!doctype html><title>Installed-like test fixture only</title>",
-        ".workspace/manifest.json": records.encoded({"schema_min": 2, "schema_max": 2, "version": "test-fixture"}),
+        ".workspace/manifest.json": records.encoded({"schema_min": 3, "schema_max": 3, "version": "test-fixture"}),
     })
     for name, content in payload.items():
         destination = root / name
@@ -99,12 +99,13 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(report["unfinished"], [])
         project = read_json(self.project / "project.json")
         self.assertEqual(set(project), {"schema_version", "name", "language", "current_evaluation", "deliveries"})
-        self.assertEqual(project["schema_version"], 2)
+        self.assertEqual(project["schema_version"], 3)
         self.assertEqual(project["current_evaluation"], "v2")
         self.assertEqual(project["deliveries"], demo.DELIVERIES)
         proposal = read_json(self.project / "proposal.json")
-        self.assertEqual(set(proposal), {"summary", "sections", "examples", "feasibility"})
+        self.assertEqual(set(proposal), {"summary", "sections", "examples", "feasibility", "approaches"})
         self.assertEqual(len(proposal["sections"]), 4)
+        self.assertEqual({role for approach in proposal["approaches"] for role in approach["roles"]}, {"baseline", "recommended", "reference", "challenge"})
         self.assertIn(demo.NOTICE, proposal["summary"])
         for section in proposal["sections"]:
             self.assertEqual(set(section), {"title", "body"})
@@ -188,13 +189,13 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(status["config_sha256"], sha(path / "config.json"))
         self.assertTrue((path / "run.log").read_bytes())
         fields = {"state", "updated_at", "started_at", "completed_at", "elapsed_seconds", "returncode", "timed_out", "config_sha256"}
-        self.assertEqual(set(status), fields | ({"metrics"} if "evals" in path.parts else {"model_path", "model_sha256"}))
+        self.assertEqual(set(status), fields | ({"metrics"} if "evals" in path.parts else {"target"}))
 
     def test_real_metrics_calibration_and_old_model_retests(self):
         versions = {}
         for path in sorted((self.project / "experiments").glob("*/evals/*")):
             config = read_json(path / "config.json")
-            self.assertEqual(set(config), {"id", "evaluation_version", "model_sha256", "evaluation_sha256", "execution"})
+            self.assertEqual(set(config), {"id", "evaluation_version", "target_sha256", "evaluation_sha256", "execution"})
             experiment = path.parent.parent.name
             versions.setdefault(experiment, []).append(config)
             status = read_json(path / "status.json")
@@ -219,11 +220,11 @@ class DemoTests(unittest.TestCase):
             evaluation = self.project / "evaluation" / config["evaluation_version"]
             self.assertEqual(config["evaluation_sha256"], sha(evaluation / "manifest.json"))
             self.assertNotEqual(config["evaluation_sha256"], sha(evaluation / "definition.json"))
-            self.assertEqual(config["model_sha256"], read_json(path.parent.parent / "status.json")["model_sha256"])
+            self.assertEqual(config["target_sha256"], read_json(path.parent.parent / "status.json")["target"]["sha256"])
             self.assert_process_facts(path)
         for experiment in ("exp-001", "exp-002"):
             self.assertEqual({item["evaluation_version"] for item in versions[experiment]}, {"v1", "v2"})
-            self.assertEqual(len({item["model_sha256"] for item in versions[experiment]}), 1)
+            self.assertEqual(len({item["target_sha256"] for item in versions[experiment]}), 1)
             self.assertIn("没有再训练", read_json(self.project / "experiments" / experiment / "analysis.json")["summary"])
         for version in ("v1", "v2"):
             package = self.project / "evaluation" / version
@@ -240,7 +241,7 @@ class DemoTests(unittest.TestCase):
             base = self.project / f"experiments/exp-{index:03d}"
             config = read_json(base / "config.json")
             self.assertEqual(set(config), {"id", "title", "parent_experiment_id", "hypothesis", "method", "model_name", "framework",
-                                           "parameters", "inputs", "snapshot_sha256", "execution"})
+                                           "parameters", "inputs", "snapshot_sha256", "execution", "role"})
             self.assertEqual(config["inputs"], [{"path": "data/train.jsonl", "sha256": sha(self.project / "data/train.jsonl")}])
             self.assertEqual(config["snapshot_sha256"], sha(base / "snapshot/manifest.json"))
             model = read_json(base / "model/model.json")
@@ -258,8 +259,8 @@ class DemoTests(unittest.TestCase):
             signatures.add(sha(base / "model/model.json"))
             self.assert_process_facts(base)
             status = read_json(base / "status.json")
-            self.assertEqual(status["model_path"], f"experiments/exp-{index:03d}/model/model.json")
-            self.assertEqual(status["model_sha256"], sha(base / "model/model.json"))
+            self.assertEqual(status["target"]["path"], f"experiments/exp-{index:03d}/model/model.json")
+            self.assertEqual(status["target"]["sha256"], sha(base / "model/model.json"))
             analysis = read_json(base / "analysis.json")
             self.assertEqual(set(analysis), {"outcome", "summary"})
             self.assertTrue(analysis["summary"])
@@ -290,7 +291,7 @@ class DemoTests(unittest.TestCase):
             self.assertEqual(set(row["outputs"]), set(demo.DELIVERIES))
         for experiment in demo.DELIVERIES:
             status = read_json(self.project / "experiments" / experiment / "status.json")
-            argv = [sys.executable, "-B", f"experiments/{experiment}/snapshot/infer.py", "--model", status["model_path"]]
+            argv = [sys.executable, "-B", f"experiments/{experiment}/snapshot/infer.py", "--model", status["target"]["path"]]
             replay = subprocess.run(argv + ["--inputs", "data/comparison.jsonl"], cwd=self.project,
                                     check=True, capture_output=True, text=True, timeout=60)
             values = [json.loads(line) for line in replay.stdout.splitlines()]
@@ -397,7 +398,7 @@ class DemoSafetyTests(unittest.TestCase):
                 self.assertGreater(status["elapsed_seconds"], 0)
                 self.assertEqual(status["config_sha256"], sha(root / attempt / "config.json"))
                 self.assertNotIn("metrics", status)
-                self.assertNotIn("model_path", status)
+                self.assertNotIn("target", status)
                 self.assertFalse((root / attempt / "outputs.jsonl").exists())
                 self.assertEqual(read_json(root / "project.json")["deliveries"], [])
                 self.assertFalse((root / "comparison/outputs.jsonl").exists())

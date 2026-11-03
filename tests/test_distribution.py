@@ -12,7 +12,9 @@ import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener
+
+urlopen = build_opener(ProxyHandler({})).open
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -67,10 +69,10 @@ class DistributionTests(unittest.TestCase):
 
     def test_explicit_isolated_package_and_hashes(self):
         manifest, _, payload = installer.verify_kit(self.kit)
-        self.assertEqual((manifest["version"], manifest["schema_min"], manifest["schema_max"]), ("0.4.0", 2, 2))
+        self.assertEqual((manifest["version"], manifest["schema_min"], manifest["schema_max"]), ("0.5.0", 3, 3))
         self.assertEqual(builder.TEMPLATES, installer.TEMPLATES)
         self.assertEqual(set(installer.TEMPLATES), {"AGENTS.md", "project.json", "proposal.json", "resources.json"})
-        self.assertEqual(set(builder.SKILLS), {"research-workspace", "tunetune-init", "build-evaluation", "train", "review"})
+        self.assertEqual(set(builder.SKILLS), {"research-workspace", "tunetune-init", "build-evaluation", "run-experiments", "explore"})
         self.assertEqual(set(payload), {f"template/{name}" for name in installer.TEMPLATES}
                          | {"install-workspace.py", "workspace/workspace.py", "workspace/monitor.py",
                             "workspace/assets/index.html", "workspace/assets/assets/app.js"}
@@ -83,8 +85,8 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual(entry["sha256"], hashlib.sha256((self.kit / entry["path"]).read_bytes()).hexdigest())
         with tarfile.open(self.archive) as archive:
             names = archive.getnames()
-            self.assertIn("workspace-kit-0.4.0/install-workspace.py", names)
-            self.assertIn("workspace-kit-0.4.0/workspace/monitor.py", names)
+            self.assertIn("workspace-kit-0.5.0/install-workspace.py", names)
+            self.assertIn("workspace-kit-0.5.0/workspace/monitor.py", names)
             self.assertFalse(any(any(part in name.split("/") for part in ("design", "notes", "reference", "evals", "src", "node_modules")) for name in names))
         for relative, source in builder.collect_skills(self.source).items():
             self.assertEqual(payload[relative], source.read_bytes())
@@ -101,14 +103,14 @@ class DistributionTests(unittest.TestCase):
             path.write_bytes(data)
 
     def test_contract_lives_only_in_base_skill(self):
-        # Stale templates are excluded, not copied into a new format-2 project.
+        # Stale templates are excluded, not copied into a new format-3 project.
         for name in ("research-contract.md", "goal.json", "candidates.json", "workspace.json"):
             (self.source / "templates/workspace" / name).write_text("stale template")
         kit, archive_path = builder.build(self.source, self.base / "contract-dist")
         canonical = (self.source / "skills/research-workspace/references/records.md").read_bytes()
         self.assertEqual({path.name for path in (kit / "template").iterdir()}, set(installer.TEMPLATES))
         with tarfile.open(archive_path) as archive:
-            self.assertEqual(archive.extractfile("workspace-kit-0.4.0/skills/research-workspace/references/records.md").read(), canonical)
+            self.assertEqual(archive.extractfile("workspace-kit-0.5.0/skills/research-workspace/references/records.md").read(), canonical)
             self.assertFalse(any("research-contract.md" in name for name in archive.getnames()))
         (self.source / "skills/research-workspace/references/records.md").unlink()
         with self.assertRaisesRegex(ValueError, "records.md"):
@@ -210,7 +212,7 @@ class DistributionTests(unittest.TestCase):
     def test_template_defaults(self):
         self.install()
         expected = {
-            "project.json": {"schema_version": 2, "name": "未命名研究", "language": "zh-CN",
+            "project.json": {"schema_version": 3, "name": "未命名研究", "language": "zh-CN",
                              "current_evaluation": None, "deliveries": []},
             "proposal.json": {"summary": "", "sections": [], "examples": []},
             "resources.json": {"items": []},
@@ -230,7 +232,7 @@ class DistributionTests(unittest.TestCase):
         (self.project / "AGENTS.md").write_text("Existing project instructions")
         (self.project / "experiments/e1").mkdir(parents=True)
         (self.project / "experiments/e1/analysis.json").write_text('{"outcome":"baseline","summary":"Measured reference"}')
-        (self.project / "project.json").write_text(json.dumps({"schema_version": 2, "name": "原名称", "language": "zh-CN",
+        (self.project / "project.json").write_text(json.dumps({"schema_version": 3, "name": "原名称", "language": "zh-CN",
                                                               "current_evaluation": "v1", "deliveries": ["e1"]}))
         before = self.snapshot(self.project)
         directories = {path for path in self.project.rglob("*") if path.is_dir()}
@@ -264,7 +266,7 @@ class DistributionTests(unittest.TestCase):
         (self.project / "project.json").write_text(json.dumps({
             "schema_version": 1, "name": "Previous study", "language": "en", "current_evaluation": None}))
         before = self.snapshot(self.project)
-        with self.assertRaisesRegex(ValueError, "schema 2 required; automatic migration is not supported"):
+        with self.assertRaisesRegex(ValueError, "format 3 required; no automatic migration"):
             self.install()
         self.assertEqual(before, self.snapshot(self.project))
         self.assertEqual({path.name for path in self.project.iterdir()}, {"project.json"})
@@ -357,7 +359,7 @@ class DistributionTests(unittest.TestCase):
 
     def test_kit_version_and_schema_range_are_exact(self):
         original = (self.kit / "manifest.json").read_bytes()
-        for version, low, high in (("0.3.0", 1, 1), ("0.4.0", 1, 2), ("0.4.0", 2, 3), ("0.4.0", True, 2)):
+        for version, low, high in (("0.3.0", 1, 1), ("0.5.0", 1, 2), ("0.5.0", 2, 3), ("0.5.0", True, 2)):
             with self.subTest(version=version, low=low, high=high):
                 (self.kit / "manifest.json").write_bytes(original)
                 self.rewrite_manifest(lambda manifest: manifest.update(version=version, schema_min=low, schema_max=high))
@@ -401,11 +403,11 @@ class DistributionTests(unittest.TestCase):
 
     def test_malformed_or_conflicting_business_files_are_refused(self):
         self.project.mkdir()
-        project = {"schema_version": 2, "name": "Research", "language": "en", "current_evaluation": None, "deliveries": []}
+        project = {"schema_version": 3, "name": "Research", "language": "en", "current_evaluation": None, "deliveries": []}
         proposal = {"summary": "", "sections": [], "examples": []}
         resource = {"id": "r1", "title": "Data", "type": "dataset", "status": "unknown"}
         cases = [("project.json", "[]"), ("project.json", "not json"),
-                 ("project.json", '{"schema_version":99}'), ("project.json", '{"schema_version":2,"schema_version":2}'),
+                 ("project.json", '{"schema_version":99}'), ("project.json", '{"schema_version":3,"schema_version":3}'),
                  ("project.json", json.dumps({**project, "deliveries": ["../escape"]})),
                  ("project.json", json.dumps({**project, "deliveries": ["e1", "e1"]})),
                  ("project.json", json.dumps({**project, "current_evaluation": "../escape"})),
@@ -511,8 +513,8 @@ class DistributionTests(unittest.TestCase):
             ("skills/research-workspace/references", external),
             ("skills/research-workspace/references/records.md", external_file),
             ("skills/research-workspace/scripts/records.py", external_file),
-            ("skills/train/references/linked.json", external_file),
-            ("skills/review/scripts/linked", external),
+            ("skills/run-experiments/references/linked.json", external_file),
+            ("skills/explore/scripts/linked", external),
             ("skills/build-evaluation/evals/linked.json", external_file),
             ("skills/tunetune-init/notes/linked.md", external_file),
             ("skills/tunetune-init/references/.hidden.md", external_file),
@@ -543,7 +545,7 @@ class DistributionTests(unittest.TestCase):
             archive.extractall(extracted)
         shutil.rmtree(self.source)
         shutil.rmtree(self.output)
-        skills = extracted / "workspace-kit-0.4.0/skills"
+        skills = extracted / "workspace-kit-0.5.0/skills"
         self.assertEqual({path.name for path in skills.iterdir()}, set(builder.SKILLS))
         for name in ("records.py", "run.py"):
             script = skills / "research-workspace/scripts" / name
@@ -551,7 +553,7 @@ class DistributionTests(unittest.TestCase):
                                     cwd=self.base, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("usage:", result.stdout.lower())
-        for name in ("tunetune-init", "build-evaluation", "train", "review"):
+        for name in ("tunetune-init", "build-evaluation", "run-experiments", "explore"):
             with self.subTest(skill=name):
                 skill = skills / name / "SKILL.md"
                 links = re.findall(r"\.\./research-workspace/[A-Za-z0-9_./-]+", skill.read_text(encoding="utf-8"))
@@ -561,12 +563,22 @@ class DistributionTests(unittest.TestCase):
                     self.assertTrue(target.is_relative_to(skills / "research-workspace"), link)
                     self.assertTrue(target.is_file(), link)
 
+    def test_packaged_installer_repeats_without_generating_kit_cache(self):
+        command = [sys.executable, "-E", "-s", str(self.kit / "install-workspace.py"),
+                   "--kit", str(self.kit), "--project", str(self.project)]
+        before = self.snapshot(self.kit)
+        for _ in range(2):
+            result = subprocess.run(command, cwd=self.base, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.snapshot(self.kit), before)
+        self.assertFalse(list(self.kit.rglob("__pycache__")))
+
     def test_packaged_installer_and_app_survive_source_removal_and_move(self):
         # Extract the release archive, then remove every build input and output.
         extracted = self.base / "extracted-kit"
         with tarfile.open(self.archive) as archive:
             archive.extractall(extracted)
-        kit = extracted / "workspace-kit-0.4.0"
+        kit = extracted / "workspace-kit-0.5.0"
         shutil.rmtree(self.source)
         shutil.rmtree(self.output)
         result = subprocess.run([sys.executable, "-E", "-s", "-B", str(kit / "install-workspace.py"), "--kit", str(kit),
@@ -596,7 +608,7 @@ class DistributionTests(unittest.TestCase):
             with urlopen(url + "/api/state", timeout=5) as response:
                 state = json.load(response)
             self.assertIsNone(state["error"])
-            self.assertEqual(state["files"]["project.json"]["content"]["schema_version"], 2)
+            self.assertEqual(state["files"]["project.json"]["content"]["schema_version"], 3)
             self.assertIn("proposal.json", state["files"])
             self.assertEqual(state["observations"]["items"], [])
         finally:

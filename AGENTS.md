@@ -7,7 +7,7 @@ TuneTune helps beginners build useful private models through file-driven researc
 Skills are concise English instructions for general research and judgment, not task-specific recipes or duplicate schemas. Repeatable mechanics belong in deterministic scripts. Continue across skills and bounded rounds within the user's exact current authorization; ask only for missing consequential decisions or changed access, privacy, scope or cost boundaries. Explain uncertainty and unmet requirements honestly.
 
 - `workspace/src/`: React/TypeScript components, model logic, CSS and colocated Vitest tests. `workspace/workspace.py` serves files; sibling `monitor.py` provides limited optional resource observations.
-- `skills/`: four research workflows plus shared `research-workspace`. Its `references/records.md` is the canonical format-2 guide; `references/tools.md` documents `scripts/records.py` and `scripts/run.py`.
+- `skills/`: four research workflows plus shared `research-workspace`. Its `references/records.md` is the canonical format-3 guide; `references/tools.md` documents `scripts/records.py` and `scripts/run.py`.
 - `templates/workspace/`: only the installed agent guide and minimal project, proposal and resource files. Create research directories when needed; include no sample research data.
 - `scripts/`: packaging, installation and local demo tools. `tests/`: Python integration and safety tests.
 - `design/` and `reference/`: local supporting assets, excluded from distribution. `dist/`: generated kits.
@@ -34,6 +34,6 @@ Name frontend tests `*.test.ts` and Python tests `test_*.py`. Add regression cov
 
 ## Evidence and Distribution Safety
 
-Preserve conflict detection, immutable configurations and terminal measurements, verified inputs, path and symlink protections, and project isolation. Update the current proposal and experiment analyses in place through conditional writes. Keep the review skill as evidence exploration, not another record system. Selected models remain experiment-local; comparison contains outputs, and selection implies neither deployment nor user satisfaction.
+Preserve conflict detection, immutable configurations and terminal measurements, verified inputs, path and symlink protections, and project isolation. Update the current proposal and experiment analyses in place through conditional writes. Keep the explore skill as evidence exploration, not another record system. Selected models remain experiment-local; comparison contains outputs, and selection implies neither deployment nor user satisfaction.
 
-Keep file mechanics in the canonical shared guide, with no project-root copy. Kit 0.4.0 supports schema 2 only: explicitly refuse incompatible projects and tool versions, without automatic migration or overwriting research. Distribute the five sibling skills, required record and run helpers, service and monitor helper, minimal templates and built assets; exclude secrets, research outputs, frontend source and dependencies.
+Keep file mechanics in the canonical shared guide, with no project-root copy. Kit 0.5.0 supports schema 3 only: explicitly refuse incompatible projects and tool versions, without automatic migration or overwriting research. Distribute the five sibling skills, required record and run helpers, service and monitor helper, minimal templates and built assets; exclude secrets, research outputs, frontend source and dependencies.

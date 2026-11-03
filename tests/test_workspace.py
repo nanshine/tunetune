@@ -30,7 +30,7 @@ class WorkspaceTests(unittest.TestCase):
         self.root.mkdir()
         self.assets.mkdir()
         (self.assets / "index.html").write_text("<!doctype html><title>Workspace</title>")
-        self.write("project.json", {"schema_version": 2, "name": "First"})
+        self.write("project.json", {"schema_version": 3, "name": "First"})
         self.server = self.start(self.root)
         self.port = self.server.server_address[1]
         self.origin = f"http://127.0.0.1:{self.port}"
@@ -117,7 +117,7 @@ class WorkspaceTests(unittest.TestCase):
 
 
     def test_project_name_persists_and_preserves_other_fields(self):
-        project = {"schema_version": 2, "name": "First", "language": "zh",
+        project = {"schema_version": 3, "name": "First", "language": "zh",
                    "current_evaluation": "v2", "custom": {"values": [1, False, None, "研究"]}}
         self.write("project.json", project)
         proposal = self.write("proposal.json", {"examples": []})
@@ -158,7 +158,7 @@ class WorkspaceTests(unittest.TestCase):
             with self.subTest(digest=digest):
                 self.assertEqual(self.rename(dict(body, expected_sha256=digest))[0], 400)
         for invalid_body in ({}, {"name": "Name"}, {"expected_sha256": body["expected_sha256"]},
-                             dict(body, path="project.json"), dict(body, schema_version=2),
+                             dict(body, path="project.json"), dict(body, schema_version=3),
                              b"[]", b"null", b"{broken", b'{"name":"a","name":"b"}',
                              b'{"name":NaN}', b'"\xff"'):
             with self.subTest(body=invalid_body):
@@ -169,7 +169,7 @@ class WorkspaceTests(unittest.TestCase):
     def test_project_name_stale_hash_checks_disk_and_recovers(self):
         body = self.rename_body()
         self.state()
-        path = self.write("project.json", {"schema_version": 2, "name": "Agent edit", "language": "en"})
+        path = self.write("project.json", {"schema_version": 3, "name": "Agent edit", "language": "en"})
         before = path.read_bytes()
         self.assertEqual(self.rename(body)[0], 409)
         self.assertEqual(path.read_bytes(), before)
@@ -252,7 +252,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_project_name_symlink_and_nonregular_file_protection(self):
         body = self.rename_body()
-        outside = self.write("outside.json", {"schema_version": 2, "name": "Outside"}, root=self.base)
+        outside = self.write("outside.json", {"schema_version": 3, "name": "Outside"}, root=self.base)
         before = outside.read_bytes()
         path = self.root / "project.json"
         path.unlink()
@@ -268,7 +268,7 @@ class WorkspaceTests(unittest.TestCase):
         path.mkdir()
         self.assertEqual(self.rename(body)[0], 409)
         path.rmdir()
-        self.write("project.json", {"schema_version": 2, "name": "First"})
+        self.write("project.json", {"schema_version": 3, "name": "First"})
         linked_root = self.base / "linked-project"
         linked_root.symlink_to(self.root, target_is_directory=True)
         with self.assertRaises(wb.RequestError) as error:
@@ -307,7 +307,7 @@ class WorkspaceTests(unittest.TestCase):
     def test_project_name_rechecks_destination_before_replace(self):
         body = self.rename_body()
         path = self.root / "project.json"
-        outside = self.write("outside.json", {"schema_version": 2, "name": "Outside"}, root=self.base)
+        outside = self.write("outside.json", {"schema_version": 3, "name": "Outside"}, root=self.base)
         before = outside.read_bytes()
         fsync = os.fsync
         def swap_destination(fd):
@@ -444,7 +444,7 @@ class WorkspaceTests(unittest.TestCase):
         return {"name": name, "expected_sha256": hashlib.sha256((self.root / "project.json").read_bytes()).hexdigest()}
 
     def test_required_format_and_unknown_json_fields(self):
-        for content in ({}, {"schema_version": True}, {"schema_version": 1}, [], '{"schema_version":2,"schema_version":2}'):
+        for content in ({}, {"schema_version": True}, {"schema_version": 1}, [], '{"schema_version":3,"schema_version":3}'):
             with self.subTest(content=content):
                 self.write("project.json", content)
                 result = wb.Reader(self.root).snapshot()
@@ -455,7 +455,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_known_arrays_and_strict_json(self):
         for path, content in (("proposal.json", {"examples": {}}), ("resources.json", {"items": "bad"}),
-                              ("project.json", {"schema_version":2,"deliveries":{}}),
+                              ("project.json", {"schema_version":3,"deliveries":{}}),
                               ("experiments/e/analysis.json", []),
                               ("experiments/e/analysis.json", '{"score":NaN}'),
                               ("experiments/e/analysis.json", '{"score":1e999}')):
@@ -507,12 +507,12 @@ class WorkspaceTests(unittest.TestCase):
                 self.assertTrue(value["error"])
 
     def test_project_name_requires_current_format_and_limits(self):
-        for project in ({}, {"schema_version": True}, {"schema_version":2.0}, {"schema_version":1}, [], "null", '{"schema_version":', '{"schema_version":2,"schema_version":2}', '{"schema_version":2,"custom":1e999}'):
+        for project in ({}, {"schema_version": True}, {"schema_version":3.0}, {"schema_version":1}, [], "null", '{"schema_version":', '{"schema_version":3,"schema_version":3}', '{"schema_version":3,"custom":1e999}'):
             path = self.write("project.json", project)
             before = path.read_bytes()
             self.assertEqual(self.rename(self.rename_body())[0],409)
             self.assertEqual(path.read_bytes(),before)
-        for project in ({"schema_version":2,"name":"First"}, {"schema_version":2,"custom":"x"*128}):
+        for project in ({"schema_version":3,"name":"First"}, {"schema_version":3,"custom":"x"*128}):
             path=self.write("project.json",project)
             with patch.object(wb,"MAX_FILE_BYTES",64):
                 self.assertEqual(self.rename(self.rename_body("研"*120))[0],409)
@@ -521,7 +521,7 @@ class WorkspaceTests(unittest.TestCase):
     def test_independent_projects(self):
         other=self.base/"second"
         other.mkdir()
-        self.write("project.json",{"schema_version":2,"name":"Second"},root=other)
+        self.write("project.json",{"schema_version":3,"name":"Second"},root=other)
         server=self.start(other)
         value=self.request(port=server.server_address[1])[1]
         self.assertEqual(value["files"]["project.json"]["content"]["name"],"Second")

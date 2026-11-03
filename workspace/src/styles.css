@@ -335,3 +335,14 @@ pre { overflow-wrap: anywhere; white-space: pre-wrap; font-size: 12px; line-heig
 @media (max-width: 560px) {
   .swap-button { margin: 0; }
 }
+
+.approach-card { margin: 12px 0; padding: 14px; border: 1px solid var(--edge); border-radius: 12px; background: rgba(255,255,255,.45); }
+.approach-card h4 { margin: 0 0 8px; }
+.approach-card p:last-child { margin-bottom: 0; }
+.role-list { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.usage-facts { margin: 8px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.record-media { margin: 8px 0; }
+.record-media img, .record-media video, .record-media audio { display: block; max-width: 100%; }
+.record-media img, .record-media video { max-height: 420px; object-fit: contain; border-radius: 8px; }
+.record-media figcaption { color: var(--muted); font-size: 12px; margin-top: 6px; overflow-wrap: anywhere; }
+.brief-text a, .resource-facts a, .record-text a { overflow-wrap: anywhere; }

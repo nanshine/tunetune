@@ -27,10 +27,10 @@ class RecordsTests(unittest.TestCase):
         self.tree = records.Tree(self.root)
         self.addCleanup(self.tree.close)
         self.source = self.base / "input.json"
-        self.raw("project.json", dict(schema_version=2, name="Fixture", language="en", current_evaluation=None, deliveries=[]))
+        self.raw("project.json", dict(schema_version=3, name="Fixture", language="en", current_evaluation=None, deliveries=[]))
         self.raw("proposal.json", self.proposal())
         self.raw("resources.json", dict(items=[]))
-        self.raw(".workspace/manifest.json", dict(schema_min=2, schema_max=2))
+        self.raw(".workspace/manifest.json", dict(schema_min=3, schema_max=3))
 
     def raw(self, path, value):
         target = self.root / path
@@ -78,7 +78,7 @@ class RecordsTests(unittest.TestCase):
     def model(self, ident="e1"):
         base = f"experiments/{ident}"
         self.raw(base + "/model/rule.txt", b"synthetic rule")
-        status = self.status("succeeded", model_path=base + "/model/rule.txt", model_sha256=self.sha(base + "/model/rule.txt"))
+        status = self.status("succeeded", target=dict(kind="local", path=base + "/model/rule.txt", sha256=self.sha(base + "/model/rule.txt")))
         self.put(base + "/status.json", status, create=True)
         return status
 
@@ -88,7 +88,7 @@ class RecordsTests(unittest.TestCase):
             "samples.jsonl": b'{"sample_id":"one","input":{"text":"test"},"reference":"answer","split":"test"}\n'})
         self.experiment()
         model = self.model()
-        config = dict(id="r1", evaluation_version="v1", model_sha256=model["model_sha256"],
+        config = dict(id="r1", evaluation_version="v1", target_sha256=model["target"]["sha256"],
                       evaluation_sha256=evaluation["manifest_sha256"],
                       execution=dict(argv=["python3", "evaluation/v1/score.py"], cwd=".", environment={}, timeout_seconds=5))
         self.put("experiments/e1/evals/r1/config.json", config, create=True)
@@ -168,8 +168,8 @@ class RecordsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "backwards"):
             self.put(path, self.status("running", **facts), expected=self.sha(path))
         self.raw("experiments/e1/model/file", b"model")
-        self.put(path, self.status("succeeded", **facts, model_path="experiments/e1/model/file",
-                                  model_sha256=self.sha("experiments/e1/model/file")), expected=self.sha(path))
+        self.put(path, self.status("succeeded", **facts, target=dict(kind="local", path="experiments/e1/model/file",
+                                  sha256=self.sha("experiments/e1/model/file"))), expected=self.sha(path))
         self.assertEqual({k: records.read_record(self.tree, path)[k] for k in facts}, facts)
 
     def test_success_requires_verified_model_and_declared_evaluation_outputs(self):
@@ -280,19 +280,19 @@ class RecordsTests(unittest.TestCase):
         path = "experiments/e1/status.json"
         for model_path in ("elsewhere/file", "experiments/e2/model/file", "experiments/e1/modelish/file", "../model"):
             with self.subTest(path=model_path), self.assertRaises(ValueError):
-                self.put(path, self.status("succeeded", model_path=model_path, model_sha256="0" * 64), create=True)
+                self.put(path, self.status("succeeded", target=dict(kind="local", path=model_path, sha256="0" * 64)), create=True)
         with self.assertRaisesRegex(ValueError, "requires a model"):
             self.put(path, self.status("succeeded"), create=True)
         self.raw("experiments/e1/model/sub/weights", b"weights")
         with self.assertRaises(OSError):
-            self.put(path, self.status("succeeded", model_path="experiments/e1/model", model_sha256="0" * 64), create=True)
+            self.put(path, self.status("succeeded", target=dict(kind="local", path="experiments/e1/model", sha256="0" * 64)), create=True)
         result = self.cli("manifest", "--project", str(self.root), "--path", "experiments/e1/model")
         self.assertEqual(result.returncode, 0, result.stderr)
         result = json.loads(result.stdout)
         self.assertEqual(result["manifest_sha256"], self.sha("experiments/e1/model/manifest.json"))
         with self.assertRaisesRegex(ValueError, "immutable"):
             records.manifest(self.tree, "experiments/e1/model/sub")
-        self.put(path, self.status("succeeded", model_path="experiments/e1/model", model_sha256=result["manifest_sha256"]), create=True)
+        self.put(path, self.status("succeeded", target=dict(kind="local", path="experiments/e1/model", sha256=result["manifest_sha256"])), create=True)
         with self.assertRaisesRegex(ValueError, "already exists"):
             records.manifest(self.tree, "experiments/e1/model")
         with self.assertRaisesRegex(ValueError, "Final models are immutable"):
@@ -310,7 +310,7 @@ class RecordsTests(unittest.TestCase):
         self.model()
         self.put("project.json", dict(project, deliveries=["e1"]), expected=self.sha("project.json"))
         path = "comparison/outputs.jsonl"
-        for output in ([], {"missing": "text"}, {"../e1": "text"}, {"e1": 1}, {"e1": None}):
+        for output in ([], {"missing": "text"}, {"../e1": "text"}, {"e1": None}):
             with self.subTest(output=output), self.assertRaises((ValueError, OSError)):
                 self.put(path, json.dumps(dict(sample_id="one", input="x", outputs=output)).encode(), create=True)
         self.put(path, b'{"sample_id":"one","input":"x","outputs":{"e1":""}}\n{"sample_id":"two","input":0,"outputs":{}}\n', create=True)
@@ -323,7 +323,7 @@ class RecordsTests(unittest.TestCase):
             ("experiments/e1/config.json", "parent_experiment_id", "e1"),
             ("experiments/e1/config.json", "parent_experiment_id", "missing"),
             ("experiments/e1/config.json", "snapshot_sha256", "0" * 64),
-            ("experiments/e1/evals/r1/config.json", "model_sha256", "0" * 64),
+            ("experiments/e1/evals/r1/config.json", "target_sha256", "0" * 64),
             ("experiments/e1/evals/r1/config.json", "evaluation_sha256", self.sha("evaluation/v1/definition.json")),
             ("experiments/e1/evals/r1/config.json", "evaluation_version", "missing"),
         ]
@@ -481,9 +481,9 @@ class RecordsTests(unittest.TestCase):
         source.mkdir()
         (source / "code.py").write_bytes(b"# fixture\n")
         self.raw("experiments/e1/model/weights", b"fixture")
-        for metadata in (dict(schema_min=3, schema_max=3), dict(schema_min=1, schema_max=2),
-                         dict(schema_min=2, schema_max=3), dict(schema_min=True, schema_max=2),
-                         dict(schema_min=2.0, schema_max=2), dict(schema_min=2)):
+        for metadata in (dict(schema_min=2, schema_max=2), dict(schema_min=1, schema_max=3),
+                         dict(schema_min=3, schema_max=4), dict(schema_min=True, schema_max=3),
+                         dict(schema_min=3.0, schema_max=3), dict(schema_min=3)):
             with self.subTest(metadata=metadata):
                 self.raw(".workspace/manifest.json", metadata)
                 before = {p.relative_to(self.root): p.read_bytes() if p.is_file() else None

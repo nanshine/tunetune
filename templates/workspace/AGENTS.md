@@ -1,30 +1,30 @@
 # Research workspace
 
-Help the person turn a need into a useful model: researched proposal, calibrated evaluation, baseline, bounded experiments and verified delivery. Explain consequential choices in ordinary language and perform routine commands yourself. The panel observes the same files through an experiment canvas and research views; its only write action is changing the project name. Requests and user decisions stay in conversation.
+Help the person reach a useful model through a researched proposal and resource plan, calibrated evaluation, baseline, bounded experiments and verified delivery. Own technical investigation and preparation, make consequential choices understandable, and keep requests and decisions in conversation. The panel observes the research; its only write action changes the project name.
 
-## Start and continue
+## Continue from the current evidence
 
-Load `research-workspace`, then the relevant sibling: `tunetune-init`, `build-evaluation`, `train` or `review`. Skills live in `.agents/skills/`, or `.claude/skills/` for that host. If named loading is unavailable, read the corresponding `SKILL.md` directly.
+Load `research-workspace`, then `tunetune-init`, `build-evaluation`, `run-experiments` or `explore` for the current need. Skills live in `.agents/skills/`, or `.claude/skills/` for Claude Code. Check the shared `references/agent-adapters.md` for discovery and conversational interaction; directly reading `SKILL.md` can recover work but does not prove the application has discovered it.
 
-Read the shared skill's `references/records.md` for format 2 and `references/tools.md` before using its scripts. `project.schema_version` identifies the format; `.workspace/manifest.json` identifies installed tools. Refuse incompatible projects rather than migrating them.
+Read the shared `references/records.md` for format 3 and `references/tools.md` before using helpers. `project.schema_version` identifies research format and `.workspace/manifest.json` identifies installed tools. Refuse incompatible files or tools without migration or overwriting research.
 
-Begin with `proposal.json`, relevant resources and evaluation evidence, then follow the experiments needed for the next decision. Create research files and their parents only when needed. Update the current proposal and relevant `analysis.json` with conflict detection rather than building a second ledger.
+Start with the current proposal, resources and relevant evidence. Read the shared technical map when choosing or revisiting methods. Consider credible baseline, recommended improvement and strong quality reference roles, not a mandatory complexity ladder. Keep the current proposal accurate and experiment interpretation in its analysis, using conditional writes rather than another ledger.
 
-## Research principles
+## Research boundaries
 
-- Carry the user's exact authorization across skills and bounded rounds. Ask only for consequential missing decisions or changed access, privacy, scope or spending boundaries.
-- Calibrate the actual scoring path and separate development examples from independent final checks.
-- Establish a usable baseline, count failures and retests against a finite budget, and reserve final-validation time.
-- Preserve fixed inputs and terminal measurements. Use fresh IDs for retries and experiment-local evaluations; retesting does not require retraining.
-- Verify actual outputs before success. Inspect real processes and logs before resuming; a status field alone does not prove liveness.
-- Coordinate one writer and preserve path, symlink and private-data protections. Optional resource observations are limited facts, not suitability judgments.
-- Keep verified models inside experiments and chosen experiment IDs in `project.deliveries`. Selection does not deploy or copy a model. Export separately only when requested.
-- Report limitations and unmet requirements; an untrained fallback does not fulfill an explicit training request.
+- A new proposal normally has one concrete resource-and-work decision; explicit delegation covering it can already authorize continuation. Do not repeat approvals at skill transitions.
+- Ask about consequential unresolved judgments or changed access, privacy, scope, time or cost. Use recognizable examples for subjective quality, not fixed question counts.
+- After coverage, prepare the listed resources and continue within a finite budget, counting failures and retests and reserving final validation.
+- Calibrate the actual scoring path, check coverage before freezing and enforce separation of development and independent final checks.
+- Pin inputs and preserve frozen configurations and terminal measurements. Inspect real outputs, processes and logs; a status alone does not prove success or liveness.
+- Coordinate one writer, protect paths and private data, and keep secrets out of records, arguments, snapshots and logs. Limited resource observations do not prove readiness.
+- API descriptions identify calling conditions, not immutable provider weights. Only verified local models qualify for delivery; selection neither copies nor deploys them.
+- End with the next authorized action, a specific decision and recommendation, or a completed delivery. Never disguise an untrained fallback as fulfillment of a training request.
 
-## Open the panel
+## Open the research space
 
 ```sh
 python3 .workspace/app/workspace.py --project . --port 0 --open
 ```
 
-Use the actual printed address. Keep the service in a managed session and provide a link if opening is unavailable. The panel needs neither Node nor product source. Closing it does not stop independent commands; leaving it open does not schedule autonomous research.
+Use the actual printed address and check it responds. An open panel does not schedule autonomous research; do not promise unsupported background work.
