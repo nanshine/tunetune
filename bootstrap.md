@@ -16,13 +16,13 @@ Inspect existing files and instructions. Kit 0.5.0 accepts format 3 only: refuse
 python3 <bundle>/install-workspace.py --kit <bundle> --project <current-directory> --host agents
 ```
 
-Use `--host claude` for Claude Code. Install all five sibling skills in `.agents/skills/` or `.claude/skills/`, the application under `.workspace`, and only the minimal initial research files. Preserve existing compatible research and instructions, refuse tool conflicts and create stage directories only when needed. Keep the canonical format guide in the shared skill.
+Use `--host claude` for Claude Code. Install all four sibling skills in `.agents/skills/` or `.claude/skills/`, the application under `.workspace`, and only the minimal initial research files. Preserve existing compatible research and instructions, refuse tool conflicts and create stage directories only when needed. Keep the canonical format guide in the shared skill.
 
 A separate research directory is an explicit option, not a default. Before using it, make sure the application will discover skills from that directory; silently placing skills below the conversation directory does not make them available.
 
 ## Make the skills available
 
-Read the installed shared skill's `references/agent-adapters.md`. Confirm that `research-workspace`, `tunetune-init`, `build-evaluation`, `run-experiments` and `explore` are installed where the application discovers skills, then continue in this conversation by reading the installed skills. Do not pause to ask the person to inspect a skill picker.
+Read the installed shared skill's `references/agent-adapters.md`. Confirm that `research-workspace`, `tunetune-init`, `build-evaluation` and `run-experiments` are installed where the application discovers skills, then continue in this conversation by reading the installed skills. Do not pause to ask the person to inspect a skill picker.
 
 Mention a refresh only when the application documents one for this case, such as `/reload-skills` in Claude Code for a new top-level skills directory, or when the person reports the skills missing. Then say it in one plain sentence with the directory and a continuation sentence carrying the original request, for example: “If the TuneTune skills do not appear, reopen this directory in Codex and continue with: …”. Do not present it as a research failure or use internal terms. Report installation briefly; do not promise support for an untested application.
 

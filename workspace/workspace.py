@@ -30,7 +30,7 @@ MAX_BODY_BYTES = 128 * 1024
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 # A closed allowlist: wildcard matches exactly one safe path component.
 PATTERNS = (
-    "project.json", "proposal.json", "resources.json",
+    "project.json", "proposal.json", "plan.json", "resources.json",
     "evaluation/*/definition.json", "evaluation/*/samples.jsonl",
     "experiments/*/config.json", "experiments/*/status.json", "experiments/*/analysis.json",
     "experiments/*/evals/*/config.json", "experiments/*/evals/*/status.json",

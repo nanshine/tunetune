@@ -113,6 +113,32 @@
         "Original object and frozen evaluation remain byte-identical",
         "Actual outputs verified before success"
       ]
+    },
+    {
+      "id": 10,
+      "name": "narrow-search-after-failure",
+      "prompt": "In this study the keyword baseline scores 0.83 F1 on 22 reviewed blog posts and a prompted local 4B model scores 0.64. The approved scope allows public model downloads up to 5 GB, local execution and no uploads. Continue the study.",
+      "expected_output": "Plan a round that tests a different intervention family within the approved ceilings, checks whether the baseline was tuned on evaluation samples, and runs it without asking again.",
+      "files": [],
+      "assertions": [
+        "Considers zero-shot or frozen-embedding routes found with the lookup helper",
+        "Notices that rules written after reading the evaluation samples are not unseen evidence",
+        "Writes the round into plan.json with eNNN IDs and comparators",
+        "Does not ask for approval of a download within the agreed ceilings"
+      ]
+    },
+    {
+      "id": 11,
+      "name": "plain-decision-message",
+      "prompt": "Propose a plan for tagging my 120 notes. Downloads are fine if you tell me the size first.",
+      "expected_output": "Asks about usage and real inputs, then gives a short decision message with roles, resource ceilings and choices, with the full proposal in the panel.",
+      "files": [],
+      "assertions": [
+        "Never cites a skill, workflow or rule as the reason for a question",
+        "Leads with what will be built and the needed decision",
+        "States download size and that notes stay local in plain terms",
+        "Offers a choice between running through to delivery and reviewing the evaluation first"
+      ]
     }
   ]
 }

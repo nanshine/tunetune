@@ -12,7 +12,7 @@ Install under the current working directory's `.claude/skills`. Use its interact
 
 ## Installation acceptance
 
-Check that all five skills, `research-workspace`, `tunetune-init`, `build-evaluation`, `run-experiments` and `explore`, are installed in the application's discovery directory, then continue by reading them. Do not block research on a skill-list check the conversation cannot perform; give reopen instructions only when the application requires them or the person reports the skills missing.
+Check that all four skills, `research-workspace`, `tunetune-init`, `build-evaluation` and `run-experiments`, are installed in the application's discovery directory, then continue by reading them. Do not block research on a skill-list check the conversation cannot perform; give reopen instructions only when the application requires them or the person reports the skills missing.
 
 Keep the one-sentence entrypoint in the current directory. An explicitly selected separate directory also requires an application working-directory setup that discovers its skills. For other applications, consult their supported discovery and question mechanisms and report untested compatibility honestly.
 

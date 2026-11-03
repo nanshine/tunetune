@@ -6,9 +6,12 @@ The Agent maintains research files; the panel observes them. Decisions and autho
 
 - `project.json`: `{schema_version:3,name,language,current_evaluation:null|string,deliveries:[experiment_id]}`.
 - `proposal.json`: `{summary,sections:[{title,body}],examples:[{id,input,expected_output?}],approaches?:[{id,title,roles:[baseline|recommended|reference|challenge],rationale,limitations?,resource_ids?:[resource_id]}],feasibility?:{verdict:feasible|conditional|infeasible|unknown,reason}}`.
+- `plan.json` (optional until the first round): `{rounds:[{round,goal,budget,items:[{id,title,question,expected,state:planned|running|done|dropped,intervention?,parent?,comparator?,cost?,resource_ids?:[resource_id],note?}],conclusion?}],ideas?:[{title,reason}]}`.
 - `resources.json`: `{items:[{id,title,type,status,purpose?,source?,preparation?,access?,path?,location?,version?,size?,monitor?}]}`.
 
 The proposal states direction: goals, requirements and assumptions, recommendation and evidence, alternatives, intended evaluation, finite budget and stopping conditions, and delivery. Approach roles can overlap; complexity is not quality. Resource IDs must exist. Create resources before referencing them in the proposal. Revise it only when the goal, requirements, recommended direction or authorized scope changes. Measurements, run progress and round summaries belong in experiment analyses, never in the proposal. Do not create approval records or revision archives.
+
+The plan records experiment rounds. Rounds are numbered from 1 and appended; a later round never rewrites an earlier one except to update item states, notes and its one-sentence conclusion. Each item reserves the experiment ID it will use, so the panel can show planned work before it exists. `expected` names the observation that would change the next decision; `parent` is intended method ancestry and `comparator` the experiment it must beat. `running` and `done` items require an existing experiment. Dropped items say why in `note`. Results stay in experiment analyses; the plan references IDs only. Ideas not worth a round keep a reason.
 
 Resources are the sole inventory and preparation plan. Types are open text; useful groups include data/annotation, environment, hardware/storage, models, code/tools, services and credentials. `purpose` explains use; `source` identifies origin; `preparation` describes acquisition, estimated download/cache/unpacked space and next check; `access` explains data transfer, fees and credential requirements without secrets. Mark estimates and unknowns honestly. `path` is project-relative and may be a planned destination; `location` identifies an external location. Use at most one. `size` and `version` are strings.
 
@@ -19,7 +22,7 @@ Everything the study creates stays inside the project, so deleting the directory
 - `resources/`: acquired models, datasets, code and isolated environments, such as `resources/env`.
 - `inputs/`: prepared data derived from the person's material and shared by experiments, such as training sets. Evaluation preparation stays under `evaluation/`.
 - `evaluation/`, `experiments/` and `comparison/`: measurement, attempts and acceptance outputs described below.
-- `.workspace/cache/` and `.workspace/tmp/`: package and model-hub caches and temporary files; neither is research evidence.
+- `.workspace/cache/` and `.workspace/tmp/`: package and model-hub caches, helper scripts and temporary files; neither is research evidence.
 
 Create directories only when needed. Do not add reports, suggestion lists, usage notes or other documents at the root: the panel shows records, and a model's `invoke.json` describes how to call it. Anything kept outside the project, such as a reused global model cache, is a resource with a `location`.
 
@@ -48,6 +51,8 @@ Under `experiments/<id>/`:
 - `model/`: actual local model or frozen API description and adapter, with an `invoke.json` entry point when it is a directory.
 - `analysis.json`: `{outcome:baseline|keep|discard|inconclusive|invalid,summary}`.
 - `run.log` and independent `evals/<run-id>/` attempts.
+
+Experiment IDs are `eNNN-short-slug`, such as `e000-keyword` or `e002-embed-lr`, assigned in creation order by `records.py next-id`; the number is how people refer to an experiment and the title explains it. The baseline measured with the evaluation is normally `e000`. Older IDs remain valid.
 
 Parent means method/code ancestry, not inherited weights or ranking. Pin inherited files explicitly. Role is research intent, not measured outcome or delivery eligibility. A rule-based baseline may be useful but does not fulfill an explicit training request.
 

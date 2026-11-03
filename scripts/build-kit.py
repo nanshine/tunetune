@@ -11,7 +11,7 @@ import tempfile
 
 VERSION = "0.5.0"
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
-SKILLS = ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments", "explore")
+SKILLS = ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments")
 SKILL_RESOURCES = {"references": {".md", ".json"}, "scripts": {".py"}}
 EXCLUDED_SKILL_PARTS = {"evals", "notes", "reference", "__pycache__", "cache", "node_modules"}
 ASSET_SUFFIXES = {".html", ".js", ".css", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".woff", ".woff2", ".ttf"}
@@ -25,7 +25,7 @@ def checked_file(path):
 
 def collect_skills(source):
     inputs = {}
-    for relative in ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py", "scripts/resources.py"):
+    for relative in ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py", "scripts/resources.py", "scripts/scout.py"):
         checked_file(source / "skills/research-workspace" / relative)
     for name in SKILLS:
         root = source / "skills" / name

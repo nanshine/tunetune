@@ -72,7 +72,7 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual((manifest["version"], manifest["schema_min"], manifest["schema_max"]), ("0.5.0", 3, 3))
         self.assertEqual(builder.TEMPLATES, installer.TEMPLATES)
         self.assertEqual(set(installer.TEMPLATES), {"AGENTS.md", "project.json", "proposal.json", "resources.json"})
-        self.assertEqual(set(builder.SKILLS), {"research-workspace", "tunetune-init", "build-evaluation", "run-experiments", "explore"})
+        self.assertEqual(set(builder.SKILLS), {"research-workspace", "tunetune-init", "build-evaluation", "run-experiments"})
         self.assertEqual(set(payload), {f"template/{name}" for name in installer.TEMPLATES}
                          | {"install-workspace.py", "workspace/workspace.py", "workspace/monitor.py",
                             "workspace/assets/index.html", "workspace/assets/assets/app.js"}
@@ -514,7 +514,7 @@ class DistributionTests(unittest.TestCase):
             ("skills/research-workspace/references/records.md", external_file),
             ("skills/research-workspace/scripts/records.py", external_file),
             ("skills/run-experiments/references/linked.json", external_file),
-            ("skills/explore/scripts/linked", external),
+            ("skills/run-experiments/scripts/linked", external),
             ("skills/build-evaluation/evals/linked.json", external_file),
             ("skills/tunetune-init/notes/linked.md", external_file),
             ("skills/tunetune-init/references/.hidden.md", external_file),
@@ -547,13 +547,13 @@ class DistributionTests(unittest.TestCase):
         shutil.rmtree(self.output)
         skills = extracted / "workspace-kit-0.5.0/skills"
         self.assertEqual({path.name for path in skills.iterdir()}, set(builder.SKILLS))
-        for name in ("records.py", "run.py"):
+        for name in ("records.py", "run.py", "scout.py"):
             script = skills / "research-workspace/scripts" / name
             result = subprocess.run([sys.executable, "-E", "-s", "-B", str(script), "--help"],
                                     cwd=self.base, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("usage:", result.stdout.lower())
-        for name in ("tunetune-init", "build-evaluation", "run-experiments", "explore"):
+        for name in ("tunetune-init", "build-evaluation", "run-experiments"):
             with self.subTest(skill=name):
                 skill = skills / name / "SKILL.md"
                 links = re.findall(r"\.\./research-workspace/[A-Za-z0-9_./-]+", skill.read_text(encoding="utf-8"))

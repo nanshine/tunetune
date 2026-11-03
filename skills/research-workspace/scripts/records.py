@@ -19,7 +19,7 @@ SHA = re.compile(r"[a-f0-9]{64}\Z")
 FINAL = ("succeeded", "failed", "cancelled")
 ATTEMPT = rf"experiments/{ID}(?:/evals/{ID})?"
 RECORD = re.compile(
-    rf"(?:project|proposal|resources)\.json|comparison/(?:inputs|outputs)\.jsonl|"
+    rf"(?:project|proposal|resources|plan)\.json|comparison/(?:inputs|outputs)\.jsonl|"
     rf"evaluation/{ID}/(?:definition\.json|samples\.jsonl)|"
     rf"{ATTEMPT}/(?:config|status)\.json|experiments/{ID}/analysis\.json|"
     rf"experiments/{ID}/evals/{ID}/outputs\.jsonl")
@@ -287,6 +287,33 @@ def shape(path, data):
             fields(obj["feasibility"], ("verdict", "reason"))
             require(obj["feasibility"]["verdict"] in ("feasible", "conditional", "infeasible", "unknown")
                     and isinstance(obj["feasibility"]["reason"], str), "Invalid feasibility")
+    elif path == "plan.json":
+        fields(obj, ("rounds",), ("ideas",))
+        require(isinstance(obj["rounds"], list), "rounds must be an array")
+        item_ids = []
+        for number, round_ in enumerate(obj["rounds"], 1):
+            fields(round_, ("round", "goal", "budget", "items"), ("conclusion",))
+            require(round_["round"] == number and type(round_["round"]) is int, "Rounds must be numbered 1, 2, 3 in order")
+            require(all(isinstance(round_[k], str) for k in ("goal", "budget", "conclusion") if k in round_), "Invalid round text")
+            require(isinstance(round_["items"], list), "items must be an array")
+            for item in round_["items"]:
+                fields(item, ("id", "title", "question", "expected", "state"),
+                       ("intervention", "parent", "comparator", "cost", "resource_ids", "note"))
+                identifier(item["id"])
+                item_ids.append(item["id"])
+                require(item["state"] in ("planned", "running", "done", "dropped"), "Invalid plan item state")
+                for key in ("parent", "comparator"):
+                    if item.get(key) is not None:
+                        identifier(item[key])
+                require(all(isinstance(item[k], str) for k in ("title", "question", "expected", "intervention", "cost", "note") if k in item), "Invalid plan item text")
+                require(isinstance(item.get("resource_ids", []), list), "resource_ids must be an array")
+                for resource in item.get("resource_ids", []):
+                    identifier(resource)
+        require(len(item_ids) == len(set(item_ids)), "Duplicate plan item ID")
+        require(isinstance(obj.get("ideas", []), list), "ideas must be an array")
+        for idea in obj.get("ideas", []):
+            fields(idea, ("title", "reason"))
+            require(isinstance(idea["title"], str) and isinstance(idea["reason"], str), "Invalid idea")
     elif path == "resources.json":
         fields(obj, ("items",))
         require(isinstance(obj["items"], list), "items must be an array")
@@ -566,6 +593,13 @@ def check_record(tree, path, obj):
         resources = read_record(tree, "resources.json")
         ids = {item["id"] for item in resources["items"]}
         require(all(ident in ids for approach in obj.get("approaches", []) for ident in approach.get("resource_ids", [])), "Unknown approach resource")
+    elif path == "plan.json":
+        resources = {item["id"] for item in read_record(tree, "resources.json")["items"]}
+        for round_ in obj["rounds"]:
+            for item in round_["items"]:
+                require(all(ident in resources for ident in item.get("resource_ids", [])), "Unknown plan item resource")
+                if item["state"] in ("running", "done"):
+                    require(tree.exists(f"experiments/{item['id']}/config.json"), f"Plan item {item['id']} has no experiment")
     elif path == "resources.json":
         for item in obj["items"]:
             if "path" in item and tree.exists(item["path"]):
@@ -614,7 +648,7 @@ def check_record(tree, path, obj):
 
 
 def mutable(path, old, tree=None):
-    return (path in ("project.json", "proposal.json", "resources.json", "comparison/inputs.jsonl", "comparison/outputs.jsonl")
+    return (path in ("project.json", "proposal.json", "plan.json", "resources.json", "comparison/inputs.jsonl", "comparison/outputs.jsonl")
             or path.startswith("evaluation/draft/") or path.endswith("/analysis.json")
             or path.endswith("/status.json") and old["state"] not in FINAL)
 
@@ -784,7 +818,7 @@ def validate(tree):
     docs = {}
     def error(path, exc):
         report["errors"].append(f"{path}: {exc}")
-    names = [p for p in ("project.json", "proposal.json", "resources.json") if tree.exists(p)]
+    names = [p for p in ("project.json", "proposal.json", "plan.json", "resources.json") if tree.exists(p)]
     for prefix in ("evaluation", "experiments", "comparison"):
         try:
             if tree.exists(prefix):
@@ -835,13 +869,30 @@ def validate(tree):
     return report
 
 
+def next_id(tree, slug=None):
+    """Next sequential experiment ID, counting existing experiments and planned items."""
+    if slug is not None:
+        require(bool(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug)) and len(slug) <= 40, "Slug must be short lowercase words joined by hyphens")
+    taken = []
+    if tree.exists("experiments"):
+        with tree.directory(["experiments"]) as fd:
+            taken.extend(os.listdir(fd))
+    if tree.exists("plan.json"):
+        taken.extend(item["id"] for round_ in read_record(tree, "plan.json")["rounds"] for item in round_["items"])
+    numbers = [int(m.group(1)) for name in taken if (m := re.fullmatch(r"e(\d{3,})(?:-.*)?", name))]
+    number = max(numbers) + 1 if numbers else 0
+    return {"id": f"e{number:03d}" + (f"-{slug}" if slug else "")}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("hash", "validate", "write", "freeze", "manifest", "finalize"):
+    for name in ("hash", "validate", "write", "freeze", "manifest", "finalize", "next-id"):
         command = commands.add_parser(name)
         command.add_argument("--project", required=True)
-        if name != "validate":
+        if name == "next-id":
+            command.add_argument("--slug")
+        elif name != "validate":
             command.add_argument("--path", required=True)
         if name == "finalize":
             command.add_argument("--kind", choices=("local", "api"), default="local")
@@ -859,6 +910,8 @@ def main():
         tree = Tree(args.project)
         if args.command == "validate":
             result = validate(tree)
+        elif args.command == "next-id":
+            result = next_id(tree, args.slug)
         elif args.command == "hash":
             result = {"path": args.path, "sha256": digest(tree.read(args.path))}
         elif args.command == "write":

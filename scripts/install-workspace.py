@@ -106,7 +106,7 @@ def verify_kit(kit):
                    or relative in ("workspace/workspace.py", "workspace/monitor.py", "install-workspace.py")
                    or relative.startswith("workspace/assets/")
                    or (relative.startswith("skills/") and len(PurePosixPath(relative).parts) >= 3
-                       and PurePosixPath(relative).parts[1] in ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments", "explore")))
+                       and PurePosixPath(relative).parts[1] in ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments")))
         if not allowed or not isinstance(entry["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
             raise ValueError(f"Unexpected manifest file: {relative}")
         file = kit / relative
@@ -119,9 +119,9 @@ def verify_kit(kit):
         payload[relative] = data
     required = {f"template/{name}" for name in TEMPLATES} | {
         "workspace/workspace.py", "workspace/monitor.py", "workspace/assets/index.html", "install-workspace.py"}
-    required |= {f"skills/{name}/SKILL.md" for name in ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments", "explore")}
+    required |= {f"skills/{name}/SKILL.md" for name in ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments")}
     required |= {"skills/research-workspace/" + path for path in
-                 ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py", "scripts/resources.py")}
+                 ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py", "scripts/resources.py", "scripts/scout.py")}
     if not required <= payload.keys():
         raise ValueError("Kit is missing required files")
     expected = set(payload) | {"manifest.json"}
@@ -247,7 +247,7 @@ def main():
         parser.exit(1, f"Installation refused: {error}\n")
     print(f"Installed {count} missing files in {args.project.absolute()}")
     print("Files installed. Skill discovery still needs to be checked in your coding app.")
-    print("Skills: research-workspace, tunetune-init, build-evaluation, run-experiments, explore")
+    print("Skills: research-workspace, tunetune-init, build-evaluation, run-experiments")
     if args.host == "claude":
         print("Use /reload-skills if needed, then check that these skills can be selected.")
     else:

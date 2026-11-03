@@ -104,6 +104,36 @@ print('simulated request completed; key was read only from the environment')
         self.write(base + "/config.json", config)
         return base
 
+    def test_experiment_plan_is_mutable_and_checks_references(self):
+        item = dict(id="e001-embed", title="Embedding head", question="Does semantics help?",
+                    expected="Beats e000 on development F1", state="planned", parent="e000-keyword",
+                    resource_ids=["encoder"])
+        plan = dict(rounds=[dict(round=1, goal="Test semantic routes", budget="2 experiments, 1 hour", items=[item])],
+                    ideas=[dict(title="SetFit", reason="Needs more reviewed labels")])
+        with self.assertRaisesRegex(ValueError, "Unknown plan item resource"):
+            self.write("plan.json", plan)
+        self.write("resources.json", dict(items=[dict(id="encoder", title="Encoder", type="model", status="missing")]))
+        self.write("plan.json", plan)
+        self.assertEqual(records.next_id(self.tree, "lr-head"), {"id": "e002-lr-head"})
+        item["state"] = "done"
+        with self.assertRaisesRegex(ValueError, "has no experiment"):
+            self.write("plan.json", plan)
+        item["state"] = "dropped"
+        plan["rounds"][0]["conclusion"] = "Dropped after the baseline already met the goal"
+        self.write("plan.json", plan)
+        plan["rounds"].append(dict(round=3, goal="Skipped number", budget="1", items=[]))
+        with self.assertRaisesRegex(ValueError, "numbered"):
+            self.write("plan.json", plan)
+        self.assertEqual(records.validate(self.tree)["errors"], [])
+
+    def test_next_id_counts_existing_experiments(self):
+        self.assertEqual(records.next_id(self.tree), {"id": "e000"})
+        (self.root / "experiments/e007-old").mkdir(parents=True)
+        (self.root / "experiments/legacy").mkdir()
+        self.assertEqual(records.next_id(self.tree, "prompt"), {"id": "e008-prompt"})
+        with self.assertRaisesRegex(ValueError, "Slug"):
+            records.next_id(self.tree, "Bad Slug")
+
     def test_api_reference_runs_with_inherited_credential_and_real_outputs(self):
         target = self.api()
         base = self.evaluation(target)
