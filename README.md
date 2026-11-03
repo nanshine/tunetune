@@ -1,34 +1,39 @@
 # TuneTune
 
-和 Agent 一起，把一个日常需求逐步做成私有、可用的小模型。从明确目标、寻找资源和准备例子开始，再建立评测、尝试训练、查看结果。
+和 Agent 一起，把日常需求逐步做成私有、可用的小模型：研究提案 → 校准评测 → 验证基线 → 在有限预算内实验 → 对比并交付。
 
-面板用于只读查看研究资料、进展和结果对比，唯一保留的写入是直接编辑项目名称。目标与资源补充、评测问答、候选与实验意见、研究复盘，以及验收输出生成请求、偏好和验收决定，都在 Agent 客户端沟通，不在面板提交。研究资料与历史反馈记录继续保留供 Agent 读取；Agent 可按会话记录必要决策证据，但意见不等于自动执行授权。
+面板用无限实验画布展示提案、资源、评测样例、实验与模型输出。它只读观察研究，唯一的写入是修改项目名称。问题、执行请求和用户决定都在 Agent 会话中沟通，不需要填写另一套表单。
 
 ## 开始
 
-把这句话交给可以读取仓库、操作本地文件和运行命令的 Agent，将需求换成你自己的：
+把下面这句话交给能读取仓库、操作本地文件和运行命令的 Agent，换成自己的需求：
 
 > 用 TuneTune（https://github.com/nanshine/tunetune）帮我做一个能整理客户留言的小模型，就在当前文件夹开始。
 
-**Agent：请读取 [bootstrap.md](bootstrap.md)，获取正式发布包，在当前目录准备工作空间、接入 skills、启动并打开面板，然后使用 `tunetune-init` 与用户明确方向。**
+**Agent：先读 [bootstrap.md](bootstrap.md)，获取正式发布包，在当前目录安装 skills 和面板，启动并打开面板，然后使用 `tunetune-init` 调查需求、形成供用户讨论的提案。**
 
-用户无需克隆源码、构建前端或手动安装 skills。运行环境为 macOS / Linux 和 Python 3.10+，Agent 会检查环境；模型与训练依赖按需要准备。尚未发布 Release 时，正式的一句话安装入口暂不可用。
+运行需要 macOS / Linux 和 Python 3.10+。用户不必克隆源码、构建前端或手动安装 skills；模型依赖按研究需要准备。没有正式发布包时，一句话安装暂不可用，不应偷偷改用源码构建。
 
-## 仓库结构
+已有本地解包目录时，可由 Agent 执行：
 
-- `bootstrap.md`：Agent 获取发布包并开始项目的入口。
-- `skills/tunetune-init/`：澄清方向、了解资源、形成开放提案。
-- `skills/research-workspace/`：共享文件契约和记录工具。
-- `skills/build-evaluation/`、`skills/train/`、`skills/review/`：现有评测、训练和复盘流程。
-- `workspace/`：面板源码和本地文件服务。
-- `templates/workspace/`：最小项目文件。
-- `scripts/`、`tests/`：打包安装工具与测试。
+```sh
+python3 /absolute/workspace-kit-0.4.0/install-workspace.py --kit /absolute/workspace-kit-0.4.0 --project /absolute/my-research --host agents
+python3 /absolute/my-research/.workspace/app/workspace.py --project /absolute/my-research --port 0 --open
+```
 
-项目文件保存在用户当前目录，skills 默认放在 `.agents/skills/`，面板放在 `.workspace/app/`；目标和资源直接由文件驱动展示。
+Claude Code 使用 `--host claude`。默认 skills 位于 `.agents/skills/`，面板与服务位于 `.workspace/app/`。初始研究文件只有 `AGENTS.md`、`project.json`、`proposal.json` 和 `resources.json`；实验与评测在需要时才创建。文件格式指南只随共享 skill 提供。
 
-## 开发与发布
+**0.4.0 只支持格式 2。旧项目和不兼容工具会被明确拒绝，不会自动迁移或覆盖。** 同版重复安装只补齐缺失文件，保留已有研究和项目指引。
 
-维护者使用 Node.js 22.12+ 和 Python 3.10+ 构建，最终用户只需 Python：
+## 能做什么，以及不能保证什么
+
+Agent 会调查可行路线、建立真实可运行的评测、保留基线，并在授权的时间、成本和访问范围内实验。清楚的授权可以覆盖多轮工作，不需要每轮重复批准。资源监测只提供文件存在、内存等有限观察，不能证明数据适合训练。
+
+交付选择指向实验内已经验证的模型，不复制模型，也不代表部署。可以比较同一输入的真实输出；需要独立导出包时再提出。面板不是自动研究调度器，打开页面不代表 Agent 会无限继续。模型可能达不到目标，私有数据访问、训练算力和实际效果也不能由安装成功来保证。
+
+## 开发与打包
+
+维护者需要 Node.js 22.12+ 和 Python 3.10+：
 
 ```sh
 npm --prefix workspace ci
@@ -38,6 +43,17 @@ python3 -B -m unittest discover -s tests -v
 python3 scripts/build-kit.py
 ```
 
-构建生成一个 `workspace-kit-<version>.tar.gz`，包含同版 skills、文件工具、项目模板和预构建面板。将它附加到仓库的正式 GitHub Release，入口即可发现该版本。重复构建使用 `--output /absolute/fresh-output`；发布前应在空目录验证安装和面板启动。
+生成 `dist/workspace-kit-0.4.0/` 和同名 `.tar.gz`。发布包包含五个同版 skills、共享 `records.py` / `run.py`、文件服务及 `monitor.py`、最小模板和预构建静态资源，不包含演示数据、前端源码或依赖目录。重复构建使用 `--output /absolute/fresh-output`，不会覆盖已有产物。将压缩包附在正式 GitHub Release 上即可供安装入口发现。
 
-开发时可以直接用解包目录的 `install-workspace.py --kit <bundle> --project <project>` 安装，再运行 `python3 <project>/.workspace/app/workspace.py --project <project> --port 0 --open`。
+主要目录：`skills/` 为研究方法与文件工具，`workspace/` 为面板和本地服务，`templates/workspace/` 为最小模板，`scripts/` 和 `tests/` 为工具及测试。稳定产品原则见 [docs/principles.md](docs/principles.md)。
+
+## 本地演示
+
+在一个全新、已安装的项目中运行：
+
+```sh
+python3 scripts/create-demo.py --project /absolute/my-research
+python3 /absolute/my-research/.workspace/app/workspace.py --project /absolute/my-research --port 0 --open
+```
+
+生成器真实执行轻量文本分类实验，展示评测版本、模型重测、代码快照、实验内模型、逐例输出与比较；拒绝覆盖已有研究。它使用合成数据，只证明研究流程能够运行，不证明真实业务质量，也不是大模型微调效果演示。演示生成器和数据都不进入发布包。

@@ -1,41 +1,39 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Product and Structure
 
-TuneTune is a file-driven research workspace: agents operate research records, while the UI provides read-only research views and result comparisons. Its only write action is direct editing of the project name (`project.json.name`); it does not collect feedback, start training, or maintain a business database. Goal/resource clarification, evaluation answers, candidate/experiment feedback, research reviews, and acceptance generation requests, preferences, and decisions belong in the Agent client, not panel forms or a review entry point.
+TuneTune helps beginners build useful private models through file-driven research. Follow [the product principles](docs/principles.md): researched proposal → calibrated evaluation → baseline → bounded experiments → usable delivery. Preserve the infinite experiment canvas and readable proposal, resource, evaluation and comparison views. The panel observes research; its only write action is editing `project.json.name`. Requests and user decisions stay in the Agent conversation.
 
-- `workspace/src/`: React and TypeScript components, model logic, CSS, and colocated Vitest tests; `workspace/workspace.py` provides the Python standard-library file service.
-- `skills/`: four research workflows plus the shared `research-workspace` skill. Its `references/records.md` is the canonical record contract, and `scripts/records.py` implements record utilities.
-- `templates/workspace/`: minimal research-project files and the installed project's agent guide; keep sample research data out of templates.
-- `scripts/`: packaging and installation tools; `tests/`: Python integration and safety tests.
-- `design/` and `reference/`: local design assets and supporting material, excluded from distributions; `dist/` contains generated release artifacts.
+Skills are concise English instructions for general research and judgment, not task-specific recipes or duplicate schemas. Repeatable mechanics belong in deterministic scripts. Continue across skills and bounded rounds within the user's exact current authorization; ask only for missing consequential decisions or changed access, privacy, scope or cost boundaries. Explain uncertainty and unmet requirements honestly.
 
-## Build, Test, and Development Commands
+- `workspace/src/`: React/TypeScript components, model logic, CSS and colocated Vitest tests. `workspace/workspace.py` serves files; sibling `monitor.py` provides limited optional resource observations.
+- `skills/`: four research workflows plus shared `research-workspace`. Its `references/records.md` is the canonical format-2 guide; `references/tools.md` documents `scripts/records.py` and `scripts/run.py`.
+- `templates/workspace/`: only the installed agent guide and minimal project, proposal and resource files. Create research directories when needed; include no sample research data.
+- `scripts/`: packaging, installation and local demo tools. `tests/`: Python integration and safety tests.
+- `design/` and `reference/`: local supporting assets, excluded from distribution. `dist/`: generated kits.
 
-Use Node.js 22.12+ and Python 3.10+ on macOS/Linux. Run from the repository root:
+## Build, Test and Development
+
+Use Node.js 22.12+ and Python 3.10+ on macOS/Linux. From the repository root:
 
 ```sh
-npm --prefix workspace ci                 # Install locked frontend dependencies
-npm --prefix workspace run build          # Type-check and build frontend assets
-npm --prefix workspace test               # Run Vitest
-python3 -B -m unittest discover -s tests -v # Run Python tests
-python3 scripts/build-kit.py              # Package prebuilt assets and skills
+npm --prefix workspace ci
+npm --prefix workspace run build
+npm --prefix workspace test
+python3 -B -m unittest discover -s tests -v
+python3 scripts/build-kit.py
 ```
 
-Packaging refuses existing versioned outputs; use `--output /absolute/fresh-output` for another build. For development, run `python3 workspace/workspace.py --project /absolute/my-research --assets workspace/dist --port 8765` against an installed research project, then `npm --prefix workspace run dev -- --port 5173`; Vite proxies `/api` to port 8765.
+Packaging refuses existing versioned outputs; use `--output /absolute/fresh-output` for another build. For development, run `python3 workspace/workspace.py --project /absolute/my-research --assets workspace/dist --port 8765` against an installed project, then `npm --prefix workspace run dev -- --port 5173`; Vite proxies `/api` to port 8765.
 
-## Coding Style & Naming Conventions
+## Conventions and Validation
 
-Match existing code: two-space indentation, single quotes, and semicolons in TypeScript; four-space indentation and snake_case in Python. Use PascalCase component filenames, camelCase TypeScript functions, and `use`-prefixed hooks. TypeScript enables strict and unused-code checks; no formatter or lint script is configured.
+Match existing style: two-space indentation, single quotes and semicolons in TypeScript; four-space indentation and snake_case in Python. Use PascalCase component filenames, camelCase TypeScript functions and `use`-prefixed hooks. TypeScript checks strictness and unused code; no formatter or lint script is configured.
 
-## Testing Guidelines
+Name frontend tests `*.test.ts` and Python tests `test_*.py`. Add regression coverage for changed parsing, execution, filesystem safety or distribution behavior. Generate fixtures in temporary directories. Run both suites and the frontend build; report failures rather than bypassing checks. Commit only when requested, using concise imperative subjects. PRs should explain behavior changes, relevant issues and validation, with screenshots for UI changes.
 
-Name frontend tests `*.test.ts` and Python tests `test_*.py`. Add regression coverage for changed record parsing, feedback handling, filesystem safety, or distribution behavior. Generate fixtures in temporary directories. No numeric coverage threshold is configured; run both suites and the frontend build before submitting.
+## Evidence and Distribution Safety
 
-## Commit & Pull Request Guidelines
+Preserve conflict detection, immutable configurations and terminal measurements, verified inputs, path and symlink protections, and project isolation. Update the current proposal and experiment analyses in place through conditional writes. Keep the review skill as evidence exploration, not another record system. Selected models remain experiment-local; comparison contains outputs, and selection implies neither deployment nor user satisfaction.
 
-Git history contains only `Initial commit`; use concise imperative subjects. PRs should explain behavior changes, link relevant issues, report validation commands, and include screenshots for UI changes.
-
-## Record & Distribution Safety
-
-Preserve conflict detection, immutable results, path and symlink protections, and project isolation. Keep research materials, Agent review capabilities, historical feedback, and the feedback file protocol. Agents may record necessary decision evidence from user conversations, with its source and context, but conversational opinions and recorded feedback do not automatically authorize execution. Edit the canonical contract rather than generated copies, and exclude secrets, research outputs, source files, and dependencies from release kits.
+Keep file mechanics in the canonical shared guide, with no project-root copy. Kit 0.4.0 supports schema 2 only: explicitly refuse incompatible projects and tool versions, without automatic migration or overwriting research. Distribute the five sibling skills, required record and run helpers, service and monitor helper, minimal templates and built assets; exclude secrets, research outputs, frontend source and dependencies.

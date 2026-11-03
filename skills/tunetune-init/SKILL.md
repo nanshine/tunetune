@@ -1,40 +1,18 @@
 ---
 name: tunetune-init
-description: Start a TuneTune project or clarify an existing project's goal and available resources, especially when someone has an everyday task in mind and little experience training models.
+description: Start a TuneTune study or clarify a changed goal by investigating feasibility, resources and practical approaches. Use when a person needs a researched proposal before evaluation or experiments.
 ---
 
-# Start with what would be useful
+# Turn a need into a practical proposal
 
-Help someone turn an everyday need into a clear direction they can recognize. A useful starting point may be a few examples and an open proposal; model choice and training strategy can develop as evidence arrives.
+Own the investigation and technical recommendation; help the person judge useful outcomes rather than asking them to design a training pipeline. Load [research-workspace](../research-workspace/SKILL.md). For a new installation, follow the repository's bootstrap guide, preserve existing content and open the installed panel's actual local address when supported.
 
-## Establish the workspace
+Start from the conversation and relevant available materials. Identify intended use, representative inputs and outputs, unacceptable failures, constraints and the form of a usable delivery. Ask only questions that change the recommendation. Offer a sensible default when a choice is delegated, distinguishing assumptions from the person's stated needs.
 
-Use the current directory unless the user has chosen another. Read existing project instructions and inspect relevant materials before asking questions. For a new workspace, follow [the bootstrap guide](https://github.com/nanshine/tunetune/blob/main/bootstrap.md) to obtain the published bundle and install its tools, panel, templates, and sibling skills. Keep existing project content intact. The user should not need to find a bundle, type commands, or understand installation paths.
+Investigate enough to recommend responsibly. Inspect authorized data samples, code, compute and existing results. Research suitable methods and primary sources where they could change the approach. Consider a simple baseline, credible alternatives and whether training is necessary. Estimate costs and limitations honestly; an unsupported precise estimate is less useful than an explicit uncertainty.
 
-Read [research-workspace](../research-workspace/SKILL.md) for the shared record tools and [record contract](../research-workspace/references/records.md) for goal and resource fields. Start the local panel using the installed service, use its actual printed address, and open it with the host's browser tool when available. If opening is unavailable, provide a clickable link. Keep the server in a managed background session and report a startup failure plainly.
+Respect file-access, privacy and budget boundaries. Explain before an unapproved private upload, substantial download or paid resource use. Record an honest resource inventory; optional monitoring describes limited observations such as file existence or available memory, not scientific readiness. Discuss suitability and unresolved conditions in research prose. Stop investigating when remaining technical uncertainties are better answered by bounded experiments.
 
-The panel provides read-only research views and result comparisons; its only write action is direct editing of the project name. Keep goal/resource additions and all clarification in the Agent client, not panel forms. Research materials and historical feedback remain available for the Agent to read.
+Write the current `proposal.json` using a summary, coherent titled sections and recognizable examples. Explain the need, findings and sources, recommended route, alternatives, evaluation approach, constraints, proposed finite budget and stopping conditions, usable deliverable and next validation. Include feasibility when helpful, tied to actual evidence. Use the shared [record guide](../research-workspace/references/records.md) and [tools](../research-workspace/references/tools.md) rather than inventing additional records.
 
-## Understand the direction
-
-Start from what the person already said. Ask a small, concrete question in the Agent client that would improve your understanding, then build on the answer. Someone may only know whether an example looks useful; offer examples they can correct rather than asking them to specify a training task.
-
-Inspect relevant files and the available environment. Research candidate models, public datasets, and practical ways to support the task when that would resolve uncertainty. Record sources and what you actually checked. A dataset found online is available to obtain, not ready to use. Download relevant public resources when practical within the task; confirm concrete actions involving payment, private uploads, or substantial downloads when needed.
-
-Keep technical decisions with the Agent unless the user wants to participate. Discuss budget or privacy when an actual choice depends on them, rather than using a mandatory opening questionnaire. Explain discoveries in ordinary language and keep commands and long paths out of the conversation unless needed to resolve a problem.
-
-## Save what you learn
-
-Update goal.json during the conversation: a short summary, optional titled sections, examples with stable IDs, and an optional proposal. Choose sections that help this particular person understand the task. Distinguish their intent from your suggestions. Partial examples are useful; leave unknown input or expected output empty. A proposal describes possibilities and unresolved questions without committing the project to a model or recipe.
-
-When needed, retain decision evidence from the conversation under the shared feedback contract, with its source and the relevant record hashes. Preserve historical answers and distinguish quotations from summaries; do not turn every conversation into a feedback file or treat an opinion as authorization to train, publish, or deploy.
-
-Maintain resources.json with each resource's name, kind, purpose, and observed state. Add source, location, notes, and checked_at when known. Use ready only after checking usability. The panel renders these same records; do not create separate presentation copy.
-
-Use the shared tools to preserve revisions, detect conflicting edits, and validate writes. To guide the panel to the goal or resources, set workspace.json presentation to a new request ID and panel name. Reuse that ID until there is a new reason to guide the view.
-
-## Leave a useful next step
-
-Initialization is complete when the direction is understandable, resource availability is recorded honestly, and the next useful question or action is clear. An empty workspace or a tentative proposal is a valid starting state; a final technical plan is not required.
-
-Summarize the direction and remaining uncertainty in the user's language. If no evaluation exists, suggest working through examples with build-evaluation to establish what useful results look like. Continue when that work is already requested; otherwise invite the user to take that next step. Keep train and review available according to the project's current needs.
+Present the proposal for the user to review in conversation, emphasizing the recommendation and unresolved consequential choices. Do not store a confirmation. Update the current proposal with conflict detection when understanding changes. A proposal is not unlimited execution permission, but an existing clear request may already cover evaluation and experiments. Continue to [build-evaluation](../build-evaluation/SKILL.md) within that scope; otherwise explain the specific missing decision or prerequisite without claiming readiness.

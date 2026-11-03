@@ -6,6 +6,7 @@ import webbrowser
 import copy
 import fcntl
 import hashlib
+import importlib.util
 import json
 import math
 import mimetypes
@@ -25,22 +26,20 @@ MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_BYTES = 32 * 1024 * 1024
 MAX_FILES = 2000
 MAX_ENTRIES = 10000
-LOG_PREVIEW_BYTES = 64 * 1024
 MAX_BODY_BYTES = 128 * 1024
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 # A closed allowlist: wildcard matches exactly one safe path component.
 PATTERNS = (
-    "project.json", "goal.json", "resources.json", "candidates.json",
-    "workspace.json", "review.md", "resources/status.json",
-    "evaluation/draft/definition.json", "evaluation/versions/*/definition.json",
-    "experiments/*/config.json", "experiments/*/status.json",
-    "experiments/*/artifacts.json", "experiments/*/analysis.md", "experiments/*/train.log",
-    "assessments/*/config.json", "assessments/*/status.json",
-    "assessments/*/result.json", "assessments/*/outputs.jsonl",
-    "releases/*.json", "acceptance/*/config.json", "acceptance/*/outputs.jsonl",
-    "feedback/requests/*.json", "feedback/responses/*.json",
-    "feedback/incoming/*.json", "feedback/handled/*.json",
+    "project.json", "proposal.json", "resources.json",
+    "evaluation/*/definition.json", "evaluation/*/samples.jsonl",
+    "experiments/*/config.json", "experiments/*/status.json", "experiments/*/analysis.json",
+    "experiments/*/evals/*/config.json", "experiments/*/evals/*/status.json",
+    "experiments/*/evals/*/outputs.jsonl", "comparison/outputs.jsonl",
 )
+
+monitor_spec = importlib.util.spec_from_file_location("workspace_monitor", Path(__file__).with_name("monitor.py"))
+monitor_module = importlib.util.module_from_spec(monitor_spec)
+monitor_spec.loader.exec_module(monitor_module)
 
 
 def now():
@@ -98,12 +97,18 @@ class SafeTree:
     """Use directory descriptors and O_NOFOLLOW, including during publication."""
 
     def __init__(self, root):
+        if ".." in Path(root).parts:
+            raise ValueError("Parent traversal is not allowed")
         self.root = Path(root).absolute()
 
     @contextmanager
     def directory(self, segments=(), create=False):
-        fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
         try:
+            for segment in self.root.parts[1:]:
+                child = os.open(segment, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = child
             for segment in segments:
                 if segment in ("", ".", "..") or "/" in segment or "\\" in segment:
                     raise ValueError("Unsafe directory")
@@ -155,7 +160,7 @@ class SafeTree:
                     raise ValueError(f"File changed while reading: {path}")
                 return raw
 
-    def publish(self, path, value, internal=False):
+    def publish(self, path, value, internal=False, replace=False):
         segments = path.split("/") if internal else parts(path)
         raw = json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8") + b"\n"
         with self.directory(segments[:-1], create=True) as parent:
@@ -167,12 +172,24 @@ class SafeTree:
                     stream.write(raw)
                     stream.flush()
                     os.fsync(stream.fileno())
-                # Link publishes complete bytes without ever replacing an existing record.
-                os.link(temp, segments[-1], src_dir_fd=parent, dst_dir_fd=parent,
-                        follow_symlinks=False)
+                if replace:
+                    try:
+                        existing = os.stat(segments[-1], dir_fd=parent, follow_symlinks=False)
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        if not stat.S_ISREG(existing.st_mode):
+                            raise ValueError("Unsafe observation destination")
+                    os.replace(temp, segments[-1], src_dir_fd=parent, dst_dir_fd=parent)
+                else:
+                    os.link(temp, segments[-1], src_dir_fd=parent, dst_dir_fd=parent,
+                            follow_symlinks=False)
                 os.fsync(parent)
             finally:
-                os.unlink(temp, dir_fd=parent)
+                try:
+                    os.unlink(temp, dir_fd=parent)
+                except FileNotFoundError:
+                    pass
 
 
 class Reader:
@@ -182,6 +199,7 @@ class Reader:
         self._files = {}
         self._revision = hashlib.sha256(b"").hexdigest()
         self._synced_at = None
+        self.monitor = monitor_module.ResourceMonitor(self.tree)
 
     def _paths(self):
         trie = {}
@@ -232,7 +250,7 @@ class Reader:
         files = {}
         total = 0
         for path in self._paths():
-            raw = self.tree.read(path)
+            raw = self.tree.read(path, limit=MAX_FILE_BYTES)
             total += len(raw)
             if total > MAX_TOTAL_BYTES:
                 raise ValueError("Snapshot byte limit exceeded")
@@ -242,25 +260,27 @@ class Reader:
                     if not isinstance(content, dict):
                         raise ValueError("JSON must be an object")
                     if "schema_version" in content and (
-                        type(content["schema_version"]) is not int or content["schema_version"] != 1
+                        type(content["schema_version"]) is not int or content["schema_version"] != 2
                     ):
-                        raise ValueError("Unsupported schema_version (expected 1)")
-                    field = {"goal.json": "examples", "resources.json": "items",
-                             "candidates.json": "items"}.get(path)
+                        raise ValueError("Unsupported schema_version (expected 2)")
+                    field = {"proposal.json": "examples", "resources.json": "items", "project.json": "deliveries"}.get(path)
                     if field in content and not isinstance(content[field], list):
                         raise ValueError(f"{field} must be an array")
-                    if path.startswith("assessments/"):
-                        if path.endswith("/status.json") and content.get("state") not in ("pending", "running"):
-                            raise ValueError("state must be pending/running")
-                        if path.endswith("/result.json") and content.get("state") not in ("succeeded", "failed", "cancelled"):
-                            raise ValueError("state must be succeeded/failed/cancelled")
+                    if path == "resources.json":
+                        for item in content.get("items", []):
+                            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                                raise ValueError("Resource requires an ID")
+                            if any(key in item and not isinstance(item[key], str) for key in ("title", "type", "status", "path", "location", "version", "size")):
+                                raise ValueError("Invalid resource field")
+                            if "monitor" in item and not isinstance(item["monitor"], dict):
+                                raise ValueError("Invalid resource monitor")
+                    if path.endswith("/status.json") and content.get("state") not in ("pending", "running", "completed", "succeeded", "failed", "cancelled"):
+                        raise ValueError("Invalid execution state")
                 elif path.endswith(".jsonl"):
                     content = [strict_json(line) for line in raw.decode("utf-8").splitlines()
                                if line.strip()]
                     if any(not isinstance(item, dict) for item in content):
                         raise ValueError("JSONL rows must be objects")
-                elif path.endswith(".log"):
-                    content = raw[-LOG_PREVIEW_BYTES:].decode("utf-8", errors="replace")
                 else:
                     content = raw.decode("utf-8")
             except (ValueError, RecursionError) as exc:
@@ -268,14 +288,8 @@ class Reader:
             files[path] = {"content": content, "sha256": hashlib.sha256(raw).hexdigest()}
         if "project.json" not in files:
             raise ValueError("Missing required project.json")
-        if files["project.json"]["content"].get("schema_version") != 1:
-            raise ValueError("project.json requires schema_version=1")
-        # Published assessment configs are pending intent; results arrive at completion.
-        for path in files:
-            if path.startswith("experiments/") and path.endswith("/config.json"):
-                required = path.removesuffix("config.json") + "status.json"
-                if required not in files:
-                    raise ValueError(f"Incomplete record: missing {required}")
+        if files["project.json"]["content"].get("schema_version") != 2:
+            raise ValueError("project.json requires schema_version=2")
         return files
 
     def snapshot(self):
@@ -290,8 +304,10 @@ class Reader:
                 self._files, self._revision, self._synced_at = files, revision, now()
             except (OSError, ValueError, RecursionError) as exc:
                 error = f"Sync failed: {exc}"
+            inventory = self._files.get("resources.json", {}).get("content", {"items": []})
+            observations = self.monitor.snapshot(inventory) if not error else copy.deepcopy(self.monitor.report)
             return {"files": copy.deepcopy(self._files), "revision": self._revision,
-                    "synced_at": self._synced_at or now(), "error": error}
+                    "synced_at": self._synced_at or now(), "error": error, "observations": observations}
 
 
 class RequestError(Exception):
@@ -334,8 +350,8 @@ def save_project_name(reader, body):
                     if version(before) != version(os.fstat(stream.fileno())):
                         raise ValueError("project.json changed while reading")
                 project = strict_json(raw.decode("utf-8"))
-                if not isinstance(project, dict) or type(project.get("schema_version")) is not int or project["schema_version"] != 1:
-                    raise ValueError("project.json requires schema_version=1")
+                if not isinstance(project, dict) or type(project.get("schema_version")) is not int or project["schema_version"] != 2:
+                    raise ValueError("project.json requires schema_version=2")
                 if hashlib.sha256(raw).hexdigest() != expected:
                     raise RequestError(409, "Project is stale; refresh before renaming")
                 project["name"] = name

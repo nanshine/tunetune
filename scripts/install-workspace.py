@@ -9,9 +9,8 @@ import re
 import stat
 import tempfile
 
-VERSION = "0.3.0"
-TEMPLATES = ("AGENTS.md", "research-contract.md", "project.json", "goal.json", "resources.json", "candidates.json", "workspace.json")
-BUSINESS_DIRS = ("data", "src", "evaluation", "experiments", "assessments", "releases", "acceptance", "feedback", "history", ".workspace")
+VERSION = "0.4.0"
+TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
 
 
 def digest(data):
@@ -48,22 +47,64 @@ def no_symlinks(path):
             raise ValueError(f"Symlinks are not supported: {item}")
 
 
+def record_id(value):
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]+", value) is not None
+
+
 def validate_business(name, data):
     obj = json_object(data, name)
     if name == "project.json":
-        valid = (type(obj.get("schema_version")) is int and obj["schema_version"] == 1
+        if type(obj.get("schema_version")) is not int or obj["schema_version"] != 2:
+            raise ValueError("Incompatible project format: schema 2 required; automatic migration is not supported")
+        deliveries = obj.get("deliveries")
+        valid = (set(obj) == {"schema_version", "name", "language", "current_evaluation", "deliveries"}
                  and isinstance(obj.get("name"), str) and bool(obj["name"].strip())
                  and isinstance(obj.get("language"), str) and bool(obj["language"].strip())
-                 and "current_evaluation" in obj
-                 and (obj["current_evaluation"] is None or isinstance(obj["current_evaluation"], str)))
-    elif name == "goal.json":
-        valid = (type(obj.get("revision")) is int and obj["revision"] >= 1
+                 and (obj.get("current_evaluation") is None or record_id(obj["current_evaluation"]))
+                 and obj.get("current_evaluation") != "draft"
+                 and isinstance(deliveries, list) and all(record_id(item) for item in deliveries)
+                 and len(set(deliveries)) == len(deliveries))
+    elif name == "proposal.json":
+        sections, examples = obj.get("sections"), obj.get("examples")
+        valid = (set(obj) <= {"summary", "sections", "examples", "feasibility"}
                  and isinstance(obj.get("summary"), str)
-                 and all(isinstance(obj.get(key), list) for key in ("examples", "sections")))
-    elif name in ("resources.json", "candidates.json"):
-        valid = isinstance(obj.get("items"), list) and all(isinstance(item, dict) for item in obj["items"])
+                 and isinstance(sections, list)
+                 and all(isinstance(item, dict) and set(item) == {"title", "body"}
+                         and all(isinstance(item[key], str) for key in ("title", "body")) for item in sections)
+                 and isinstance(examples, list)
+                 and all(isinstance(item, dict) and {"id", "input"} <= set(item)
+                         and set(item) <= {"id", "input", "expected_output"}
+                         and record_id(item["id"]) for item in examples)
+                 and len({item["id"] for item in examples}) == len(examples))
+        if "feasibility" in obj:
+            feasibility = obj["feasibility"]
+            valid = (valid and isinstance(feasibility, dict) and set(feasibility) == {"verdict", "reason"}
+                     and feasibility["verdict"] in ("feasible", "conditional", "infeasible", "unknown")
+                     and isinstance(feasibility["reason"], str))
+    elif name == "resources.json":
+        items = obj.get("items")
+        valid = (set(obj) == {"items"} and isinstance(items, list)
+                 and all(isinstance(item, dict) and record_id(item.get("id"))
+                         and all(isinstance(item.get(key), str) and bool(item[key].strip()) for key in ("title", "type"))
+                         and item.get("status") in ("ready", "missing", "changed", "busy", "unknown")
+                         and set(item) <= {"id", "title", "type", "status", "path", "location", "version", "size", "monitor"}
+                         and all(isinstance(item[key], str) for key in ("path", "location", "version", "size") if key in item)
+                         and not ("path" in item and "location" in item)
+                         and ("location" not in item or (item["location"].strip() and "\x00" not in item["location"])) for item in items)
+                 and len({item["id"] for item in items}) == len(items))
+        if valid:
+            for item in items:
+                if "path" in item:
+                    safe_path(item["path"])
+                if "monitor" in item:
+                    monitor = item["monitor"]
+                    valid = (isinstance(monitor, dict) and set(monitor) <= {"kind", "index"}
+                             and monitor.get("kind") in ("file", "memory", "nvidia_gpu", "python")
+                             and ("index" not in monitor or (type(monitor["index"]) is int and monitor["index"] >= 0)))
+                    if not valid:
+                        break
     else:
-        valid = isinstance(obj.get("title"), str) and isinstance(obj.get("metric_columns"), list)
+        valid = False
     if not valid:
         raise ValueError(f"Conflicting or unsupported research file: {name}")
     return obj
@@ -81,8 +122,8 @@ def verify_kit(kit):
     manifest = json_object(manifest_bytes, "manifest.json")
     if (manifest.get("version") != VERSION or type(manifest.get("schema_min")) is not int
             or type(manifest.get("schema_max")) is not int
-            or not manifest["schema_min"] <= 1 <= manifest["schema_max"]):
-        raise ValueError("Unsupported kit version or schema range")
+            or manifest["schema_min"] != 2 or manifest["schema_max"] != 2):
+        raise ValueError("Unsupported kit version or schema range; kit 0.4.0 requires schema 2 only")
     entries = manifest.get("files")
     if not isinstance(entries, list):
         raise ValueError("Manifest files must be a list of {path, sha256}")
@@ -96,7 +137,7 @@ def verify_kit(kit):
             raise ValueError(f"Duplicate manifest path: {relative}")
         folded.add(relative.casefold())
         allowed = (relative in {f"template/{name}" for name in TEMPLATES}
-                   or relative in ("workspace/workspace.py", "install-workspace.py")
+                   or relative in ("workspace/workspace.py", "workspace/monitor.py", "install-workspace.py")
                    or relative.startswith("workspace/assets/")
                    or (relative.startswith("skills/") and len(PurePosixPath(relative).parts) >= 3
                        and PurePosixPath(relative).parts[1] in ("research-workspace", "tunetune-init", "build-evaluation", "train", "review")))
@@ -110,10 +151,11 @@ def verify_kit(kit):
         if digest(data) != entry["sha256"]:
             raise ValueError(f"Hash mismatch: {relative}")
         payload[relative] = data
-    required = {f"template/{name}" for name in TEMPLATES} | {"workspace/workspace.py", "workspace/assets/index.html", "install-workspace.py"}
+    required = {f"template/{name}" for name in TEMPLATES} | {
+        "workspace/workspace.py", "workspace/monitor.py", "workspace/assets/index.html", "install-workspace.py"}
     required |= {f"skills/{name}/SKILL.md" for name in ("research-workspace", "tunetune-init", "build-evaluation", "train", "review")}
     required |= {"skills/research-workspace/" + path for path in
-                 ("references/records.md", "references/tools.md", "scripts/records.py")}
+                 ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py")}
     if not required <= payload.keys():
         raise ValueError("Kit is missing required files")
     expected = set(payload) | {"manifest.json"}
@@ -143,15 +185,6 @@ def install(kit, project, name=None, host="agents"):
         raise ValueError("Project name must not be empty")
     if project.exists() and not project.is_dir():
         raise ValueError("Project path is not a directory")
-    for legacy_name in (".workbench", "workbench.json"):
-        legacy = project / legacy_name
-        if legacy.exists() or legacy.is_symlink():
-            raise ValueError("Legacy workbench layout detected; automatic migration is not supported")
-    for directory in BUSINESS_DIRS:
-        path = project / directory
-        no_symlinks(path)
-        if path.exists() and not path.is_dir():
-            raise ValueError(f"Conflicting business directory: {path}")
     planned = {}
     for template in TEMPLATES:
         path = project / template
@@ -208,8 +241,6 @@ def install(kit, project, name=None, host="agents"):
             if parent.exists() and not parent.is_dir():
                 raise ValueError(f"File occupies required directory: {parent}")
     if not planned:
-        for directory in BUSINESS_DIRS:
-            (project / directory).mkdir(parents=True, exist_ok=True)
         return 0
     ancestor = project.parent
     while not ancestor.exists():
@@ -234,8 +265,6 @@ def install(kit, project, name=None, host="agents"):
                         and destination.stat().st_ino == inode and destination.read_bytes() == original):
                     destination.unlink()
             raise
-    for directory in BUSINESS_DIRS:
-        (project / directory).mkdir(parents=True, exist_ok=True)
     return len(planned)
 
 

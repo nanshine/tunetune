@@ -1,27 +1,18 @@
 ---
 name: build-evaluation
-description: 为 TuneTune 研究构建、试跑或修订可执行评测，包括数据、指标、rubric、标注与不可变评测版本。用于“怎么评估”“做评测集”“更新评分规则”“发布新评测”；已有产物只重测用 train，不混排跨版分数。
+description: Build, calibrate or change executable TuneTune evaluations. Use to define useful results, test scoring rules and representative samples, or repair measurement gaps; unchanged-model retests belong in train.
 ---
 
-# 构建可执行评测
+# Make useful results measurable
 
-## 输入与依赖
+Load [research-workspace](../research-workspace/SKILL.md), then read the proposal, relevant resources, existing evaluation and conversation. Define what a useful output does, which failures matter and which trade-offs need measurement. Explain what each metric captures and misses. Evaluation should follow the task, not the training algorithm's preferred data format.
 
-读取 [research-workspace](../research-workspace/SKILL.md)，完成接手检查；输入为目标及例子、资源、已有评测、用户反馈和本次授权。详细字段见 [评测契约](../research-workspace/references/records.md#评测定义与执行接口)。
+Prepare representative successes, failures and boundary cases, with references or executable checks where appropriate. Labels are not mandatory for every task. Keep stable sample identities and explain sources, processing and coverage limits. Separate development and calibration material from independent final checks at the source or grouping level needed to avoid leakage. An example used to steer tuning is exposed, even if its filename says test.
 
-## 操作
+Implement repeatable preparation, inference, scoring and aggregation. Trace the real path from model loading through preprocessing and output parsing to individual judgments and totals. Distinguish missing output, parser or process failure from a genuine low score; unavailable measurements are not zero. Preserve real outputs and diagnostics.
 
-1. 明确观察行为、指标取舍、代表性案例及覆盖缺口。若需要用户标注或确认取舍，在 Agent 客户端直接提问，不要求在面板回答；可按 [反馈生命周期](../research-workspace/references/records.md#反馈生命周期) 留存必要问题与原答，绑定 target/target_sha256 和会话来源。收到答案后仍须整理、检查草稿，不立即视为评测已更新或获准发布；只暂停依赖该答案的工作。
-2. 在 evaluation/draft 中准备数据清单、指标、评分规则、评测与推理代码及运行条件。区分开发反馈和独立检查，记录来源、处理过程、样例 ID 与目标例子关联；合成数据注明来源，暴露给调优的样例不再称为未见测试。
-3. 定义实际可执行的产物消费接口：产物格式/路径、输入数据、参数数组、工作目录、依赖条件、逐例输出与汇总。用正例、反例和取舍样例实际试跑；检查失败行为与汇总算法，评分异常先核查评测路径，不自动降低标准。不要只生成计划，也不创建统一 runner。
-4. 请求只包含草稿时停止于草稿；获准发布时使用基础工具 freeze 把完整内容冻结到新的 evaluation/versions/<version>，核查 manifest、数据、脚本、规则与环境证据。脚本不能仍读取可变草稿；外部依赖无法核验时明确阻塞，不能以摘要占位冒充冻结。
-5. 已发布且校验通过后，仅在授权需要设为默认时，用预期哈希原子更新 project.current_evaluation。发布版本与切换当前版本是两件事，旧实验保留旧版关联。
-6. 涉及已记录的历史或会话反馈时，实际采纳后写入新的 handled，changes 引用真实变化；暂缓/追问保留待跟进，不把阅读标为处理或把建议标为已执行。
+Calibrate this actual path with justified positive, negative and trade-off examples, including a small end-to-end model check. Inspect disagreements and judge repeatability where material. Investigate contradictory scores before moving thresholds. Ask the person about unresolved consequential judgments in conversation, using recognizable outputs rather than requiring exhaustive annotation. Synthetic examples or a smoke test alone do not establish real-world quality.
 
-## 输出与完成
+Use the shared [record guide](../research-workspace/references/records.md) and [tools](../research-workspace/references/tools.md) to freeze an immutable `evaluation/<version>/` with its definition, fixed `samples.jsonl`, scoring scripts and verified manifest. Include only samples suitable for display; keep protected or large inputs elsewhere and pin those actually used. Verify the package runs without mutable draft files. Describe calibration evidence and limitations with the evaluation's research explanation.
 
-给出草稿/发布状态、版本路径、消费产物与运行方式、真实试跑证据、指标意义和覆盖缺口；发布内容可在不引用草稿的情况下执行，当前版本是否切换明确说明。需要重测已有产物时交给 train，不默认重新训练。
-
-## 阻塞与恢复
-
-评测脚本错误不等于模型差，失败保留日志与真实输出并修复草稿；已经发布的错误版本不覆盖，修正发布新版本。发布中断先核查目录与清单，不复用占用的版本号或偷偷修改旧结果；缺失用户判断只暂停依赖它的发布。
+Select `project.current_evaluation` with conflict detection within the existing authorization. Changed samples or scoring require a new version and appropriate remeasurement, never replacement of old results. Hand the version and actual model interface to [train](../train/SKILL.md). Compare only compatible measurement and inference conditions; an existing model can be evaluated again without retraining. Report what is runnable, what the evidence supports and any remaining blocker.

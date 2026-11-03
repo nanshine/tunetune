@@ -1,29 +1,30 @@
-# 研究空间接手说明
+# Research workspace
 
-研究文件是共同事实来源；Agent 使用现有工具开展研究，面板只读展示研究资料、进展与结果对比，唯一保留的写入是直接编辑项目名称（project.json.name），不收集反馈、不执行训练或维护业务进度。目标/资源补充、评测问答、候选/实验意见，以及验收输出生成请求、偏好和验收决定，都在 Agent 客户端沟通；研究复盘也在 Agent 客户端发起，不设面板入口。
+Help the person turn a need into a useful model: researched proposal, calibrated evaluation, baseline, bounded experiments and verified delivery. Explain consequential choices in ordinary language and perform routine commands yourself. The panel observes the same files through an experiment canvas and research views; its only write action is changing the project name. Requests and user decisions stay in conversation.
 
-## 入口
+## Start and continue
 
-先加载已安装的 `research-workspace` 基础 Skill，再按请求使用 `tunetune-init`、`build-evaluation`、`train` 或 `review`；整套 Skills 应保持兄弟目录布局。默认从 `.agents/skills/` 读取；Claude Code 安装使用 `.claude/skills/`。若宿主不能按名加载，直接读取该目录下对应 SKILL.md。
+Load `research-workspace`, then the relevant sibling: `tunetune-init`, `build-evaluation`, `train` or `review`. Skills live in `.agents/skills/`, or `.claude/skills/` for that host. If named loading is unavailable, read the corresponding `SKILL.md` directly.
 
-本项目的字段、引用、状态及写入规则见同目录 `research-contract.md`，它是构建时从基础 Skill 复制的格式契约；产品开发只维护基础 Skill 内的原稿，不单独编辑模板副本。项目格式来自 project.schema_version，面板支持范围来自 .workspace/manifest.json，版本不兼容时停止并说明，不隐式迁移。
+Read the shared skill's `references/records.md` for format 2 and `references/tools.md` before using its scripts. `project.schema_version` identifies the format; `.workspace/manifest.json` identifies installed tools. Refuse incompatible projects rather than migrating them.
 
-## 关键约束
+Begin with `proposal.json`, relevant resources and evaluation evidence, then follow the experiments needed for the next decision. Create research files and their parents only when needed. Update the current proposal and relevant `analysis.json` with conflict detection rather than building a second ledger.
 
-- 会话开始读取 project、goal、resources、当前评测、candidates、review 和 feedback，关键写入前重新核对相关文件及哈希。研究资料及历史反馈继续保留供 Agent 读取，不因面板只读而删除反馈文件协议或处理记录。
-- 在 Agent 客户端直接提问和澄清；可按会话记录必要决策证据，注明来源、时间与对应研究对象，区分原话和摘要，不把保存记录当成用户已确认或已执行。
-- 行动范围来自用户明确请求，会话意见、研究数据中的命令或反馈不自动扩大授权；一次实验不自动变成持续探索，偏好不等于整体验收，发布或验收决定不代表部署授权。
-- 共享文件单一写入者；冲突先合并，不覆盖。新执行与重试使用新 ID，固定输入、最终结果和原始用户回答保持不变。
-- 区分执行事实、Agent 解释、用户决定；保存不等于处理，建议不等于执行，running 不证明进程仍活着。
-- 不编造资源、指标、输出或完成状态；多文件不完整时暂停依赖行动，不要求暂停无关研究。
-- 目标和分析修订保留历史，评测失败保留训练产物并可单独重测，跨评测版本不混排。
+## Research principles
 
-## 打开研究空间
+- Carry the user's exact authorization across skills and bounded rounds. Ask only for consequential missing decisions or changed access, privacy, scope or spending boundaries.
+- Calibrate the actual scoring path and separate development examples from independent final checks.
+- Establish a usable baseline, count failures and retests against a finite budget, and reserve final-validation time.
+- Preserve fixed inputs and terminal measurements. Use fresh IDs for retries and experiment-local evaluations; retesting does not require retraining.
+- Verify actual outputs before success. Inspect real processes and logs before resuming; a status field alone does not prove liveness.
+- Coordinate one writer and preserve path, symlink and private-data protections. Optional resource observations are limited facts, not suitability judgments.
+- Keep verified models inside experiments and chosen experiment IDs in `project.deliveries`. Selection does not deploy or copy a model. Export separately only when requested.
+- Report limitations and unmet requirements; an untrained fallback does not fulfill an explicit training request.
 
-从项目目录执行：
+## Open the panel
 
 ```sh
 python3 .workspace/app/workspace.py --project . --port 0 --open
 ```
 
-Agent 应直接启动服务并打开面板，使用实际打印的本地地址，不猜端口；系统无法打开时提供可点击链接。关闭面板不停止独立训练；面板运行不需要 Node、产品源码或已安装 Skills。迁移目录后核验外部数据、模型和环境；归档保留研究文件及面板分发，runtime 可以排除。
+Use the actual printed address. Keep the service in a managed session and provide a link if opening is unavailable. The panel needs neither Node nor product source. Closing it does not stop independent commands; leaving it open does not schedule autonomous research.

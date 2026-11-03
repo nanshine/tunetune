@@ -1,51 +1,90 @@
-# 确定性文件工具
+# Deterministic research tools
 
-工具为本 Skill 内的 `scripts/records.py`，仅需 Python 3.10+ 和 POSIX（macOS/Linux）标准库；不会执行研究命令、启动服务或管理进程。先从实际加载的 Skill 位置确定脚本绝对路径，以下以 `$RECORDS`、`$PROJECT` 代表已确定的真实路径，不猜全局安装目录。
+Use Python 3.10+ on POSIX macOS/Linux; no additional packages. Resolve the installed shared skill's absolute path. `$RECORDS` below is its `scripts/records.py`, `$RUN` is the sibling `scripts/run.py`, and `$PROJECT` is the absolute research-project directory. Read [records.md](records.md) for format 2. Incompatible project schemas are rejected, not migrated.
 
-## 接手与校验
+## Inspect and validate
 
 ```sh
+python3 "$RECORDS" hash --project "$PROJECT" --path proposal.json
 python3 "$RECORDS" validate --project "$PROJECT"
-python3 "$RECORDS" hash --project "$PROJECT" --path goal.json
 ```
 
-validate 输出 JSON：`valid/errors/warnings/unfinished/unhandled_feedback`。errors 为格式、引用或可核验摘要错误；warnings 为历史固定证据缺失、外部位置未核验、反馈过时等；unfinished 只列未完成执行，不说明进程是否存活。deferred/question 仍待跟进，多份 handled 无明确顺序时也保守列入待人工核对，不猜最后决定。退出码 0 表示没有 errors，仍要阅读其他字段；失败退出 1，命令参数错误退出 2。
+`hash` returns `{path,sha256}` for actual file bytes. `validate` returns `{valid,errors,warnings,unfinished}`. Validation checks core records, record shapes, references, frozen file sets and byte hashes, model containment, declared metrics and evaluation samples/outputs. Missing or nonfinal attempt statuses are unfinished; `completed` still awaits output verification. Missing installed-tool metadata is a warning; an incompatible schema range is an error.
 
-检查包括核心文件字段、ID/状态/时间、有限指标、现有 manifest 文件集合及哈希、目标修订/实验/产物/评测/发布引用、成功记录是否有产物或输出。不是完整 JSON Schema 引擎：领域参数、评分语义、样例覆盖、外部资源、用户授权、真实进程以及科学结论仍由 Agent 核验。旧格式 1 缺少扩展固定证据仅警告，不替旧实验补造输入。校验只读取文件，不创建锁或更改状态；可能读到正在发布的中间文件，重新检查后再行动。
+Exit 0 means no validation errors, not scientific validity or finished research. Errors exit 1; argument errors exit 2. Results are JSON on stdout; operational errors are JSON on stderr. Validation is read-only and can observe partial multi-file publication. It does not prove process liveness, dependency completeness, suitability of resources or user authorization. Explicit external resource locations are descriptive and never fetched.
 
-## 排他创建与条件更新
+## Publish records
 
-面板只读（直接编辑项目名称除外）不取消 Agent 的文件工具写入能力。历史反馈继续校验、读取并按协议追加处理记录；Agent 可按会话保存必要决策证据，来源与依据绑定遵循 [反馈生命周期](records.md#反馈生命周期)，不以写入代替用户授权或要求用户在面板提交。
-
-先将完整记录准备在项目外的临时输入文件中，再发布：
+Prepare a complete UTF-8 input file, then publish it:
 
 ```sh
-python3 "$RECORDS" write --project "$PROJECT" --path assessments/a1/config.json --input /absolute/prepared-config.json --create
-python3 "$RECORDS" write --project "$PROJECT" --path goal.json --input /absolute/prepared-goal.json --expected-sha256 "$PREVIOUS_SHA256"
+python3 "$RECORDS" write --project "$PROJECT" --path experiments/e1/config.json --input /absolute/config.json --create
+python3 "$RECORDS" write --project "$PROJECT" --path proposal.json --input /absolute/proposal.json --expected-sha256 "$PREVIOUS_SHA256"
+python3 "$RECORDS" write --project "$PROJECT" --path experiments/e1/analysis.json --input /absolute/analysis.json --create
 ```
 
-两种模式必须且只能选一种。create 永不覆盖；expected 模式在协作锁内比对旧摘要，只允许已约定的可变记录。JSON 禁止重复键和非有限数，JSONL 校验逐例字段及唯一 sample_id。write 做本记录结构检查，不保证全项目引用已写齐，发布最终状态前后分别执行 validate 并人工检查依赖。
+Choose exactly one of `--create` or `--expected-sha256`. Returns `{path,sha256}`. Creation never overwrites. Updates compare existing bytes under the writer lock. Mutable records are project, proposal, resources, experiment analysis, comparison outputs, evaluation drafts and nonfinal status. Updates replace current records without retaining earlier interpretations. Configs, published evaluation files, evaluation outputs and final statuses are immutable.
 
-- goal 修改必须递增 revision 一位，工具先保存 `history/goals/<旧revision>.json`。
-- review/analysis 更新自动保存唯一历史文件，路径分别为 history/reviews 和 history/analyses。
-- config、artifacts、result、release、原始反馈、handled 都不能更新；训练终态 status 不再修改。assessment result 存在后不再修改中间 status。
-- write 只写列明的研究记录，不编辑任意工程源码；评测草稿的代码、数据等仍用现有编辑工具准备，使用 freeze 固定。
-- 锁位于 `.workspace/runtime/records.lock`，冲突立即失败，不删除或抢占锁；文件保持存在是正常现象，锁随进程释放。目标路径拒绝 `..`、绝对路径和符号链接，通过 dir_fd 与 O_NOFOLLOW 防止目录链接穿越。
-- 历史保存和目标更新并非跨文件事务；中断后先核对实际内容，相同旧目标历史可复用，冲突历史不能覆盖。协作锁不能阻止编辑器或不遵守锁的程序并发改写。
+Publication checks references before writing: freeze snapshots before experiment configs, publish a verified successful model before evaluation configs or delivery selection, and publish evaluation outputs before success. A successful evaluation includes every fixed sample and all declared metrics. Output inputs and any supplied references must match those samples; score IDs must be declared. Comparison outputs map existing experiment IDs to strings; missing entries remain missing.
 
-## 快照与冻结
+Status updates cannot move backwards or remove/change recorded process facts, model identifiers or measurements. To finalize, read the latest status, retain all its fields, update `state` and `updated_at`, add verified model fields or metrics, then write with its current byte hash. An exit-zero `completed` status is not success. Failed and cancelled statuses cannot be revised; use a fresh attempt ID.
+
+The writer lock is `.workspace/runtime/records.lock`. Contention fails immediately. A persistent lock file is normal; never delete or steal it. Directory-descriptor access rejects traversal, symlinks and special files. Atomic file replacement is not a multi-file transaction. Direct editors and child programs can bypass the cooperating-writer lock; coordinate them and validate before dependent actions. The record writer does not edit arbitrary source files or logs.
+
+## Freeze code and evaluation packages
 
 ```sh
 python3 "$RECORDS" freeze --project "$PROJECT" --source /absolute/prepared-code --path experiments/e1/snapshot
-python3 "$RECORDS" freeze --project "$PROJECT" --source /absolute/prepared-evaluation --path evaluation/versions/v1
+python3 "$RECORDS" freeze --project "$PROJECT" --source /absolute/prepared-evaluation --path evaluation/v1
 ```
 
-源目录必须是非空普通文件树，不包含 manifest.json、符号链接或特殊文件，也不能与目标重叠。评测源必须含 version 对应目标的 definition.json；先在独立准备目录整理该版本内容，不为冻结而改写旧发布版本。
+Returns `{path,files,manifest_sha256}`. Store the snapshot hash in experiment `snapshot_sha256`; store the evaluation hash in each evaluation run's `evaluation_sha256`. The latter pins the entire manifest, not just the definition.
 
-工具读取源内容，在新目标目录排他创建各文件，最后写 manifest.json；目标存在即拒绝，不覆盖、不自动删残留目录。整个目录不是原子事务，manifest 未出现表示尚未完整发布，中断后保留证据并使用新目标 ID。仅对源代码、配置、小型评测包使用：当前实现会在内存中暂存内容，大型数据和模型保留外部引用，不用此工具复制。
+Source must be a nonempty ordinary file tree without a root `manifest.json`, symlinks or special files, and must not overlap the destination. Evaluation sources require `definition.json` matching the destination version and valid `samples.jsonl`; include scoring code and required local material. The destination must not exist. Files are created exclusively and the manifest is written last. An interrupted directory cannot be reused. Freeze does not select the current evaluation or start a command.
 
-manifest 固定实际复制字节，不能证明源目录采集期间无人修改；freeze 前协调唯一写入者，完成后核验计划采用的文件和摘要。freeze 不设置只读权限、不修改源文件权限；复制时保留可执行位，但不继承特殊权限。它不更新 current_evaluation，不自动创建实验、不训练；只有内容校验完成且有授权时才切换当前评测。
+Executable bits are retained without special permissions. Files are buffered in memory: use freeze for modest code/evaluation packages, not large data or model copies. Coordinate the source writer; this is not a transactionally consistent capture of changing files or an OS read-only guarantee.
 
-## 分发与依赖
+## Identify a model
 
-五个 Skills 整套分发，保持兄弟目录；各业务 Skill 显式引用基础 Skill，不假定宿主自动加载依赖。构建工具将 records.md 的原样副本放入 kit 的 template/research-contract.md；研究项目面板只携带自己的分发文件，运行时不 import 本工具或读取全局技能目录。协议演进先修改唯一原稿，再验证构建副本一致；已有项目协议不随技能升级偷偷覆盖。
+Keep model files inside `experiments/<id>/model/`. For a single model file, use `hash` and put its project-relative path and byte hash in experiment status as `model_path` and `model_sha256`.
+
+For a model directory already generated by the command:
+
+```sh
+python3 "$RECORDS" manifest --project "$PROJECT" --path experiments/e1/model
+```
+
+This writes one exclusive `manifest.json` in place and returns `{path,files,manifest_sha256}`. It also accepts a subdirectory inside that experiment's `model/`. Use the directory as `model_path` and the returned manifest hash as `model_sha256`. Every ordinary file except the manifest itself is listed; verification checks both bytes and exact membership. Coordinate the producer before generating it, before terminal status. Existing manifests and already-frozen parent packages cannot be changed. Select verified successful experiment IDs in `project.deliveries`; selection neither copies nor deploys models.
+
+## Execute one prepared attempt
+
+```sh
+python3 "$RUN" --project "$PROJECT" --path experiments/e1
+python3 "$RUN" --project "$PROJECT" --path experiments/e1/evals/r1
+```
+
+The immutable config supplies `execution:{argv,cwd,environment,timeout_seconds}`. Use a literal nonempty argv array, `.` or a project-relative directory, string-valued nonsecret environment overrides and a positive finite timeout. No command, environment, timeout or retry overrides are accepted. Environment overrides overlay the inherited environment; this is not hermetic execution.
+
+Preflight verifies the snapshot and ancestry for experiments, or the successful parent model and full evaluation package for evaluation runs. Every declared `inputs:[{path,sha256}]` reference is checked: files use byte hashes; directories require matching, fully verified manifests. Additional inputs are optional only for evaluation runs. External inputs must first become local pinned material. These checks cannot prove that argv uses only declared dependencies; prepare honest configs and retain necessary code/material.
+
+The runner holds the shared lock through execution and status publication. Child commands must not call `records.py write`; write model files or task-specific staging outputs directly instead. No automatic metric extraction is assumed. Do not modify the immutable config or frozen packages from the child.
+
+An existing `run.log`, output file, model files or started/final status blocks execution. Only absent status or `pending` without process/output facts may start. The exclusively created `run.log` permanently reserves the attempt, even empty after a crash. Stdout and stderr share that log; stdin is closed. A descriptor-pinned cwd prevents path replacement from redirecting startup.
+
+The runner writes `running`, then `completed` for exit zero or `failed` for nonzero exit, timeout, launch failure or handled interruption. It returns the saved status, including `started_at`, `completed_at`, `elapsed_seconds`, `returncode`, `timed_out`, `config_sha256` and optional `error`. The process code comes from a private supervisor pipe, never stdout. When no payload result is available, the code is the supervisor cleanup signal or null if spawning failed. Elapsed time uses a monotonic clock and includes cleanup. CLI exit 0 means process completion only; failed execution exits 1.
+
+Inspect outputs after the lock is released. Publish verified model identifiers or evaluation outputs/metrics and finalize status explicitly, preserving all process facts. Repeated evaluations use new nested IDs without retraining. Never reset status or delete a reserved log to rerun an ID.
+
+The supervisor reserves its process-group identity until cleanup. Completion, timeout and handled CLI SIGINT/SIGTERM kill only this invocation's group, including workers left after payload exit. Commands must not detach or daemonize. Escaped processes, hard-killed runners, power loss, arbitrary filesystem writes, log size and global spending are not contained. These tools are not a sandbox, scheduler or authorization engine. Python embedders own their host's signal lifecycle; use the CLI subprocess when managed cancellation is needed.
+
+## Python API
+
+- `Tree(root)`: close with `tree.close()` in `finally`. Roots and source paths must not traverse symlinks.
+- `digest(bytes)`, `encoded(value)`, `strict(bytes_or_text)`, `shape(path,bytes)`, `read_record(tree,path)`.
+- `write(tree,path,source,create=False,expected=None) -> {path,sha256}`.
+- `freeze(tree,root,source,path)` and `manifest(tree,path) -> {path,files,manifest_sha256}`.
+- `verify_hash(tree,path,expected)`, `verify_manifest(tree,base,expected=None)`, `verify_path_hash(tree,path,expected)`, `verify_inputs(tree,attempt_path,config)`.
+- `validate(tree) -> {valid,errors,warnings,unfinished}`.
+- Sibling `run.py`: `execute(tree,attempt_path) -> status`.
+
+Writing, freezing, manifest generation and execution acquire the lock themselves; do not call them while holding `tree.locked()`. Rejected operations raise errors. Neither tool imports or controls the panel.

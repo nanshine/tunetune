@@ -9,8 +9,8 @@ import shutil
 import tarfile
 import tempfile
 
-VERSION = "0.3.0"
-TEMPLATES = ("AGENTS.md", "research-contract.md", "project.json", "goal.json", "resources.json", "candidates.json", "workspace.json")
+VERSION = "0.4.0"
+TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
 SKILLS = ("research-workspace", "tunetune-init", "build-evaluation", "train", "review")
 SKILL_RESOURCES = {"references": {".md", ".json"}, "scripts": {".py"}}
 EXCLUDED_SKILL_PARTS = {"evals", "notes", "reference", "__pycache__", "cache", "node_modules"}
@@ -25,7 +25,7 @@ def checked_file(path):
 
 def collect_skills(source):
     inputs = {}
-    for relative in ("references/records.md", "references/tools.md", "scripts/records.py"):
+    for relative in ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py"):
         checked_file(source / "skills/research-workspace" / relative)
     for name in SKILLS:
         root = source / "skills" / name
@@ -45,11 +45,9 @@ def collect_skills(source):
 
 def build(source, output):
     source, output = Path(os.path.abspath(source)), Path(os.path.abspath(output))
-    # The base skill owns the contract; there is no second template source to maintain.
-    inputs = {f"template/{name}": checked_file(
-        source / "skills/research-workspace/references/records.md" if name == "research-contract.md"
-        else source / "templates/workspace" / name) for name in TEMPLATES}
-    inputs["workspace/workspace.py"] = checked_file(source / "workspace/workspace.py")
+    inputs = {f"template/{name}": checked_file(source / "templates/workspace" / name) for name in TEMPLATES}
+    for name in ("workspace.py", "monitor.py"):
+        inputs[f"workspace/{name}"] = checked_file(source / "workspace" / name)
     inputs["install-workspace.py"] = checked_file(source / "scripts/install-workspace.py")
     assets = source / "workspace/dist"
     checked_file(assets / "index.html")
@@ -79,7 +77,7 @@ def build(source, output):
             destination = kit / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, destination)
-        manifest = {"version": VERSION, "schema_min": 1, "schema_max": 1,
+        manifest = {"version": VERSION, "schema_min": 2, "schema_max": 2,
                     "files": [{"path": relative, "sha256": hashlib.sha256((kit / relative).read_bytes()).hexdigest()}
                               for relative in sorted(inputs)]}
         (kit / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

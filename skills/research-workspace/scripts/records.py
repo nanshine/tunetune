@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and publish research files without executing research commands."""
+"""Validate and publish format-2 research files without executing commands."""
 import argparse
 from contextlib import contextmanager
 from datetime import datetime
@@ -17,13 +17,13 @@ import uuid
 ID = r"[A-Za-z0-9_-]+"
 SHA = re.compile(r"[a-f0-9]{64}\Z")
 FINAL = ("succeeded", "failed", "cancelled")
+ATTEMPT = rf"experiments/{ID}(?:/evals/{ID})?"
 RECORD = re.compile(
-    rf"(?:project|goal|resources|candidates|workspace)\.json|review\.md|"
-    rf"evaluation/(?:draft|versions/{ID})/definition\.json|"
-    rf"experiments/{ID}/(?:config|status|artifacts)\.json|experiments/{ID}/analysis\.md|"
-    rf"assessments/{ID}/(?:config|status|result)\.json|assessments/{ID}/outputs\.jsonl|"
-    rf"releases/{ID}\.json|acceptance/{ID}/(?:config\.json|outputs\.jsonl)|"
-    rf"feedback/(?:requests|responses|incoming|handled)/{ID}\.json")
+    rf"(?:project|proposal|resources)\.json|comparison/outputs\.jsonl|"
+    rf"evaluation/{ID}/(?:definition\.json|samples\.jsonl)|"
+    rf"{ATTEMPT}/(?:config|status)\.json|experiments/{ID}/analysis\.json|"
+    rf"experiments/{ID}/evals/{ID}/outputs\.jsonl")
+PROCESS = ("started_at", "completed_at", "elapsed_seconds", "returncode", "timed_out", "error", "config_sha256")
 
 
 def digest(data):
@@ -53,6 +53,8 @@ def strict(data):
         parsed = float(value)
         require(math.isfinite(parsed), "Non-finite number")
         return parsed
+    if isinstance(data, bytes):
+        data = data.decode("utf-8")
     return json.loads(data, object_pairs_hook=pairs, parse_float=number,
                       parse_constant=lambda value: (_ for _ in ()).throw(ValueError(f"Invalid number: {value}")))
 
@@ -63,7 +65,40 @@ def encoded(value):
 
 def timestamp(value):
     require(isinstance(value, str), "Timestamp must be a string")
-    require(datetime.fromisoformat(value.replace("Z", "+00:00")).utcoffset() is not None, "Timestamp requires timezone")
+    require("T" in value and datetime.fromisoformat(value.replace("Z", "+00:00")).utcoffset() is not None,
+            "Timestamp requires timezone-bearing ISO 8601")
+
+
+def finite_number(value):
+    try:
+        return type(value) in (int, float) and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def fields(obj, required, optional=()):
+    require(isinstance(obj, dict), "Expected an object")
+    require(all(k in obj for k in required), f"Missing required fields: {', '.join(required)}")
+    require(set(obj) <= set(required) | set(optional), "Unknown fields: " + ", ".join(sorted(set(obj) - set(required) - set(optional))))
+
+
+def identifier(value):
+    require(isinstance(value, str) and re.fullmatch(ID, value), "Invalid ID")
+
+
+def hash_value(value):
+    require(isinstance(value, str) and SHA.fullmatch(value), "Invalid SHA-256")
+
+
+def argument_array(value):
+    require(isinstance(value, list) and value and all(isinstance(v, str) and "\x00" not in v for v in value)
+            and value[0], "Expected nonempty argument array")
+
+
+def numbers(value):
+    require(isinstance(value, dict) and all(finite_number(v) for v in value.values()), "Metrics/scores must be finite numbers")
+    for key in value:
+        identifier(key)
 
 
 class Tree:
@@ -89,6 +124,7 @@ class Tree:
         fd = os.dup(self.fd)
         try:
             for segment in segments:
+                require(parts(segment) == [segment], "Unsafe directory segment")
                 if create:
                     try:
                         os.mkdir(segment, dir_fd=fd)
@@ -127,6 +163,7 @@ class Tree:
             for name in sorted(os.listdir(fd)):
                 info = os.stat(name, dir_fd=fd, follow_symlinks=False)
                 path = f"{base}/{name}" if base else name
+                parts(path)
                 if stat.S_ISDIR(info.st_mode):
                     with self.directory(parts(path)) as child:
                         walk(child, path)
@@ -139,6 +176,8 @@ class Tree:
 
     @contextmanager
     def locked(self):
+        # Reject incompatible installations before even creating lock directories.
+        check_installed_metadata(self)
         with self.directory([".workspace", "runtime"], create=True) as parent:
             fd = os.open("records.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=parent)
             try:
@@ -151,6 +190,9 @@ class Tree:
     def publish(self, path, data, replace=False, mode=0o600):
         segments = parts(path)
         with self.directory(segments[:-1], create=True) as parent:
+            if replace:
+                info = os.stat(segments[-1], dir_fd=parent, follow_symlinks=False)
+                require(stat.S_ISREG(info.st_mode), f"Not a regular file: {path}")
             temporary = ".records-" + uuid.uuid4().hex
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
             try:
@@ -163,6 +205,7 @@ class Tree:
                     os.replace(temporary, segments[-1], src_dir_fd=parent, dst_dir_fd=parent)
                 else:
                     os.link(temporary, segments[-1], src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+                os.fsync(parent)
             finally:
                 try:
                     os.unlink(temporary, dir_fd=parent)
@@ -171,158 +214,317 @@ class Tree:
 
 
 def shape(path, data):
-    if path.endswith(".md"):
-        data.decode("utf-8")
-        return None
+    parts(path)
+    require(bool(RECORD.fullmatch(path)), "Path is not a format-2 research record")
     if path.endswith(".jsonl"):
         rows = [strict(line) for line in data.decode("utf-8").splitlines() if line.strip()]
         ids = []
         for row in rows:
             require(isinstance(row, dict), "JSONL row must be an object")
-            require(all(k in row for k in ("sample_id", "input", "outputs" if path.startswith("acceptance/") else "output")), "Missing output fields")
-            require(isinstance(row["sample_id"], str) and row["sample_id"], "sample_id must be nonempty")
+            required = ("sample_id", "input") if path.startswith("evaluation/") else (
+                "sample_id", "input", "outputs" if path.startswith("comparison/") else "output")
+            require(all(k in row for k in required), "Missing sample/output fields")
+            require(isinstance(row["sample_id"], str) and row["sample_id"].strip(), "sample_id must be nonempty")
+            if path.startswith("comparison/"):
+                fields(row, required)
+                require(isinstance(row["outputs"], dict), "Comparison outputs must be an object")
+                for experiment, output in row["outputs"].items():
+                    identifier(experiment)
+                    require(isinstance(output, str), "Comparison output must be text")
+            elif not path.startswith("evaluation/"):
+                fields(row, required, ("reference", "scores"))
+                if "scores" in row:
+                    numbers(row["scores"])
             ids.append(row["sample_id"])
         require(len(ids) == len(set(ids)), "Duplicate sample_id")
         return rows
     obj = strict(data)
     require(isinstance(obj, dict), "JSON must be an object")
     leaf = path.split("/")[-1]
-    fields = {
-        "project.json": ("schema_version", "name", "language", "current_evaluation"),
-        "goal.json": ("revision", "summary", "sections", "examples"),
-        "resources.json": ("items",), "candidates.json": ("items",),
-        "workspace.json": ("title", "metric_columns"),
-        "definition.json": ("version", "description", "metrics", "datasets"),
-        "status.json": ("state", "updated_at"), "result.json": ("state", "metrics", "completed_at"),
-        "artifacts.json": ("items",),
-    }.get(leaf, ())
-    if leaf == "config.json":
-        fields = ("id", "title", "parent_experiment_id", "goal_revision", "evaluation_version") if path.startswith("experiments/") else (
-            ("id", "experiment_id", "artifact_id", "evaluation_version") if path.startswith("assessments/") else ("id", "version", "release_ids"))
-    if path.startswith("releases/"):
-        fields = ("id", "experiment_id", "artifact_id", "assessment_ids", "notes")
-    if path.startswith("feedback/"):
-        fields = {
-            "requests": ("id", "title", "prompt", "options"),
-            "responses": ("id", "kind", "text", "target", "target_sha256", "source", "created_at", "request_id"),
-            "incoming": ("id", "kind", "text", "target", "target_sha256", "source", "created_at"),
-            "handled": ("id", "feedback_id", "disposition", "reason", "changes"),
-        }[path.split("/")[1]]
-    require(all(key in obj for key in fields), f"Missing required fields: {', '.join(fields)}")
-    for key in ("items", "examples", "sections", "sources", "datasets", "options", "changes", "metric_columns", "assessment_ids", "release_ids"):
-        if key in obj:
-            require(isinstance(obj[key], list), f"{key} must be an array")
-    for key in ("name", "language", "title", "description", "summary", "proposal", "context", "expected_result", "prompt", "text", "reason", "notes"):
-        if key in obj:
-            require(isinstance(obj[key], str), f"{key} must be text")
-    for key in ("id", "experiment_id", "artifact_id", "evaluation_version", "feedback_id", "request_id", "parent_experiment_id", "current_evaluation"):
-        if key in obj and obj[key] is not None:
-            require(isinstance(obj[key], str) and re.fullmatch(ID, obj[key]), f"Invalid {key}")
-    if "id" in obj:
-        expected = path.split("/")[-2] if leaf == "config.json" else Path(path).stem
-        require(obj["id"] == expected, "ID does not match path")
-    if path == "goal.json":
-        require(all(isinstance(section, dict) and isinstance(section.get("title"), str)
-                    and isinstance(section.get("body"), str) for section in obj["sections"]), "Invalid goal section")
+    evaluation_run = "/evals/" in path
+    if path == "project.json":
+        require(type(obj.get("schema_version")) is int and obj["schema_version"] == 2,
+                "Unsupported schema_version: format 2 required; no automatic migration")
+        fields(obj, ("schema_version", "name", "language", "current_evaluation", "deliveries"))
+        if obj["current_evaluation"] is not None:
+            identifier(obj["current_evaluation"])
+            require(obj["current_evaluation"] != "draft", "Current evaluation must be frozen")
+        require(isinstance(obj["deliveries"], list), "deliveries must be an array")
+        for item in obj["deliveries"]:
+            identifier(item)
+        require(len(obj["deliveries"]) == len(set(obj["deliveries"])), "Duplicate delivery")
+    elif path == "proposal.json":
+        fields(obj, ("summary", "sections", "examples"), ("feasibility",))
+        require(isinstance(obj["sections"], list) and isinstance(obj["examples"], list), "sections/examples must be arrays")
+        for section in obj["sections"]:
+            fields(section, ("title", "body"))
+            require(all(isinstance(v, str) for v in section.values()), "Invalid proposal section")
         ids = []
         for example in obj["examples"]:
-            require(isinstance(example, dict) and isinstance(example.get("id"), str)
-                    and re.fullmatch(ID, example["id"]), "Invalid goal example ID")
-            require(all(isinstance(example.get(key, ""), str) for key in ("title", "input", "expected_output", "source")), "Invalid example text")
+            fields(example, ("id", "input"), ("expected_output",))
+            identifier(example["id"])
             ids.append(example["id"])
         require(len(ids) == len(set(ids)), "Duplicate example ID")
-    if path == "resources.json":
+        if "feasibility" in obj:
+            fields(obj["feasibility"], ("verdict", "reason"))
+            require(obj["feasibility"]["verdict"] in ("feasible", "conditional", "infeasible", "unknown")
+                    and isinstance(obj["feasibility"]["reason"], str), "Invalid feasibility")
+    elif path == "resources.json":
+        fields(obj, ("items",))
+        require(isinstance(obj["items"], list), "items must be an array")
         ids = []
         for item in obj["items"]:
-            require(isinstance(item, dict) and isinstance(item.get("id"), str) and re.fullmatch(ID, item["id"]), "Invalid resource ID")
-            require(all(isinstance(item.get(key), str) and item[key].strip() for key in ("title", "type", "purpose")), "Invalid resource description")
-            require(item.get("status") in ("unknown", "available", "preparing", "ready", "unavailable"), "Invalid resource status")
-            for key in ("source", "path", "location", "notes", "version"):
-                require(key not in item or isinstance(item[key], str), "Invalid resource detail")
-            if "checked_at" in item:
-                timestamp(item["checked_at"])
+            fields(item, ("id", "title", "type", "status"), ("path", "location", "version", "size", "monitor"))
+            identifier(item["id"])
             ids.append(item["id"])
-        require(len(ids) == len(set(ids)), "Duplicate resource ID")
-    if path == "workspace.json" and "presentation" in obj:
-        presentation = obj["presentation"]
-        require(isinstance(presentation, dict) and isinstance(presentation.get("id"), str)
-                and bool(presentation["id"]) and presentation.get("panel") in ("goal", "resources"), "Invalid presentation request")
-    if path == "project.json":
-        require(type(obj["schema_version"]) is int and obj["schema_version"] == 1, "Unsupported schema_version")
-    for key in ("revision", "goal_revision"):
-        if key in obj:
-            require(type(obj[key]) is int and obj[key] >= 1, f"Invalid {key}")
-    for key in ("updated_at", "completed_at", "created_at"):
-        if key in obj:
-            timestamp(obj[key])
-    if leaf in ("status.json", "result.json"):
-        states = FINAL if leaf == "result.json" else (("pending", "running") if path.startswith("assessments/") else ("pending", "running", *FINAL))
-        require(obj["state"] in states, "Invalid execution state")
-    if leaf == "result.json":
-        require(isinstance(obj["metrics"], dict), "metrics must be an object")
-        require(all(type(v) in (int, float) and math.isfinite(v) for v in obj["metrics"].values()), "Metrics must be finite numbers")
-    if leaf == "definition.json":
-        require(isinstance(obj["metrics"], list), "metrics must be an array")
-        metric_ids = []
-        for item in obj["metrics"]:
-            require(isinstance(item, dict) and isinstance(item.get("id"), str) and re.fullmatch(ID, item["id"]) and isinstance(item.get("label"), str) and item.get("direction") in ("maximize", "minimize"), "Invalid metric definition")
-            metric_ids.append(item["id"])
-        require(len(set(metric_ids)) == len(metric_ids), "Duplicate metric ID")
-        if path.startswith("evaluation/versions/"):
-            require(obj["version"] == path.split("/")[2], "Version does not match directory")
-    if "disposition" in obj:
-        require(obj["disposition"] in ("adopted", "deferred", "rejected", "question"), "Invalid disposition")
-    for key in ("artifact_sha256", "evaluation_sha256", "target_sha256"):
-        if obj.get(key) is not None:
-            require(isinstance(obj[key], str) and SHA.fullmatch(obj[key]), f"Invalid {key}")
-    if obj.get("target") is not None:
-        parts(obj["target"])
-        require(obj.get("target_sha256") is not None, "Target requires hash")
-    if "execution" in obj:
-        execution = obj["execution"]
-        require(isinstance(execution, dict), "execution must be an object")
-        if leaf == "config.json":
-            require(isinstance(execution.get("argv"), list) and execution["argv"] and all(isinstance(v, str) and "\x00" not in v for v in execution["argv"]), "execution.argv must be argument array")
-            if execution.get("cwd") != ".":
-                parts(execution.get("cwd"))
-            require(isinstance(execution.get("environment"), dict), "execution.environment must be an object")
-            if "timeout_seconds" in execution:
-                require(type(execution["timeout_seconds"]) in (int, float) and execution["timeout_seconds"] > 0, "Invalid timeout")
-    if "fixed_inputs" in obj:
-        fixed = obj["fixed_inputs"]
-        require(isinstance(fixed, dict) and all(k in fixed for k in ("code", "data", "starting_artifact", "parameters", "environment")), "Incomplete fixed_inputs")
-        require(isinstance(fixed["code"], list) and isinstance(fixed["data"], list) and isinstance(fixed["parameters"], dict) and isinstance(fixed["environment"], dict), "Invalid fixed_inputs")
-        for item in fixed["code"] + fixed["data"] + ([fixed["starting_artifact"]] if fixed["starting_artifact"] is not None else []):
-            require(isinstance(item, dict) and isinstance(item.get("sha256"), str) and SHA.fullmatch(item["sha256"]), "Fixed input requires SHA-256")
-            require(bool(item.get("path")) != bool(item.get("location")), "Fixed input needs path or external location")
+            require(all(isinstance(item[k], str) for k in item if k != "monitor"), "Invalid resource text")
+            require(item["status"] in ("ready", "missing", "changed", "busy", "unknown"), "Invalid resource status")
+            require(not ("path" in item and "location" in item), "Use path or location, not both")
             if "path" in item:
                 parts(item["path"])
-    if leaf == "artifacts.json":
+            if "location" in item:
+                require(item["location"].strip() and "\x00" not in item["location"], "Invalid external location")
+            if "monitor" in item:
+                probe = item["monitor"]
+                fields(probe, ("kind",), ("index",))
+                require(probe["kind"] in ("file", "memory", "nvidia_gpu", "python"), "Invalid monitor kind")
+                require("index" not in probe or type(probe["index"]) is int and probe["index"] >= 0, "Invalid monitor index")
+        require(len(ids) == len(set(ids)), "Duplicate resource ID")
+    elif leaf == "definition.json":
+        fields(obj, ("version", "description", "rubric", "metrics", "command"))
+        identifier(obj["version"])
+        require(path.split("/")[1] == "draft" or obj["version"] == path.split("/")[1], "Version does not match directory")
+        require(isinstance(obj["rubric"], str), "rubric must be text")
+        argument_array(obj["command"])
+        require(isinstance(obj["metrics"], list), "metrics must be an array")
         ids = []
-        for item in obj["items"]:
-            require(isinstance(item, dict) and isinstance(item.get("id"), str) and re.fullmatch(ID, item["id"]), "Invalid artifact ID")
-            parts(item.get("path"))
-            require(isinstance(item.get("sha256"), str) and SHA.fullmatch(item["sha256"]), "Artifact requires hash")
-            ids.append(item["id"])
-        require(len(ids) == len(set(ids)), "Duplicate artifact ID")
+        for metric in obj["metrics"]:
+            fields(metric, ("id", "label", "direction"))
+            identifier(metric["id"])
+            require(isinstance(metric["label"], str) and metric["direction"] in ("maximize", "minimize"), "Invalid metric definition")
+            ids.append(metric["id"])
+        require(len(ids) == len(set(ids)), "Duplicate metric ID")
+    elif leaf == "analysis.json":
+        fields(obj, ("outcome", "summary"))
+        require(obj["outcome"] in ("baseline", "keep", "discard", "inconclusive", "invalid"), "Invalid analysis outcome")
+    elif leaf == "config.json":
+        if evaluation_run:
+            fields(obj, ("id", "evaluation_version", "model_sha256", "evaluation_sha256", "execution"), ("inputs",))
+            identifier(obj["evaluation_version"])
+            require(obj["evaluation_version"] != "draft", "Evaluation must be frozen")
+        else:
+            fields(obj, ("id", "title", "parent_experiment_id", "hypothesis", "parameters", "inputs", "snapshot_sha256", "execution"),
+                   ("method", "model_name", "framework"))
+            if obj["parent_experiment_id"] is not None:
+                identifier(obj["parent_experiment_id"])
+            require(isinstance(obj["parameters"], dict), "parameters must be an object")
+        identifier(obj["id"])
+        require(obj["id"] == path.split("/")[-2], "ID does not match path")
+        execution = obj["execution"]
+        fields(execution, ("argv", "cwd", "environment", "timeout_seconds"))
+        argument_array(execution["argv"])
+        if execution["cwd"] != ".":
+            parts(execution["cwd"])
+        require(isinstance(execution["environment"], dict) and all(
+            k and "=" not in k and "\x00" not in k and isinstance(v, str) and "\x00" not in v
+            for k, v in execution["environment"].items()), "Invalid execution.environment")
+        require(finite_number(execution["timeout_seconds"]) and execution["timeout_seconds"] > 0, "Invalid timeout")
+        require(isinstance(obj.get("inputs", []), list), "inputs must be an array")
+        paths = []
+        for item in obj.get("inputs", []):
+            fields(item, ("path", "sha256"))
+            parts(item["path"])
+            hash_value(item["sha256"])
+            paths.append(item["path"])
+        require(len(paths) == len(set(paths)), "Duplicate input path")
+    elif leaf == "status.json":
+        fields(obj, ("state", "updated_at"), PROCESS + (("metrics",) if evaluation_run else ("model_path", "model_sha256")))
+        require(obj["state"] in ("pending", "running", "completed", *FINAL), "Invalid execution state")
+        for key in ("updated_at", "started_at", "completed_at"):
+            if key in obj:
+                timestamp(obj[key])
+        if "returncode" in obj:
+            require(obj["returncode"] is None or type(obj["returncode"]) is int, "Invalid returncode")
+        if "timed_out" in obj:
+            require(type(obj["timed_out"]) is bool, "Invalid timed_out")
+        if "elapsed_seconds" in obj:
+            require(finite_number(obj["elapsed_seconds"]) and obj["elapsed_seconds"] >= 0, "Invalid elapsed_seconds")
+        if obj["state"] in ("completed", "succeeded"):
+            require(obj.get("returncode", 0) == 0 and not obj.get("timed_out") and "error" not in obj,
+                    "Successful/completed status conflicts with process failure")
+        if "model_path" in obj:
+            parts(obj["model_path"])
+            base = path.rsplit("/", 1)[0] + "/model"
+            require(obj["model_path"] == base or obj["model_path"].startswith(base + "/"), "Model must be inside this experiment's model directory")
+        require(("model_path" in obj) == ("model_sha256" in obj), "Model path and hash must occur together")
+        if "metrics" in obj:
+            numbers(obj["metrics"])
+    for key in ("name", "language", "title", "description", "summary", "hypothesis", "method", "model_name", "framework", "error"):
+        if key in obj:
+            require(isinstance(obj[key], str), f"{key} must be text")
+    for key in ("snapshot_sha256", "model_sha256", "evaluation_sha256", "config_sha256"):
+        if key in obj:
+            hash_value(obj[key])
     return obj
 
 
-def mutable(path, old, tree):
-    if path in ("project.json", "goal.json", "resources.json", "candidates.json", "review.md"):
-        return True
-    if path.startswith("evaluation/draft/") or re.fullmatch(rf"experiments/{ID}/analysis\.md", path):
-        return True
-    if path.endswith("/status.json"):
-        if path.startswith("assessments/"):
-            return not tree.exists(path.replace("status.json", "result.json"))
-        return old.get("state") not in FINAL
-    return False
+def read_record(tree, path):
+    return shape(path, tree.read(path))
+
+
+def check_installed_metadata(tree):
+    """Fresh, uninstalled trees are allowed; installed tools must be format 2 only."""
+    if not tree.exists(".workspace/manifest.json"):
+        return False
+    kit = strict(tree.read(".workspace/manifest.json"))
+    require(isinstance(kit, dict) and all(type(kit.get(key)) is int and kit[key] == 2
+            for key in ("schema_min", "schema_max")), "Incompatible kit schema range")
+    return True
+
+
+def same_json(left, right):
+    """Compare JSON values without Python's bool/number coercion or key order."""
+    def canonical(value):
+        return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    return canonical(left) == canonical(right)
+
+
+def verify_hash(tree, path, expected):
+    hash_value(expected)
+    require(digest(tree.read(path)) == expected, f"Hash mismatch: {path}")
+
+
+def verify_manifest(tree, base, expected=None):
+    path = base + "/manifest.json"
+    raw = tree.read(path)
+    if expected is not None:
+        hash_value(expected)
+        require(digest(raw) == expected, f"Hash mismatch: {path}")
+    manifest = strict(raw)
+    fields(manifest, ("files",))
+    require(isinstance(manifest["files"], list) and manifest["files"], "Empty or invalid manifest")
+    listed = []
+    for item in manifest["files"]:
+        fields(item, ("path", "sha256"))
+        parts(item["path"])
+        require(item["path"] != "manifest.json", "Manifest cannot include itself")
+        target = base + "/" + item["path"]
+        verify_hash(tree, target, item["sha256"])
+        listed.append(target)
+    require(len(listed) == len(set(listed)), "Duplicate manifest paths")
+    require(set(tree.files(base)) == set(listed) | {path}, "Manifest file set differs")
+    return manifest
+
+
+def verify_path_hash(tree, path, expected):
+    """A file pins bytes; a directory pins its verified manifest bytes."""
+    with tree.directory(parts(path)[:-1]) as parent:
+        mode = os.stat(parts(path)[-1], dir_fd=parent, follow_symlinks=False).st_mode
+    require(stat.S_ISREG(mode) or stat.S_ISDIR(mode), f"Not a regular file or directory: {path}")
+    if stat.S_ISDIR(mode):
+        verify_manifest(tree, path, expected)
+    else:
+        verify_hash(tree, path, expected)
+
+
+def verify_model(tree, experiment):
+    read_record(tree, experiment + "/config.json")
+    status = read_record(tree, experiment + "/status.json")
+    require(status["state"] == "succeeded" and "model_path" in status, "Experiment requires a succeeded model")
+    if "config_sha256" in status:
+        verify_hash(tree, experiment + "/config.json", status["config_sha256"])
+    verify_path_hash(tree, status["model_path"], status["model_sha256"])
+    return status
+
+
+def verify_inputs(tree, path, config):
+    """Verify frozen packages, ancestry, model and any additional local inputs."""
+    if "/evals/" in path:
+        model = verify_model(tree, path.split("/evals/")[0])
+        require(model["model_sha256"] == config["model_sha256"], "Model reference hash differs")
+        evaluation = "evaluation/" + config["evaluation_version"]
+        verify_manifest(tree, evaluation, config["evaluation_sha256"])
+        read_record(tree, evaluation + "/definition.json")
+        read_record(tree, evaluation + "/samples.jsonl")
+    else:
+        verify_manifest(tree, path + "/snapshot", config["snapshot_sha256"])
+        seen = {config["id"]}
+        parent = config["parent_experiment_id"]
+        while parent is not None:
+            require(parent not in seen, "Invalid parent experiment: ancestry cycle")
+            seen.add(parent)
+            parent = read_record(tree, f"experiments/{parent}/config.json")["parent_experiment_id"]
+    for item in config.get("inputs", []):
+        verify_path_hash(tree, item["path"], item["sha256"])
+
+
+def check_record(tree, path, obj):
+    """Check references and success evidence, also before publication."""
+    if path == "project.json":
+        if obj["current_evaluation"] is not None:
+            base = "evaluation/" + obj["current_evaluation"]
+            verify_manifest(tree, base)
+            read_record(tree, base + "/definition.json")
+            read_record(tree, base + "/samples.jsonl")
+        for ident in obj["deliveries"]:
+            verify_model(tree, "experiments/" + ident)
+    elif path == "resources.json":
+        for item in obj["items"]:
+            if "path" in item and tree.exists(item["path"]):
+                with tree.directory(parts(item["path"])[:-1]) as parent:
+                    mode = os.stat(parts(item["path"])[-1], dir_fd=parent, follow_symlinks=False).st_mode
+                require(stat.S_ISREG(mode) or stat.S_ISDIR(mode), "Resource path is not a regular file or directory")
+    elif path == "comparison/outputs.jsonl":
+        for ident in {ident for row in obj for ident in row["outputs"]}:
+            read_record(tree, f"experiments/{ident}/config.json")
+    elif path.startswith("experiments/"):
+        base, leaf = path.rsplit("/", 1)
+        if leaf == "config.json":
+            verify_inputs(tree, base, obj)
+            return
+        config = read_record(tree, base + "/config.json")
+        if leaf == "status.json":
+            if "config_sha256" in obj:
+                verify_hash(tree, base + "/config.json", obj["config_sha256"])
+            if "model_path" in obj:
+                verify_path_hash(tree, obj["model_path"], obj["model_sha256"])
+            if "/evals/" in base:
+                definition = read_record(tree, f"evaluation/{config['evaluation_version']}/definition.json")
+                metrics = {m["id"] for m in definition["metrics"]}
+                require(set(obj.get("metrics", {})) <= metrics, "Unknown metric IDs")
+                if obj["state"] == "succeeded":
+                    require("metrics" in obj and set(obj["metrics"]) == metrics, "Successful evaluation requires all declared metrics")
+                    outputs = read_record(tree, base + "/outputs.jsonl")
+                    require(outputs, "Successful evaluation requires outputs")
+                    check_record(tree, base + "/outputs.jsonl", outputs)
+                    samples = read_record(tree, f"evaluation/{config['evaluation_version']}/samples.jsonl")
+                    require({r["sample_id"] for r in outputs} == {r["sample_id"] for r in samples}, "Successful evaluation requires outputs for all samples")
+            elif obj["state"] == "succeeded":
+                require("model_path" in obj, "Successful experiment requires a model")
+            if obj["state"] == "succeeded":
+                verify_inputs(tree, base, config)
+        elif leaf == "outputs.jsonl":
+            evaluation = f"evaluation/{config['evaluation_version']}"
+            samples = {row["sample_id"]: row for row in read_record(tree, evaluation + "/samples.jsonl")}
+            metrics = {m["id"] for m in read_record(tree, evaluation + "/definition.json")["metrics"]}
+            for row in obj:
+                sample = samples.get(row["sample_id"])
+                require(sample is not None, "Unknown output sample_id")
+                require(same_json(row["input"], sample["input"]), "Output input differs from sample")
+                require("reference" not in row or "reference" in sample and same_json(row["reference"], sample["reference"]), "Output reference differs from sample")
+                require(set(row.get("scores", {})) <= metrics, "Unknown score IDs")
+
+
+def mutable(path, old, tree=None):
+    return (path in ("project.json", "proposal.json", "resources.json", "comparison/outputs.jsonl")
+            or path.startswith("evaluation/draft/") or path.endswith("/analysis.json")
+            or path.endswith("/status.json") and old["state"] not in FINAL)
 
 
 def write(tree, path, source, create=False, expected=None):
     parts(path)
-    require(bool(RECORD.fullmatch(path)), "Path is not a writable research record")
+    require(bool(RECORD.fullmatch(path)), "Path is not a writable format-2 research record")
+    require(not create or expected is None, "Choose create or expected SHA-256, not both")
     require(".." not in os.fspath(source).split("/"), "Parent traversal is not allowed")
     source_path = Path(os.path.abspath(source))
     source_tree = Tree(source_path.parent)
@@ -332,33 +534,34 @@ def write(tree, path, source, create=False, expected=None):
         source_tree.close()
     obj = shape(path, data)
     with tree.locked():
+        if tree.exists("project.json"):
+            read_record(tree, "project.json")
         if create:
             require(not tree.exists(path), "Record already exists")
         else:
-            require(isinstance(expected, str) and SHA.fullmatch(expected), "Expected SHA-256 required")
+            hash_value(expected)
             previous = tree.read(path)
             old = shape(path, previous)
-            require(mutable(path, old, tree), "Record is immutable")
+            require(mutable(path, old), "Record is immutable")
             require(digest(previous) == expected, "Conflict: expected hash differs")
-            history = None
-            if path == "goal.json":
-                require(obj["revision"] == old["revision"] + 1, "Goal revision must increase by one")
-                history = f"history/goals/{old['revision']}.json"
-            elif path == "review.md":
-                history = f"history/reviews/{uuid.uuid4().hex}.md"
-            elif path.endswith("/analysis.md"):
-                history = f"history/analyses/{path.split('/')[1]}/{uuid.uuid4().hex}.md"
-            if history:
-                if tree.exists(history):
-                    require(tree.read(history) == previous, "History conflict")
-                else:
-                    tree.publish(history, previous)
+            if path.endswith("/status.json"):
+                allowed = {"pending": ("pending", "running", "completed", *FINAL),
+                           "running": ("running", "completed", *FINAL), "completed": ("completed", *FINAL)}
+                require(obj["state"] in allowed[old["state"]], "Execution state cannot move backwards")
+                for key in (*PROCESS, "metrics", "model_path", "model_sha256"):
+                    require(key not in old or key in obj and obj[key] == old[key], f"Preserve recorded fact: {key}")
+        if path.startswith("evaluation/") and not path.startswith("evaluation/draft/"):
+            require(not tree.exists(path.rsplit("/", 1)[0] + "/manifest.json"), "Frozen package is immutable")
+        if path.endswith("/outputs.jsonl") and path.startswith("experiments/"):
+            status_path = path.replace("outputs.jsonl", "status.json")
+            require(not tree.exists(status_path) or read_record(tree, status_path)["state"] not in FINAL, "Final measurements are immutable")
+        check_record(tree, path, obj)
         tree.publish(path, data, replace=not create)
     return {"path": path, "sha256": digest(data)}
 
 
 def freeze(tree, root, source, path):
-    require(bool(re.fullmatch(rf"evaluation/versions/{ID}|experiments/{ID}/snapshot", path)), "Invalid freeze destination")
+    require(bool(re.fullmatch(rf"evaluation/{ID}|experiments/{ID}/snapshot", path)) and path != "evaluation/draft", "Invalid freeze destination")
     require(".." not in os.fspath(source).split("/"), "Parent traversal is not allowed")
     source_path, destination = Path(os.path.abspath(source)), Path(os.path.abspath(root)) / path
     require(source_path != destination and source_path not in destination.parents and destination not in source_path.parents, "Source and destination overlap")
@@ -368,164 +571,87 @@ def freeze(tree, root, source, path):
         require(names and "manifest.json" not in names, "Source must be nonempty without manifest.json")
         payload = {name: source_tree.read(name, with_mode=True) for name in names}
         if path.startswith("evaluation/"):
-            require("definition.json" in payload, "Evaluation definition missing")
+            require("definition.json" in payload and "samples.jsonl" in payload, "Evaluation requires definition.json and samples.jsonl")
             shape(path + "/definition.json", payload["definition.json"][0])
+            shape(path + "/samples.jsonl", payload["samples.jsonl"][0])
         with tree.locked():
+            if tree.exists("project.json"):
+                read_record(tree, "project.json")
             segments = parts(path)
             with tree.directory(segments[:-1], create=True) as parent:
                 os.mkdir(segments[-1], dir_fd=parent)
             for name, (data, mode) in payload.items():
                 tree.publish(path + "/" + name, data, mode=mode)
-            manifest = {"files": [{"path": name, "sha256": digest(data)} for name, (data, _) in payload.items()]}
-            tree.publish(path + "/manifest.json", encoded(manifest))
-        return {"path": path, "files": len(payload), "manifest_sha256": digest(encoded(manifest))}
+            manifest_data = encoded({"files": [{"path": name, "sha256": digest(data)} for name, (data, _) in payload.items()]})
+            tree.publish(path + "/manifest.json", manifest_data)
+        return {"path": path, "files": len(payload), "manifest_sha256": digest(manifest_data)}
     finally:
         source_tree.close()
 
 
+def manifest(tree, path):
+    """Generate one model directory manifest in place, without copying model data."""
+    parts(path)
+    require(re.fullmatch(rf"experiments/{ID}/model(?:/.+)?", path), "Manifest destination must be an experiment model directory")
+    with tree.locked():
+        read_record(tree, "project.json")
+        require(not tree.exists(path + "/manifest.json"), "Manifest already exists")
+        status_path = "/".join(parts(path)[:2]) + "/status.json"
+        require(not tree.exists(status_path) or read_record(tree, status_path)["state"] not in FINAL, "Final models are immutable")
+        for length in range(3, len(parts(path))):
+            require(not tree.exists("/".join(parts(path)[:length]) + "/manifest.json"), "Frozen model package is immutable")
+        names = tree.files(path)
+        require(names, "Empty model directory")
+        data = encoded({"files": [{"path": name[len(path) + 1:], "sha256": digest(tree.read(name))} for name in names]})
+        tree.publish(path + "/manifest.json", data)
+    return {"path": path, "files": len(names), "manifest_sha256": digest(data)}
+
+
 def validate(tree):
-    report = {"errors": [], "warnings": [], "unfinished": [], "unhandled_feedback": []}
+    report = {"errors": [], "warnings": [], "unfinished": []}
     docs = {}
-    raw = {}
-    def error(path, message):
-        report["errors"].append(f"{path}: {message}")
-    def check_hash(path, expected, label):
-        require(isinstance(expected, str) and SHA.fullmatch(expected), f"Invalid hash for {label}")
-        require(digest(tree.read(path)) == expected, f"Hash mismatch: {label}")
-    names = [p for p in ("project.json", "goal.json", "resources.json", "candidates.json", "workspace.json", "review.md") if tree.exists(p)]
-    for prefix in ("evaluation", "experiments", "assessments", "releases", "acceptance", "feedback"):
-        if tree.exists(prefix):
-            try:
+    def error(path, exc):
+        report["errors"].append(f"{path}: {exc}")
+    names = [p for p in ("project.json", "proposal.json", "resources.json") if tree.exists(p)]
+    for prefix in ("evaluation", "experiments", "comparison"):
+        try:
+            if tree.exists(prefix):
                 names.extend(tree.files(prefix))
-            except (OSError, ValueError) as exc:
-                error(prefix, str(exc))
+        except (OSError, ValueError) as exc:
+            error(prefix, exc)
     for path in names:
         if RECORD.fullmatch(path):
             try:
-                raw[path] = tree.read(path)
-                docs[path] = shape(path, raw[path])
+                docs[path] = read_record(tree, path)
             except (OSError, ValueError, TypeError) as exc:
-                error(path, str(exc))
-    for required in ("project.json", "goal.json", "resources.json", "candidates.json"):
+                error(path, exc)
+    for required in ("project.json", "proposal.json", "resources.json"):
         if required not in docs:
             error(required, "Missing or invalid core record")
-    project = docs.get("project.json", {})
-    current = project.get("current_evaluation")
-    if current and f"evaluation/versions/{current}/definition.json" not in docs:
-        error("project.json", "Current evaluation is missing or invalid")
-    if tree.exists(".workspace/manifest.json"):
+    try:
+        if not check_installed_metadata(tree):
+            report["warnings"].append("Missing workspace manifest; format compatibility is not verified")
+    except (OSError, ValueError, TypeError) as exc:
+        error(".workspace/manifest.json", exc)
+    packages = {p.rsplit("/", 1)[0] for p in names if re.fullmatch(rf"evaluation/{ID}/(?:definition.json|samples.jsonl|manifest.json)|experiments/{ID}/snapshot/manifest.json", p)}
+    packages |= {p.rsplit("/", 1)[0] + "/snapshot" for p in docs if re.fullmatch(rf"experiments/{ID}/config.json", p)}
+    for base in sorted(packages - {"evaluation/draft"}):
         try:
-            manifest = strict(tree.read(".workspace/manifest.json"))
-            require(type(manifest.get("schema_min")) is int and type(manifest.get("schema_max")) is int and manifest["schema_min"] <= project.get("schema_version", 0) <= manifest["schema_max"], "Incompatible kit schema range")
-        except (OSError, ValueError, TypeError, AttributeError) as exc:
-            error(".workspace/manifest.json", str(exc))
-    else:
-        report["warnings"].append("Missing workspace manifest; format compatibility is not verified")
-    for path in names:
-        if path.endswith("/manifest.json") and (path.startswith("evaluation/versions/") or "/snapshot/" in path):
-            try:
-                manifest = strict(tree.read(path))
-                base = path.rsplit("/", 1)[0]
-                require(isinstance(manifest, dict) and isinstance(manifest.get("files"), list), "Invalid manifest")
-                listed = []
-                for item in manifest["files"]:
-                    require(isinstance(item, dict), "Invalid manifest entry")
-                    parts(item.get("path"))
-                    require(item["path"] != "manifest.json", "Manifest cannot include itself")
-                    target = base + "/" + item["path"]
-                    check_hash(target, item.get("sha256"), target)
-                    listed.append(target)
-                require(len(listed) == len(set(listed)), "Duplicate manifest paths")
-                require(set(tree.files(base)) == set(listed) | {path}, "Manifest file set differs")
-            except (OSError, ValueError, TypeError, KeyError) as exc:
-                error(path, str(exc))
+            verify_manifest(tree, base)
+            if base.startswith("evaluation/"):
+                read_record(tree, base + "/definition.json")
+                read_record(tree, base + "/samples.jsonl")
+        except (OSError, ValueError, TypeError) as exc:
+            error(base, exc)
     for path, obj in docs.items():
-        if path.startswith(("experiments/", "assessments/", "acceptance/")) and not path.endswith("/config.json"):
-            if path.rsplit("/", 1)[0] + "/config.json" not in docs:
-                error(path, "Orphan record: missing config")
-        if not isinstance(obj, dict):
-            continue
         try:
-            if path.endswith("/definition.json") and path.startswith("evaluation/versions/") and not tree.exists(path.replace("definition.json", "manifest.json")):
-                report["warnings"].append(f"{path}: legacy version has no content manifest")
-            if path.endswith("/artifacts.json"):
-                for artifact in obj["items"]:
-                    check_hash(artifact["path"], artifact["sha256"], artifact["id"])
-            if path.startswith("experiments/") and path.endswith("/config.json"):
-                base = path.rsplit("/", 1)[0]
-                status = docs.get(base + "/status.json", {})
-                if status.get("state") not in FINAL:
-                    report["unfinished"].append(base)
-                if status.get("state") == "succeeded":
-                    require(docs.get(base + "/artifacts.json", {}).get("items"), "Successful training requires artifacts")
-                revision = obj["goal_revision"]
-                if revision != docs.get("goal.json", {}).get("revision"):
-                    old = shape("goal.json", tree.read(f"history/goals/{revision}.json"))
-                    require(old["revision"] == revision, "Goal history revision differs")
-                require(f"evaluation/versions/{obj['evaluation_version']}/definition.json" in docs, "Missing evaluation version")
-                parent = obj.get("parent_experiment_id")
-                if parent:
-                    require(parent != obj["id"] and f"experiments/{parent}/config.json" in docs, "Invalid parent experiment")
-                if "fixed_inputs" not in obj or "execution" not in obj:
-                    report["warnings"].append(f"{path}: legacy record lacks fixed inputs/execution evidence")
-                fixed = obj.get("fixed_inputs", {})
-                for item in fixed.get("code", []) + fixed.get("data", []) + ([fixed["starting_artifact"]] if fixed.get("starting_artifact") else []):
-                    if "path" in item:
-                        check_hash(item["path"], item["sha256"], item["path"])
-                    else:
-                        report["warnings"].append(f"{path}: external input not verified: {item['location']}")
-            if path.startswith(("assessments/", "releases/")) and (path.endswith("/config.json") or path.startswith("releases/")):
-                experiment = obj["experiment_id"]
-                require(f"experiments/{experiment}/config.json" in docs, "Missing experiment")
-                artifacts = docs.get(f"experiments/{experiment}/artifacts.json", {}).get("items", [])
-                artifact = next((a for a in artifacts if a["id"] == obj["artifact_id"]), None)
-                require(artifact is not None, "Missing artifact")
-                if "artifact_sha256" in obj:
-                    require(obj["artifact_sha256"] == artifact["sha256"], "Artifact reference hash differs")
-                else:
-                    report["warnings"].append(f"{path}: artifact hash not pinned in record")
-                if path.startswith("assessments/"):
-                    definition = f"evaluation/versions/{obj['evaluation_version']}/definition.json"
-                    require(definition in docs, "Missing evaluation")
-                    if "evaluation_sha256" in obj:
-                        check_hash(definition, obj["evaluation_sha256"], definition)
-                    else:
-                        report["warnings"].append(f"{path}: evaluation hash not pinned")
-                    if "execution" not in obj:
-                        report["warnings"].append(f"{path}: execution evidence missing")
-                    base = path.rsplit("/", 1)[0]
-                    result = docs.get(base + "/result.json")
-                    if result is None:
-                        report["unfinished"].append(base)
-                    else:
-                        metric_ids = {m["id"] for m in docs[definition]["metrics"]}
-                        require(set(result["metrics"]) <= metric_ids, "Unknown metric IDs")
-                        if result["state"] == "succeeded":
-                            require(docs.get(base + "/outputs.jsonl"), "Successful assessment requires outputs")
-                            require(set(result["metrics"]) == metric_ids, "Successful assessment requires all declared metrics")
-                else:
-                    for assessment in obj["assessment_ids"]:
-                        record = docs.get(f"assessments/{assessment}/config.json", {})
-                        require(record.get("experiment_id") == experiment and record.get("artifact_id") == obj["artifact_id"], "Release assessment does not match artifact")
-            if path.startswith("acceptance/") and path.endswith("/config.json"):
-                for release in obj["release_ids"]:
-                    require(f"releases/{release}.json" in docs, "Missing release")
-                require(path.replace("config.json", "outputs.jsonl") in docs, "Acceptance outputs missing")
-            if path.startswith("feedback/"):
-                if obj.get("target"):
-                    if not tree.exists(obj["target"]) or digest(tree.read(obj["target"])) != obj.get("target_sha256"):
-                        report["warnings"].append(f"{path}: stale feedback target")
-                if path.startswith("feedback/responses/"):
-                    require(f"feedback/requests/{obj['request_id']}.json" in docs, "Missing feedback request")
-                if path.startswith("feedback/handled/"):
-                    require(any(f"feedback/{kind}/{obj['feedback_id']}.json" in docs for kind in ("responses", "incoming")), "Missing original feedback")
+            check_record(tree, path, obj)
         except (OSError, ValueError, TypeError, KeyError) as exc:
-            error(path, str(exc))
-    for path, obj in docs.items():
-        if path.startswith(("feedback/responses/", "feedback/incoming/")):
-            handled = [h for p, h in docs.items() if p.startswith("feedback/handled/") and h.get("feedback_id") == obj["id"]]
-            if not handled or len(handled) > 1 or handled[0]["disposition"] in ("deferred", "question"):
-                report["unhandled_feedback"].append(obj["id"])
+            error(path, exc)
+        if path.startswith("experiments/") and path.endswith("/config.json"):
+            base = path.rsplit("/", 1)[0]
+            if docs.get(base + "/status.json", {}).get("state") not in FINAL:
+                report["unfinished"].append(base)
     report["valid"] = not report["errors"]
     return report
 
@@ -533,7 +659,7 @@ def validate(tree):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("hash", "validate", "write", "freeze"):
+    for name in ("hash", "validate", "write", "freeze", "manifest"):
         command = commands.add_parser(name)
         command.add_argument("--project", required=True)
         if name != "validate":
@@ -555,6 +681,8 @@ def main():
             result = {"path": args.path, "sha256": digest(tree.read(args.path))}
         elif args.command == "write":
             result = write(tree, args.path, args.input, args.create, args.expected_sha256)
+        elif args.command == "manifest":
+            result = manifest(tree, args.path)
         else:
             result = freeze(tree, args.project, args.source, args.path)
         print(json.dumps(result, ensure_ascii=False))

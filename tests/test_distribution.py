@@ -40,7 +40,8 @@ class DistributionTests(unittest.TestCase):
         (self.source / "scripts").mkdir()
         shutil.copyfile(ROOT / "scripts/install-workspace.py", self.source / "scripts/install-workspace.py")
         (self.source / "workspace/dist").mkdir(parents=True)
-        shutil.copyfile(ROOT / "workspace/workspace.py", self.source / "workspace/workspace.py")
+        for name in ("workspace.py", "monitor.py"):
+            shutil.copyfile(ROOT / "workspace" / name, self.source / "workspace" / name)
         (self.source / "workspace/dist/index.html").write_text("<!doctype html><title>isolated kit fixture</title>", encoding="utf-8")
         (self.source / "workspace/dist/assets").mkdir()
         (self.source / "workspace/dist/assets/app.js").write_text("console.log('fixture');", encoding="utf-8")
@@ -66,29 +67,31 @@ class DistributionTests(unittest.TestCase):
 
     def test_explicit_isolated_package_and_hashes(self):
         manifest, _, payload = installer.verify_kit(self.kit)
-        self.assertEqual((manifest["version"], manifest["schema_min"], manifest["schema_max"]), ("0.3.0", 1, 1))
+        self.assertEqual((manifest["version"], manifest["schema_min"], manifest["schema_max"]), ("0.4.0", 2, 2))
         self.assertEqual(builder.TEMPLATES, installer.TEMPLATES)
-        self.assertIn("research-contract.md", installer.TEMPLATES)
+        self.assertEqual(set(installer.TEMPLATES), {"AGENTS.md", "project.json", "proposal.json", "resources.json"})
         self.assertEqual(set(builder.SKILLS), {"research-workspace", "tunetune-init", "build-evaluation", "train", "review"})
         self.assertEqual(set(payload), {f"template/{name}" for name in installer.TEMPLATES}
-                         | {"install-workspace.py", "workspace/workspace.py", "workspace/assets/index.html", "workspace/assets/assets/app.js"}
+                         | {"install-workspace.py", "workspace/workspace.py", "workspace/monitor.py",
+                            "workspace/assets/index.html", "workspace/assets/assets/app.js"}
                          | set(builder.collect_skills(self.source)))
         contract = (self.source / "skills/research-workspace/references/records.md").read_bytes()
-        self.assertEqual(payload["template/research-contract.md"], contract)
-        self.assertIn(b"research-contract.md", payload["template/AGENTS.md"])
+        self.assertEqual(payload["skills/research-workspace/references/records.md"], contract)
+        self.assertIn(b"references/records.md", payload["template/AGENTS.md"])
+        self.assertFalse(any("research-contract.md" in name for name in payload))
         for entry in manifest["files"]:
             self.assertEqual(entry["sha256"], hashlib.sha256((self.kit / entry["path"]).read_bytes()).hexdigest())
         with tarfile.open(self.archive) as archive:
             names = archive.getnames()
-            self.assertIn("workspace-kit-0.3.0/install-workspace.py", names)
-            self.assertIn("workspace-kit-0.3.0/template/research-contract.md", names)
+            self.assertIn("workspace-kit-0.4.0/install-workspace.py", names)
+            self.assertIn("workspace-kit-0.4.0/workspace/monitor.py", names)
             self.assertFalse(any(any(part in name.split("/") for part in ("design", "notes", "reference", "evals", "src", "node_modules")) for name in names))
         for relative, source in builder.collect_skills(self.source).items():
             self.assertEqual(payload[relative], source.read_bytes())
             self.assertTrue((self.kit / relative).is_file())
 
     def test_missing_base_skill_dependency_is_refused(self):
-        for relative in ("references/tools.md", "scripts/records.py"):
+        for relative in ("references/tools.md", "scripts/records.py", "scripts/run.py"):
             path = self.source / "skills/research-workspace" / relative
             data = path.read_bytes()
             path.unlink()
@@ -97,18 +100,26 @@ class DistributionTests(unittest.TestCase):
             self.assertFalse((self.base / "missing-dependency").exists())
             path.write_bytes(data)
 
-    def test_contract_comes_only_from_base_skill(self):
-        # A stale duplicate in the template tree must never become the source of truth.
-        (self.source / "templates/workspace/research-contract.md").write_text("stale duplicate")
+    def test_contract_lives_only_in_base_skill(self):
+        # Stale templates are excluded, not copied into a new format-2 project.
+        for name in ("research-contract.md", "goal.json", "candidates.json", "workspace.json"):
+            (self.source / "templates/workspace" / name).write_text("stale template")
         kit, archive_path = builder.build(self.source, self.base / "contract-dist")
         canonical = (self.source / "skills/research-workspace/references/records.md").read_bytes()
-        self.assertEqual((kit / "template/research-contract.md").read_bytes(), canonical)
+        self.assertEqual({path.name for path in (kit / "template").iterdir()}, set(installer.TEMPLATES))
         with tarfile.open(archive_path) as archive:
-            self.assertEqual(archive.extractfile("workspace-kit-0.3.0/skills/research-workspace/references/records.md").read(), canonical)
+            self.assertEqual(archive.extractfile("workspace-kit-0.4.0/skills/research-workspace/references/records.md").read(), canonical)
+            self.assertFalse(any("research-contract.md" in name for name in archive.getnames()))
         (self.source / "skills/research-workspace/references/records.md").unlink()
         with self.assertRaisesRegex(ValueError, "records.md"):
             builder.build(self.source, self.base / "missing-contract-dist")
         self.assertFalse((self.base / "missing-contract-dist").exists())
+
+    def test_missing_monitor_is_refused_before_build_publication(self):
+        (self.source / "workspace/monitor.py").unlink()
+        with self.assertRaisesRegex(ValueError, "monitor.py"):
+            builder.build(self.source, self.base / "missing-monitor")
+        self.assertFalse((self.base / "missing-monitor").exists())
 
     def test_all_skill_resources_use_recursive_allowlist(self):
         expected = set(builder.collect_skills(self.source))
@@ -149,13 +160,17 @@ class DistributionTests(unittest.TestCase):
         for relative in actual:
             self.assertEqual((kit / relative).read_bytes(), (self.source / relative).read_bytes())
 
-    def test_bundle_requires_shared_record_tools(self):
-        relative = "skills/research-workspace/scripts/records.py"
-        (self.kit / relative).unlink()
-        self.rewrite_manifest(lambda manifest: manifest.update(files=[item for item in manifest["files"] if item["path"] != relative]))
-        with self.assertRaisesRegex(ValueError, "missing required"):
-            self.install()
-        self.assertFalse(self.project.exists())
+    def test_bundle_requires_shared_tools_and_monitor(self):
+        original = (self.kit / "manifest.json").read_bytes()
+        for relative in ("skills/research-workspace/scripts/records.py",
+                         "skills/research-workspace/scripts/run.py", "workspace/monitor.py"):
+            with self.subTest(path=relative):
+                (self.kit / "manifest.json").write_bytes(original)
+                self.rewrite_manifest(lambda manifest: manifest.update(
+                    files=[item for item in manifest["files"] if item["path"] != relative]))
+                with self.assertRaisesRegex(ValueError, "missing required"):
+                    self.install()
+                self.assertFalse(self.project.exists())
 
     def test_project_skills_are_installed_together_and_conflicts_preserved(self):
         self.install(host="claude")
@@ -183,41 +198,51 @@ class DistributionTests(unittest.TestCase):
     def test_minimal_install(self):
         self.assertGreater(self.install(name="实际研究"), 0)
         self.assertEqual(json.loads((self.project / "project.json").read_text())["name"], "实际研究")
-        self.assertEqual({path.name for path in self.project.iterdir()}, set(installer.TEMPLATES) | set(installer.BUSINESS_DIRS) | {".agents"})
+        self.assertEqual({path.name for path in self.project.iterdir()}, set(installer.TEMPLATES) | {".workspace", ".agents"})
         self.assertFalse((self.project / ".workspace/runtime").exists())
         self.assertFalse((self.project / "skills").exists())
-        self.assertEqual((self.project / ".workspace/app/workspace.py").read_bytes(), (self.kit / "workspace/workspace.py").read_bytes())
+        for name in ("workspace.py", "monitor.py"):
+            self.assertEqual((self.project / ".workspace/app" / name).read_bytes(), (self.kit / "workspace" / name).read_bytes())
+        required_parents = {parent for path in self.project.rglob("*") if path.is_file()
+                            for parent in path.parents if parent.is_relative_to(self.project) and parent != self.project}
+        self.assertEqual({path for path in self.project.rglob("*") if path.is_dir()}, required_parents)
 
     def test_template_defaults(self):
         self.install()
         expected = {
-            "project.json": {"schema_version": 1, "name": "未命名研究", "language": "zh-CN", "current_evaluation": None},
-            "goal.json": {"revision": 1, "summary": "", "sections": [], "examples": [], "proposal": ""},
-            "resources.json": {"items": []}, "candidates.json": {"items": []},
-            "workspace.json": {"title": "研究空间", "metric_columns": [], "presentation": {"id": "initial-goal", "panel": "goal"}},
+            "project.json": {"schema_version": 2, "name": "未命名研究", "language": "zh-CN",
+                             "current_evaluation": None, "deliveries": []},
+            "proposal.json": {"summary": "", "sections": [], "examples": []},
+            "resources.json": {"items": []},
         }
         for name, value in expected.items():
             self.assertEqual(json.loads((self.project / name).read_text()), value)
 
-    def test_repeated_install_preserves_edits_and_feedback(self):
+    def test_repeated_install_preserves_current_research(self):
         self.install(name="原名称")
-        goal = self.project / "goal.json"
-        value = json.loads(goal.read_text())
+        proposal = self.project / "proposal.json"
+        value = json.loads(proposal.read_text())
         value["summary"] = "用户已经编辑"
-        goal.write_text(json.dumps(value, ensure_ascii=False))
+        value["sections"] = [{"title": "Constraints", "body": "Use local data only."}]
+        value["examples"] = [{"id": "sample1", "input": {"text": "hello"}, "expected_output": "greeting"}]
+        value["feasibility"] = {"verdict": "conditional", "reason": "Need independent examples."}
+        proposal.write_text(json.dumps(value, ensure_ascii=False))
         (self.project / "AGENTS.md").write_text("Existing project instructions")
-        (self.project / "research-contract.md").write_text("Existing locally adapted contract; not JSON")
-        (self.project / "feedback/incoming").mkdir(parents=True)
-        (self.project / "feedback/incoming/f1.json").write_text('{"id":"f1","text":"原话"}')
+        (self.project / "experiments/e1").mkdir(parents=True)
+        (self.project / "experiments/e1/analysis.json").write_text('{"outcome":"baseline","summary":"Measured reference"}')
+        (self.project / "project.json").write_text(json.dumps({"schema_version": 2, "name": "原名称", "language": "zh-CN",
+                                                              "current_evaluation": "v1", "deliveries": ["e1"]}))
         before = self.snapshot(self.project)
+        directories = {path for path in self.project.rglob("*") if path.is_dir()}
         self.assertEqual(self.install(name="不得更名"), 0)
         self.assertEqual(before, self.snapshot(self.project))
+        self.assertEqual(directories, {path for path in self.project.rglob("*") if path.is_dir()})
 
     def test_existing_engineering_project_is_preserved(self):
         self.project.mkdir()
         (self.project / "train.py").write_text("# existing business code")
         (self.project / "AGENTS.md").write_text("Do not overwrite these instructions")
-        (self.project / "research-contract.md").write_text("Keep this plain-text contract, not JSON")
+        (self.project / "NOTES.txt").write_text("Keep existing research notes")
         before = self.snapshot(self.project)
         with patch.object(installer, "validate_business", wraps=installer.validate_business) as validate:
             self.install()
@@ -226,69 +251,58 @@ class DistributionTests(unittest.TestCase):
         for name, data in before.items():
             self.assertEqual((self.project / name).read_bytes(), data)
 
-    def test_legacy_layout_is_refused_before_writes(self):
-        for name, kind in ((".workbench", "directory"), ("workbench.json", "file"),
-                           (".workbench", "symlink")):
-            with self.subTest(name=name, kind=kind):
-                project = self.base / f"legacy-{kind}"
-                project.mkdir()
-                legacy = project / name
-                if kind == "directory":
-                    legacy.mkdir()
-                    (legacy / "manifest.json").write_text('{"version":"0.1.0"}')
-                elif kind == "file":
-                    legacy.write_text('{"title":"已有展示配置","metric_columns":[]}')
-                else:
-                    legacy.symlink_to(self.base / "missing")
-                before = self.snapshot(project)
-                with self.assertRaisesRegex(ValueError, "automatic migration is not supported"):
-                    installer.install(self.kit, project)
-                self.assertEqual(before, self.snapshot(project))
-                self.assertEqual({path.name for path in project.iterdir()}, {name})
-
-    def test_workspace_settings_are_preserved(self):
+    def test_unrelated_notes_are_not_treated_as_protocol_files(self):
+        self.project.mkdir()
+        note = self.project / "review.md"
+        note.write_text("Existing personal engineering notes")
         self.install()
-        settings = self.project / "workspace.json"
-        data = '{"title":"我的研究空间","metric_columns":["accuracy"]}'
-        settings.write_text(data)
-        self.assertEqual(self.install(), 0)
-        self.assertEqual(settings.read_text(), data)
+        self.assertEqual(note.read_text(), "Existing personal engineering notes")
+        self.assertTrue((self.project / "proposal.json").is_file())
+
+    def test_schema_one_project_is_refused_without_writes(self):
+        self.project.mkdir()
+        (self.project / "project.json").write_text(json.dumps({
+            "schema_version": 1, "name": "Previous study", "language": "en", "current_evaluation": None}))
+        before = self.snapshot(self.project)
+        with self.assertRaisesRegex(ValueError, "schema 2 required; automatic migration is not supported"):
+            self.install()
+        self.assertEqual(before, self.snapshot(self.project))
+        self.assertEqual({path.name for path in self.project.iterdir()}, {"project.json"})
 
     def test_only_missing_files_are_repaired(self):
         self.install()
-        (self.project / "resources.json").unlink()
-        (self.project / ".workspace/app/assets/index.html").unlink()
-        (self.project / "AGENTS.md").unlink()
-        (self.project / "research-contract.md").unlink()
+        missing = ("resources.json", ".workspace/app/assets/index.html", "AGENTS.md", ".workspace/app/monitor.py")
+        originals = {name: (self.project / name).read_bytes() for name in missing}
+        for name in missing:
+            (self.project / name).unlink()
         before = self.snapshot(self.project)
-        self.assertEqual(self.install(), 4)
-        for name, data in before.items():
+        self.assertEqual(self.install(), len(missing))
+        for name, data in {**before, **originals}.items():
             self.assertEqual((self.project / name).read_bytes(), data)
-        for name in ("AGENTS.md", "research-contract.md"):
-            self.assertEqual((self.project / name).read_bytes(), (self.kit / "template" / name).read_bytes())
         self.assertEqual(self.install(), 0)
 
-    def test_contract_is_added_without_changing_existing_agents(self):
+    def test_installed_guide_has_no_project_root_copy(self):
         self.project.mkdir()
         instructions = b"Existing engineering instructions; preserve verbatim\n"
         (self.project / "AGENTS.md").write_bytes(instructions)
         self.install()
         self.assertEqual((self.project / "AGENTS.md").read_bytes(), instructions)
-        self.assertEqual((self.project / "research-contract.md").read_bytes(),
-                         (self.kit / "template/research-contract.md").read_bytes())
+        self.assertEqual((self.project / ".agents/skills/research-workspace/references/records.md").read_bytes(),
+                         (self.kit / "skills/research-workspace/references/records.md").read_bytes())
+        self.assertFalse((self.project / "research-contract.md").exists())
 
     def test_late_collision_never_overwrites_another_writer(self):
         real_link = installer.os.link
 
         def collide(source, destination):
-            if destination.name == "goal.json":
+            if destination.name == "proposal.json":
                 destination.write_text("concurrent writer data")
             real_link(source, destination)
 
         with patch.object(installer.os, "link", side_effect=collide):
             with self.assertRaises(FileExistsError):
                 self.install()
-        self.assertEqual(self.snapshot(self.project), {"goal.json": b"concurrent writer data"})
+        self.assertEqual(self.snapshot(self.project), {"proposal.json": b"concurrent writer data"})
 
     def test_hash_tampering_is_refused_before_writes(self):
         (self.kit / "workspace/assets/index.html").write_text("tampered")
@@ -326,18 +340,30 @@ class DistributionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing required"):
             self.install()
 
-    def test_contract_is_required_and_unlisted_templates_are_refused(self):
+    def test_shared_guide_is_required_and_unlisted_templates_are_refused(self):
         original = (self.kit / "manifest.json").read_bytes()
         self.rewrite_manifest(lambda manifest: manifest.update(
-            files=[entry for entry in manifest["files"] if entry["path"] != "template/research-contract.md"]))
+            files=[entry for entry in manifest["files"] if entry["path"] != "skills/research-workspace/references/records.md"]))
         with self.assertRaisesRegex(ValueError, "missing required"):
             self.install()
-        (self.kit / "manifest.json").write_bytes(original)
-        self.rewrite_manifest(lambda manifest: manifest["files"].append(
-            {"path": "template/notes.md", "sha256": "0" * 64}))
-        with self.assertRaisesRegex(ValueError, "Unexpected manifest file"):
-            self.install()
+        for name in ("notes.md", "research-contract.md", "goal.json", "candidates.json", "workspace.json"):
+            with self.subTest(name=name):
+                (self.kit / "manifest.json").write_bytes(original)
+                self.rewrite_manifest(lambda manifest: manifest["files"].append(
+                    {"path": f"template/{name}", "sha256": "0" * 64}))
+                with self.assertRaisesRegex(ValueError, "Unexpected manifest file"):
+                    self.install()
         self.assertFalse(self.project.exists())
+
+    def test_kit_version_and_schema_range_are_exact(self):
+        original = (self.kit / "manifest.json").read_bytes()
+        for version, low, high in (("0.3.0", 1, 1), ("0.4.0", 1, 2), ("0.4.0", 2, 3), ("0.4.0", True, 2)):
+            with self.subTest(version=version, low=low, high=high):
+                (self.kit / "manifest.json").write_bytes(original)
+                self.rewrite_manifest(lambda manifest: manifest.update(version=version, schema_min=low, schema_max=high))
+                with self.assertRaisesRegex(ValueError, "Unsupported kit version or schema range"):
+                    self.install()
+                self.assertFalse(self.project.exists())
 
     def test_symlink_payload_is_refused(self):
         path = self.kit / "workspace/assets/index.html"
@@ -358,27 +384,44 @@ class DistributionTests(unittest.TestCase):
             self.install()
         self.assertEqual(list(outside.iterdir()), [])
         (self.project / ".workspace").unlink()
-        (self.project / "goal.json").symlink_to(outside / "goal.json")
+        (self.project / "proposal.json").symlink_to(outside / "proposal.json")
         with self.assertRaisesRegex(ValueError, "Symlinks"):
             self.install()
-        (self.project / "goal.json").unlink()
-        (self.project / "research-contract.md").symlink_to(outside / "contract.md")
+        (self.project / "proposal.json").unlink()
+        (self.project / "resources.json").symlink_to(outside / "resources.json")
         with self.assertRaisesRegex(ValueError, "Symlinks"):
             self.install()
         self.assertEqual(list(outside.iterdir()), [])
 
-    def test_contract_directory_collision_is_preflighted(self):
-        (self.project / "research-contract.md").mkdir(parents=True)
+    def test_proposal_directory_collision_is_preflighted(self):
+        (self.project / "proposal.json").mkdir(parents=True)
         with self.assertRaisesRegex(ValueError, "Conflicting template path"):
             self.install()
-        self.assertEqual({path.name for path in self.project.iterdir()}, {"research-contract.md"})
+        self.assertEqual({path.name for path in self.project.iterdir()}, {"proposal.json"})
 
     def test_malformed_or_conflicting_business_files_are_refused(self):
         self.project.mkdir()
+        project = {"schema_version": 2, "name": "Research", "language": "en", "current_evaluation": None, "deliveries": []}
+        proposal = {"summary": "", "sections": [], "examples": []}
+        resource = {"id": "r1", "title": "Data", "type": "dataset", "status": "unknown"}
         cases = [("project.json", "[]"), ("project.json", "not json"),
-                 ("project.json", '{"schema_version":99}'), ("project.json", '{"schema_version":1,"schema_version":1}'),
-                 ("goal.json", '{"unrelated":true}'), ("resources.json", '{"items":"business data"}'),
-                 ("candidates.json", '{"items":[1]}'), ("workspace.json", '{"title":42}')]
+                 ("project.json", '{"schema_version":99}'), ("project.json", '{"schema_version":2,"schema_version":2}'),
+                 ("project.json", json.dumps({**project, "deliveries": ["../escape"]})),
+                 ("project.json", json.dumps({**project, "deliveries": ["e1", "e1"]})),
+                 ("project.json", json.dumps({**project, "current_evaluation": "../escape"})),
+                 ("project.json", json.dumps({**project, "current_evaluation": "draft"})),
+                 ("proposal.json", '{"unrelated":true}'),
+                 ("proposal.json", json.dumps({**proposal, "revision": 1})),
+                 ("proposal.json", json.dumps({**proposal, "confirmation": {}})),
+                 ("proposal.json", json.dumps({**proposal, "sections": [{"title": "missing body"}]})),
+                 ("proposal.json", json.dumps({**proposal, "examples": [{"id": "s1"}]})),
+                 ("resources.json", '{"items":"business data"}'), ("resources.json", '{"items":[1]}'),
+                 ("resources.json", json.dumps({"items": [{**resource, "path": "../private"}]})),
+                 ("resources.json", json.dumps({"items": [{**resource, "path": "data.txt", "location": "/external"}]})),
+                 ("resources.json", json.dumps({"items": [{**resource, "location": " "}]})),
+                 ("resources.json", json.dumps({"items": [{**resource, "location": chr(0)}]})),
+                 ("resources.json", json.dumps({"items": [{**resource, "monitor": {"kind": "shell", "command": "id"}}]})),
+                 ("resources.json", json.dumps({"items": [{**resource, "monitor": {"kind": "nvidia_gpu", "index": True}}]}))]
         for name, data in cases:
             with self.subTest(name=name, data=data):
                 path = self.project / name
@@ -389,12 +432,37 @@ class DistributionTests(unittest.TestCase):
                 self.assertEqual(before, self.snapshot(self.project))
                 path.unlink()
 
-    def test_business_directory_collision_is_preflighted(self):
+    def test_only_installation_parents_are_preflighted(self):
         self.project.mkdir()
         (self.project / "evaluation").write_text("unrelated business file")
-        with self.assertRaisesRegex(ValueError, "Conflicting business directory"):
+        (self.project / "data").symlink_to(self.base / "unavailable")
+        self.install()
+        self.assertEqual((self.project / "evaluation").read_text(), "unrelated business file")
+        self.assertTrue((self.project / "data").is_symlink())
+        self.assertEqual({path.name for path in self.project.iterdir()},
+                         set(installer.TEMPLATES) | {".agents", ".workspace", "evaluation", "data"})
+
+    def test_required_parent_collision_is_preflighted(self):
+        self.project.mkdir()
+        (self.project / ".agents").write_text("existing file")
+        with self.assertRaisesRegex(ValueError, "File occupies required directory"):
             self.install()
-        self.assertEqual({path.name for path in self.project.iterdir()}, {"evaluation"})
+        self.assertEqual(self.snapshot(self.project), {".agents": b"existing file"})
+
+    def test_resource_inventory_is_preserved_without_probing_locations(self):
+        self.project.mkdir()
+        inventory = {"items": [
+            {"id": "data", "title": "Dataset", "type": "private corpus", "status": "missing", "path": "data/train.jsonl",
+             "monitor": {"kind": "file"}},
+            {"id": "remote", "title": "External", "type": "storage", "status": "unknown", "location": "/not-accessed"},
+            {"id": "gpu", "title": "GPU", "type": "compute", "status": "unknown", "monitor": {"kind": "nvidia_gpu", "index": 0}},
+        ]}
+        data = json.dumps(inventory).encode()
+        (self.project / "resources.json").write_bytes(data)
+        self.install()
+        self.assertEqual((self.project / "resources.json").read_bytes(), data)
+        self.assertFalse((self.project / "data").exists())
+        self.assertFalse((self.project / ".workspace/runtime").exists())
 
     def test_app_version_change_and_modified_app_are_refused(self):
         self.install()
@@ -403,10 +471,10 @@ class DistributionTests(unittest.TestCase):
         obj = json.loads(original)
         obj["version"] = "99.0.0"
         path.write_text(json.dumps(obj))
-        (self.project / "goal.json").unlink()
+        (self.project / "proposal.json").unlink()
         with self.assertRaisesRegex(ValueError, "upgrades are not supported"):
             self.install()
-        self.assertFalse((self.project / "goal.json").exists())
+        self.assertFalse((self.project / "proposal.json").exists())
         path.write_bytes(original)
         (self.project / ".workspace/app/assets/index.html").write_text("local edit")
         before = self.snapshot(self.project)
@@ -475,13 +543,14 @@ class DistributionTests(unittest.TestCase):
             archive.extractall(extracted)
         shutil.rmtree(self.source)
         shutil.rmtree(self.output)
-        skills = extracted / "workspace-kit-0.3.0/skills"
+        skills = extracted / "workspace-kit-0.4.0/skills"
         self.assertEqual({path.name for path in skills.iterdir()}, set(builder.SKILLS))
-        script = skills / "research-workspace/scripts/records.py"
-        result = subprocess.run([sys.executable, "-E", "-s", "-B", str(script), "--help"],
-                                cwd=self.base, capture_output=True, text=True, timeout=10)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("usage:", result.stdout.lower())
+        for name in ("records.py", "run.py"):
+            script = skills / "research-workspace/scripts" / name
+            result = subprocess.run([sys.executable, "-E", "-s", "-B", str(script), "--help"],
+                                    cwd=self.base, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("usage:", result.stdout.lower())
         for name in ("tunetune-init", "build-evaluation", "train", "review"):
             with self.subTest(skill=name):
                 skill = skills / name / "SKILL.md"
@@ -497,18 +566,24 @@ class DistributionTests(unittest.TestCase):
         extracted = self.base / "extracted-kit"
         with tarfile.open(self.archive) as archive:
             archive.extractall(extracted)
-        kit = extracted / "workspace-kit-0.3.0"
+        kit = extracted / "workspace-kit-0.4.0"
         shutil.rmtree(self.source)
         shutil.rmtree(self.output)
         result = subprocess.run([sys.executable, "-E", "-s", "-B", str(kit / "install-workspace.py"), "--kit", str(kit),
                                  "--project", str(self.project), "--name", "隔离项目"],
                                 cwd=self.base, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.project / "research-contract.md").read_bytes(), (kit / "template/research-contract.md").read_bytes())
+        self.assertFalse((self.project / "research-contract.md").exists())
+        self.assertEqual((self.project / ".workspace/app/monitor.py").read_bytes(), (kit / "workspace/monitor.py").read_bytes())
         shutil.rmtree(extracted)
         moved = self.base / "moved-research"
         self.project.rename(moved)
-        process = subprocess.Popen([sys.executable, str(moved / ".workspace/app/workspace.py"), "--project", str(moved), "--port", "0"],
+        records = moved / ".agents/skills/research-workspace/scripts/records.py"
+        result = subprocess.run([sys.executable, "-E", "-s", "-B", str(records), "validate", "--project", str(moved)],
+                                cwd=self.base, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue(json.loads(result.stdout)["valid"])
+        process = subprocess.Popen([sys.executable, "-E", "-s", "-B", str(moved / ".workspace/app/workspace.py"), "--project", str(moved), "--port", "0"],
                                    cwd=self.base, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             with selectors.DefaultSelector() as selector:
@@ -518,6 +593,12 @@ class DistributionTests(unittest.TestCase):
             self.assertTrue(url.startswith("http://127.0.0.1:"), f"Unexpected startup output: {url}")
             with urlopen(url, timeout=5) as response:
                 self.assertIn("isolated kit fixture", response.read().decode())
+            with urlopen(url + "/api/state", timeout=5) as response:
+                state = json.load(response)
+            self.assertIsNone(state["error"])
+            self.assertEqual(state["files"]["project.json"]["content"]["schema_version"], 2)
+            self.assertIn("proposal.json", state["files"])
+            self.assertEqual(state["observations"]["items"], [])
         finally:
             process.terminate()
             process.communicate(timeout=10)

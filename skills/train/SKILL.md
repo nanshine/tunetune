@@ -1,43 +1,23 @@
 ---
 name: train
-description: 在明确授权内执行 TuneTune 训练实验、独立重测已有产物，或按用户指定发布及准备验收对照。用于“试这个方案”“跑一轮”“用新版评测重测”“在预算内继续实验”；不默认持续探索、重新训练或自动发布。
+description: Establish a TuneTune baseline, run bounded model experiments, retest existing models or deliver verified usable results. Use for an authorized research loop or a specific hypothesis, not just weight training.
 ---
 
-# 执行研究并保留证据
+# Improve through bounded experiments
 
-## 输入与依赖
+Load [research-workspace](../research-workspace/SKILL.md), the proposal, relevant resources and a calibrated evaluation. Follow the shared [record guide](../research-workspace/references/records.md) and [tools](../research-workspace/references/tools.md) for mechanics. Establish an operational finite budget, permitted changes and stopping conditions. Carry existing authorization across rounds without repeated approvals; never infer new spending or private-data access. Count preparation, failures and retests, preserve the original deadline and reserve final-validation time.
 
-读取 [research-workspace](../research-workspace/SKILL.md)，完成接手检查；输入为用户方向/候选、执行范围与预算、资源和具体评测版本。字段见 [固定输入与执行契约](../research-workspace/references/records.md#固定输入与训练记录)，文件操作见 [工具说明](../research-workspace/references/tools.md)。
+Start with the unchanged system or simplest credible end-to-end baseline. Verify its model-to-score interface and keep a usable incumbent. A fixed-rule baseline is legitimate but does not fulfill an explicit training request. Training, data, inference and broader method changes are alternatives chosen to answer the question, not mandatory stages.
 
-## 先选择分支
+For each affordable round:
 
-- 新训练：固定输入 → 训练 → 保存产物 → 独立评测 → 分析。
-- 只重测：核验已有产物 → 新 assessment → 分析；不新建训练、不覆盖旧评测。
-- 只发布/准备对照：核验用户指定产物与已有证据 → 发布/对照；不为发布额外训练，也不自动部署。
-- 接手中断：先检查真实执行与日志，再决定观察、补记录或新 ID 重试；缺少 result 不是重复启动许可。
+1. Check remaining scope, resources and unfinished work. State a hypothesis, expected observation and meaningful comparator. Distinguish code ancestry from inherited weights; neither automatically identifies the comparison.
+2. Implement an interpretable change. Freeze necessary code and configuration, pin actual inputs including inherited model files, and preserve resolved parameters and environment. Execute one configured command through the runner, retaining `run.log` and process facts in status. These checks are not a sandbox.
+3. Verify the actual model under the experiment's `model/` before finalizing success. Exit zero alone is insufficient. Create a fresh experiment-local evaluation with fixed model and evaluation hashes; save actual per-sample outputs, metrics and diagnostics before finalization. An evaluation failure need not trigger retraining.
+4. Inspect compatible scores, outputs, failures and cost. Write the outcome and evidence-supported interpretation in `analysis.json`. Preserve measurements; change interpretations with conflict detection. Keep the incumbent when evidence is inconclusive. Continue, diagnose, use [review](../review/SKILL.md), or stop within the remaining budget.
 
-## 新训练
+Retries use new IDs. Changed evaluation requires comparable remeasurement, not a mixed ranking. Use development evidence for iteration and reserved independent checks for final selection; say best among tested alternatives, not optimal.
 
-1. 明确本次假设、希望了解的问题、代码来源、起点产物、比较对象、预算与停止条件；记录它们，不把代码父节点当作比较对象。必要资源准备限于授权，一次请求只做一次，明确连续授权才循环。
-2. 新建独立 experiments/<id>，冻结必要代码快照，固定 goal_revision、具体 evaluation_version、fixed_inputs 与 execution。引用可核验数据/模型摘要，不复制秘密或无关大文件；argv 指向真实固定代码，开始前再次核验摘要。
-3. 排他写 config，随后写 pending/running status，再用现有终端/训练工具执行并保留日志；基础文件工具不执行 argv。需要后台时记录真实 handle、观测时间、日志和观察/停止/接手方法，验证当前执行方式能否跨会话持续，不从面板 runtime 推断。
-4. 结束先保存日志、可用产物和 artifacts，再最后写终态 status；成功须有真实产物，失败/取消保留错误与已有证据。固定输入、产物清单和终态不可覆盖；修复重试使用新实验 ID。
+Stop exploration in time to verify model loading, dependencies and the intended inference interface with a real smoke test. Select verified experiment IDs in `project.deliveries`; models stay inside their experiments. Reuse evaluation outputs or generate only requested same-input comparison outputs. Selection neither copies nor deploys a model; export a standalone bundle only when requested.
 
-## 独立评测
-
-1. 核验产物、具体评测版本及 manifest 内容，固定 artifact_sha256、evaluation_sha256 和实际 execution，创建新 assessments/<id>/config。
-2. config-only 是待执行意图；可写 status 的 pending/running 及真实执行观察，不提前写最终 result。使用该版真实命令执行，评测进行中其他项目文件仍可更新。
-3. 先保存完整 outputs 和日志/错误，再排他写最终 result；结果优先于旧 running status。成功分数来自真实汇总，失败缺少分数使用空 metrics，不补零；允许保留部分真实输出。
-4. 训练成功但评测失败时保留模型，不重训，确认旧执行终止后用新 assessment ID 重试。新版重测也用新 ID，历史评测保持原版本。
-
-## 分析与发布
-
-检查逐例输出、同版可比结果、成本与失败模式；analysis 分开写观测、解释、限制、后续决定，指出 compared_to 的 assessment 与额外证据。微小差异不自动视为改善，预算/数据/推理条件变化时说明比较限制；不把因果猜测写成事实。
-
-仅用户在 Agent 客户端明确指定发布时创建新的 release，固定产物摘要、关联评测和选择来源。准备或补齐验收输出也依据 Agent 客户端请求及已有授权，固定样例版本、独立的 release_ids 和交付对象，真实推理保存逐例输出，完整后最后发布 acceptance config；缺失输出不伪造，不让用户在面板提交生成请求。
-
-面板保留验收对比浏览，不提交偏好或验收意见。用户在 Agent 客户端表达逐例偏好和整体验收决定；Agent 可按 [反馈生命周期](../research-workspace/references/records.md#反馈生命周期) 记录必要证据，绑定具体样例、比较组合或交付对象。逐例偏好不等于整体验收，验收决定不自动授权部署或后续执行。
-
-## 输出与停止
-
-返回实验/assessment/发布 ID、实际状态、日志、产物与摘要、证据及限制、未完成部分和下一步；执行基础 Skill 完成检查，涉及已记录反馈时按实际变化追加 handled。到达请求次数、预算、停止条件或需新授权的边界即停止；分数改善、候选建议、会话意见或历史反馈都不自动开启下一轮。
+Report improvement, uncertainty, unmet requirements, actual consumption and stopping reason in ordinary language. Keep user decisions in conversation and describe any genuinely running process without promising unsupported autonomous continuation.

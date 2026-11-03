@@ -1,35 +1,35 @@
 # Start a TuneTune project
 
-This guide is for the Agent receiving a request such as “Use TuneTune to help me build a private model for organizing customer messages, starting in this directory.” Handle setup yourself and continue into tunetune-init. Use the person's language for the conversation.
+Handle setup for the person, then continue into `tunetune-init` using their original request and language.
 
-## Obtain a release
+## Obtain a trusted kit
 
-Use the repository supplied by the user; the canonical repository is https://github.com/nanshine/tunetune. Inspect its latest published GitHub release and select the `workspace-kit-<version>.tar.gz` asset from that release. Use the asset's actual download URL, record the release tag, and keep all components from that same bundle. Do not guess a version or substitute a third-party download.
+Use the repository supplied by the user; the canonical repository is https://github.com/nanshine/tunetune. Inspect its latest published GitHub release and select its actual `workspace-kit-<version>.tar.gz` asset. Use that asset's download URL and keep all components from one bundle. Do not guess URLs or substitute a third-party download.
 
-Download to a temporary directory outside the user's project. Extract regular files and directories only, rejecting absolute paths, parent traversal, links, and special files (Python 3.12+ tarfile's data filter can be used together with a regular-file/directory check). Read the bundled installer before executing it. Its manifest verifies file integrity, not publisher identity.
+Download outside the project to a temporary directory. Extract only ordinary files and directories, rejecting absolute paths, traversal, links and special files. Python 3.12+ tarfile's data filter can be combined with an explicit file/directory check. Read the bundled installer before running it. Manifest hashes check integrity, not publisher identity.
 
-The normal installation needs Python 3.10+ on macOS or Linux. Check the environment yourself. If Python is unavailable, use an available trusted installation mechanism within the host's permissions; explain any unavoidable user action plainly. If no release has been published, report that setup cannot yet use a release. A source build is a developer fallback only when requested, using the README's build instructions.
+Check Python 3.10+ on macOS/Linux. Use only trusted installation mechanisms within the host's permissions if prerequisites are missing. Explain unavoidable user actions plainly. If no compatible kit has been published, say so; a source build is a developer fallback only when requested.
 
-## Install in the current directory
+## Install without replacing research
 
-Inspect existing instructions and files first. Run the extracted installer, substituting the real temporary bundle path and current project directory:
+Inspect existing instructions and files. Kit 0.4.0 supports schema 2 only; refuse older or incompatible projects without automatic migration. Substitute the actual bundle and project paths:
 
 ```sh
 python3 <bundle>/install-workspace.py --kit <bundle> --project <current-directory> --host agents
 ```
 
-Use `--host claude` for Claude Code. The default installs sibling skills under `.agents/skills/`; the Claude option uses `.claude/skills/`. Other hosts may read these SKILL.md files directly. Load the installed tunetune-init file immediately if the host does not rediscover skills during the current session. No global skill installation is necessary.
+Use `--host claude` for Claude Code. The default installs all five sibling skills under `.agents/skills/`; the Claude option uses `.claude/skills/`. If the host cannot rediscover them immediately, read their `SKILL.md` files directly. No global installation is needed.
 
-The installer prepares project records, data, src, evaluation, experiments, assessments, releases and supporting directories, plus the prebuilt panel under `.workspace/app/`. It preserves existing files and refuses conflicting tool installations. If AGENTS.md already exists, preserve its guidance and merge the TuneTune entrypoint and contract reference without replacing unrelated instructions. Note the actual skill directory when using a different host.
+The installer adds only `AGENTS.md`, `project.json`, `proposal.json`, `resources.json`, the skills and `.workspace` application files. It creates only their required parent directories, not empty research stages. It preserves existing project instructions and compatible research, and refuses conflicting tool files. If existing instructions need integration, explain the installed entrypoint without replacing them; merge only within the user's authorization. The format and tool guides live in the shared skill, with no project-root duplicate.
 
 ## Open and continue
 
-Launch the installed service in a managed background session:
+Start the local service in a managed session:
 
 ```sh
 python3 .workspace/app/workspace.py --project . --port 0 --open
 ```
 
-Read its actual local URL and check it responds before reporting success. `--open` asks the system browser to open the panel; use the host's browser tool or provide a clickable link when necessary. Keep the session available for the user. The panel provides read-only research views and output comparisons, with direct project-name editing as its only write action. Questions, feedback, reviews, and acceptance decisions belong in the Agent client; the Agent performs research and execution.
+Check the actual printed URL responds before reporting success. `--open` requests the system browser; provide a clickable link if opening is unavailable. The panel observes research and comparisons, with project-name editing as its only write action. Requests and decisions remain in conversation.
 
-Continue with the installed tunetune-init skill using the user's original request. Explain what is ready in ordinary language. Model downloads, training environments, and paid resources can wait until the project needs them.
+Load `research-workspace` and `tunetune-init`, investigate enough to present a useful proposal, and continue within the existing authorization. Explain what is ready and what is limited. Optional resource monitoring is not a suitability test, and an open panel does not schedule autonomous work. Downloads, training dependencies, paid resources and private-data transfers wait until needed and authorized.

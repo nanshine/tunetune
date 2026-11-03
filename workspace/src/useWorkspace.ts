@@ -14,7 +14,8 @@ export function useWorkspace() {
         if (!response.ok) throw new Error(`读取失败（HTTP ${response.status}）`);
         const next = parseSnapshot(await response.json());
         if (!controller.signal.aborted) {
-          setSnapshot(previous => previous?.revision === next.revision && previous?.error === next.error ? previous : next);
+          // Monitor updates are independent of the research-file revision.
+          setSnapshot(previous => previous?.revision === next.revision && previous?.error === next.error && JSON.stringify(previous?.observations) === JSON.stringify(next.observations) ? previous : next);
           setConnectionError(null);
         }
       } catch (error) {

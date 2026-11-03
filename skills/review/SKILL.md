@@ -1,34 +1,18 @@
 ---
 name: review
-description: 复盘 TuneTune 实验、核查同版评测与逐例输出、处理研究反馈并提出下一步候选。用于“分析结果”“读一下研究空间反馈”“下一步试什么”“总结改善和退步”；不是一般代码审查，不因给出建议自动训练或发布。
+description: Explore TuneTune research evidence, diagnose stagnation or contradictory results, and recommend worthwhile next directions. Use when asked what was learned or what to try next; this is research exploration, not routine code review or a per-round approval gate.
 ---
 
-# 基于证据复盘
+# Learn from evidence before choosing more work
 
-## 输入与依赖
+Load [research-workspace](../research-workspace/SKILL.md). Identify the question, current proposal, relevant evaluation and experiments, delivery choices and remaining scope. Follow actual inputs, implementation, model hashes, process status, logs and outputs where the explanation depends on them. Summaries are useful starting points, not proof. Read only the material needed to decide.
 
-读取 [research-workspace](../research-workspace/SKILL.md)，完成接手检查；输入为当前目标、实验/评测/逐例输出、发布/验收、历史反馈、用户会话意见与本次复盘范围。协议见 [研究记录](../research-workspace/references/records.md)。没有结果也可分析准备缺口，不虚构实验。
+Compare compatible measurements and recognizable output differences, not aggregate scores alone. Ask whether an apparent gain or plateau reflects model behavior, insufficient evidence, narrow exploration, leakage, preprocessing, scoring or changed conditions. Distinguish execution failure from poor quality and uncertainty from evidence against a method. Preserve a usable model when only evaluation failed; a separate retest may answer the question more cheaply than retraining.
 
-研究复盘在 Agent 客户端发起，本 Skill 的分析与记录能力继续保留，不依赖面板复盘入口或协作反馈表单。面板只读展示研究资料与对比（直接编辑项目名称除外）；候选/实验意见、澄清与验收决定直接在 Agent 客户端沟通。
+Challenge the leading explanation. Which observation would distinguish it from a plausible alternative? Which gains survive independent checks? Which requirement remains unmet despite better scores? With no completed experiments, assess the proposed tests and missing evidence honestly rather than inventing conclusions.
 
-## 操作
+Research relevant methods, resources or implementations when that can change the recommendation. Respect access, privacy and remaining budget; distinguish external reports from results measured here. Compare a useful local continuation with a meaningful method change or diagnostic. Revisit a discarded direction when new conditions make it informative, without treating one failed trial as a universal verdict. Stop reading when further research no longer changes the next decision.
 
-1. 明确证据截止点，沿 config、目标修订、代码/数据/产物哈希及评测版本核对依据；未完成记录只作为未完成工作，不混入排名，也不阻塞无关已完成结果的分析。
-2. 分开讨论执行状态、结果分析和后续决定；只对同版且条件可比的评测讨论优劣，读取逐例输出、成本及失败模式。跨版分别解释，需要时建议重测而非默认重训；指出改善、退步、差异不明、无效比较与覆盖缺口。
-3. 按 feedback_id 关联历史原话和处理记录，检查 target_sha256。依据过时先在 Agent 客户端重新解释或询问；deferred/question 仍待跟进，不以“已有 handled 文件”判定解决。可按反馈契约记录必要会话证据，标明来源、原话或摘要及对应对象，不伪造用户确认。逐例偏好不等于接受整个版本，会话意见或历史反馈不自动扩大本次授权。
-4. 保存旧 review 后写新 review，引用具体实验、assessment、样例和反馈；采用下面的结构，事实和解释不要混写。
-5. 更新 candidates 保留用户方向，每项说明假设、来源起点、为什么值得试、预期可观察结果、所需资源和依赖；不设候选数量或全局最佳约束，候选不是训练承诺。
-6. 处理已记录反馈时，实际修改完成后新增 handled，记录 disposition、reason 与真实 changes；暂缓/追问也留理由，不覆盖原答，尚未执行的计划不列入 changes。涉及目标或评测修改时转交相应 Skill，不隐式改写版本。
+Present a short prioritized set of directions in conversation: the question each answers, evidence behind it, expected observation, required resources and why it is worth the cost. Keep experiment-specific interpretation and next directions in the relevant `analysis.json`, using the shared [record guide](../research-workspace/references/records.md) and [tools](../research-workspace/references/tools.md) for conflict-safe updates. Preserve measurements rather than creating another research ledger.
 
-## review 输出结构
-
-- 范围与证据截止时间。
-- 事实：执行、产物、同版评测与逐例观察，附证据引用。
-- 解释：改善/退步/不确定性的判断及替代解释。
-- 限制：不可比条件、未完成执行、未覆盖目标、缺失证据。
-- 反馈：已落实、暂缓、不采用、待澄清，分别引用原答与处理结果。
-- 下一步：候选、资源/评测缺口、需要用户决定的事项，不把建议写成已执行。
-
-## 完成与恢复
-
-给出 review、历史、候选和处理记录位置及简短结论；运行基础完成检查。共享文件哈希冲突时重读并合并，不丢用户方向；部分写入成功时以文件事实核对，再补尚未完成的处理记录，不声称跨文件事务或重写原答。复盘结束不启动训练、不发布成果、不迁移格式。
+If understanding of the goal changes, update the current proposal through [tunetune-init](../tunetune-init/SKILL.md); if measurement changes, use [build-evaluation](../build-evaluation/SKILL.md) and identify necessary remeasurement. Explain conclusions and uncertainty in ordinary language. A review-only request ends with findings, not new experiments. Within an already authorized bounded loop, return directly to [train](../train/SKILL.md); pause only for a consequential missing decision or changed boundary.

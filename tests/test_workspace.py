@@ -13,7 +13,6 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
-import uuid
 
 SOURCE = Path(__file__).resolve().parents[1] / "workspace" / "workspace.py"
 SPEC = importlib.util.spec_from_file_location("workspace_server", SOURCE)
@@ -25,13 +24,13 @@ class WorkspaceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        self.base = Path(self.temp.name).resolve()
         self.root = self.base / "project"
         self.assets = self.base / "assets"
         self.root.mkdir()
         self.assets.mkdir()
         (self.assets / "index.html").write_text("<!doctype html><title>Workspace</title>")
-        self.write("project.json", {"schema_version": 1, "name": "First"})
+        self.write("project.json", {"schema_version": 2, "name": "First"})
         self.server = self.start(self.root)
         self.port = self.server.server_address[1]
         self.origin = f"http://127.0.0.1:{self.port}"
@@ -71,26 +70,13 @@ class WorkspaceTests(unittest.TestCase):
     def state(self):
         status, value, _ = self.request()
         self.assertEqual(status, 200)
-        self.assertEqual(set(value), {"files", "revision", "synced_at", "error"})
+        self.assertEqual(set(value), {"files", "revision", "synced_at", "error", "observations"})
         return value
 
-    def feedback(self, **changes):
-        body = {"id": str(uuid.uuid4()), "kind": "comment", "text": "Please inspect this",
-                "target": None, "target_sha256": None}
-        body.update(changes)
-        return body
-
-    def post(self, body, **kwargs):
-        return self.request("POST", "/api/feedback", body, **kwargs)
 
     def rename(self, body, **kwargs):
         return self.request("POST", "/api/project/name", body, **kwargs)
 
-    def rename_body(self, name="Renamed"):
-        return {"name": name, "expected_sha256": self.binding("project.json")["target_sha256"]}
-
-    def binding(self, path):
-        return {"target": path, "target_sha256": hashlib.sha256((self.root / path).read_bytes()).hexdigest()}
 
     def raw_request(self, request):
         with socket.create_connection(("127.0.0.1", self.port), timeout=3) as client:
@@ -108,12 +94,12 @@ class WorkspaceTests(unittest.TestCase):
         initial = self.state()
         self.assertIsNone(initial["error"])
         self.assertIn("T", initial["synced_at"])
-        self.write("goal.json", {"examples": [{"id": "one"}]})
+        self.write("proposal.json", {"examples": [{"id": "one"}]})
         fresh = self.state()
         self.assertNotEqual(fresh["revision"], initial["revision"])
-        self.assertEqual(fresh["files"]["goal.json"]["content"]["examples"][0]["id"], "one")
+        self.assertEqual(fresh["files"]["proposal.json"]["content"]["examples"][0]["id"], "one")
         self.assertEqual(self.state()["revision"], fresh["revision"])
-        (self.root / "goal.json").unlink()
+        (self.root / "proposal.json").unlink()
         self.assertEqual(self.state()["revision"], initial["revision"])
         returned = self.server.reader.snapshot()
         returned["files"].clear()
@@ -121,158 +107,21 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_malformed_retains_entire_last_snapshot_and_recovers(self):
         good = self.state()
-        self.write("goal.json", '{"examples":')
+        self.write("proposal.json", '{"examples":')
         bad = self.state()
-        self.assertIn("goal.json", bad["error"])
+        self.assertIn("proposal.json", bad["error"])
         for key in ("files", "revision", "synced_at"):
             self.assertEqual(bad[key], good[key])
-        self.write("goal.json", {"examples": []})
+        self.write("proposal.json", {"examples": []})
         self.assertIsNone(self.state()["error"])
 
-    def test_no_prior_snapshot_and_required_version(self):
-        for content in ({}, {"schema_version": True}, {"schema_version": 2}, [], '{"schema_version":1,"schema_version":1}'):
-            with self.subTest(content=content):
-                self.write("project.json", content)
-                result = wb.Reader(self.root).snapshot()
-                self.assertEqual(result["files"], {})
-                self.assertTrue(result["error"])
-        (self.root / "project.json").unlink()
-        self.assertTrue(wb.Reader(self.root).snapshot()["error"])
-
-    def test_known_array_fields_and_json_objects(self):
-        for path, content in (("goal.json", {"examples": {}}), ("resources.json", {"items": "bad"}),
-                              ("candidates.json", {"items": 1}), ("workspace.json", []),
-                              ("releases/r.json", '{"score":NaN}'),
-                              ("releases/r.json", '{"score":1e999}')):
-            with self.subTest(path=path):
-                written = self.write(path, content)
-                self.assertTrue(self.state()["error"])
-                written.unlink()
-        self.assertIsNone(self.state()["error"])
-
-    def test_incomplete_experiments_retain_snapshot(self):
-        good = self.state()
-        self.write("experiments/e/config.json", {})
-        result = self.state()
-        self.assertIn("experiments/e/status.json", result["error"])
-        for key in ("files", "revision", "synced_at"):
-            self.assertEqual(result[key], good[key])
-        self.write("experiments/e/status.json", {})
-        self.assertIsNone(self.state()["error"])
-
-    def test_assessments_without_results_allow_other_refreshes(self):
-        previous = self.state()
-        config = {"experiment_id": "e", "evaluation_version": "v1"}
-        self.server.reader.tree.publish("assessments/a/config.json", config)
-        config_only = self.state()
-        self.assertIsNone(config_only["error"])
-        self.assertNotEqual(config_only["revision"], previous["revision"])
-        self.assertEqual(config_only["files"]["assessments/a/config.json"]["content"], config)
-        previous = config_only
-        for state, training_state in ((None, "pending"), ("pending", "running"), ("running", "succeeded")):
-            with self.subTest(state=state):
-                if state is not None:
-                    self.write("assessments/a/status.json", {"state": state})
-                goal = {"examples": [{"id": training_state}]}
-                self.write("goal.json", goal)
-                self.write("experiments/e/config.json", {})
-                self.write("experiments/e/status.json", {"state": training_state})
-                fresh = self.state()
-                self.assertIsNone(fresh["error"])
-                self.assertNotEqual(fresh["revision"], previous["revision"])
-                self.assertNotIn("assessments/a/result.json", fresh["files"])
-                if state is not None:
-                    self.assertEqual(fresh["files"]["assessments/a/status.json"]["content"]["state"], state)
-                self.assertEqual(fresh["files"]["goal.json"]["content"], goal)
-                self.assertEqual(fresh["files"]["experiments/e/status.json"]["content"]["state"], training_state)
-                previous = fresh
-
-    def test_assessment_results_allow_stale_running_status(self):
-        for state in ("failed", "succeeded", "cancelled"):
-            with self.subTest(state=state):
-                directory = f"assessments/{state}"
-                self.write(f"{directory}/config.json", {"experiment_id": "e"})
-                self.write(f"{directory}/status.json", {"state": "running"})
-                before = self.state()
-                self.assertIsNone(before["error"])
-                result = {"state": state, "metrics": {"accuracy": 0.9} if state == "succeeded" else {}}
-                self.server.reader.tree.publish(f"{directory}/result.json", result)
-                fresh = self.state()
-                self.assertIsNone(fresh["error"])
-                self.assertNotEqual(fresh["revision"], before["revision"])
-                self.assertEqual(fresh["files"][f"{directory}/result.json"]["content"], result)
-                self.assertEqual(fresh["files"][f"{directory}/status.json"], before["files"][f"{directory}/status.json"])
-
-    def test_bad_assessment_records_retain_snapshot_and_recover(self):
-        self.write("assessments/a/config.json", {})
-        records = (("status.json", {"state": "running"}, ("succeeded", "failed", "cancelled")),
-                   ("result.json", {"state": "succeeded", "metrics": {"accuracy": 0.9}}, ("pending", "running")))
-        for filename, valid, _ in records:
-            self.write(f"assessments/a/{filename}", valid)
-        for filename, valid, invalid_states in records:
-            path = f"assessments/a/{filename}"
-            malformed = ([], "null", '{"state":', {}, {"state": None}, {"state": True},
-                         {"state": 1}, {"state": []}, {"state": {}}, {"state": "unknown"})
-            for index, content in enumerate((*malformed, *({"state": state} for state in invalid_states))):
-                with self.subTest(path=path, content=content):
-                    good = self.state()
-                    self.assertIsNone(good["error"])
-                    self.write(path, content)
-                    goal = {"examples": [{"id": f"{filename}-{index}"}]}
-                    self.write("goal.json", goal)
-                    bad = self.state()
-                    self.assertIn(path, bad["error"])
-                    for key in ("files", "revision", "synced_at"):
-                        self.assertEqual(bad[key], good[key])
-                    self.write(path, valid)
-                    recovered = self.state()
-                    self.assertIsNone(recovered["error"])
-                    self.assertEqual(recovered["files"]["goal.json"]["content"], goal)
-
-    def test_allowlist_jsonl_markdown_and_log_preview(self):
-        for pattern in wb.PATTERNS:
-            path = pattern.replace("*", "one")
-            if path == "project.json":
-                continue
-            content = "{\"id\":1}\n\n{\"id\":2}\n" if path.endswith(".jsonl") else (
-                "hello" if path.endswith((".md", ".log")) else {})
-            if path == "assessments/one/status.json":
-                content = {"state": "running"}
-            elif path == "assessments/one/result.json":
-                content = {"state": "succeeded", "metrics": {}}
-            self.write(path, content)
-        self.write("code/private.json", {"secret": True})
-        self.write("experiments/one/snapshot/source.json", {"secret": True})
-        self.write("evaluation/draft/data.json", {"secret": True})
-        log = self.write("experiments/one/train.log", "x" * (wb.LOG_PREVIEW_BYTES + 100))
-        result = self.state()
-        self.assertIsNone(result["error"])
-        self.assertEqual(len(result["files"]), len(wb.PATTERNS))
-        self.assertEqual(result["files"]["assessments/one/outputs.jsonl"]["content"], [{"id": 1}, {"id": 2}])
-        self.assertEqual(result["files"]["review.md"]["content"], "hello")
-        self.assertEqual(len(result["files"]["experiments/one/train.log"]["content"]), wb.LOG_PREVIEW_BYTES)
-        self.assertEqual(result["files"]["experiments/one/train.log"]["sha256"], hashlib.sha256(log.read_bytes()).hexdigest())
-        self.write("assessments/one/outputs.jsonl", '{}\n[]\n')
-        self.assertTrue(self.state()["error"])
-
-    def test_read_bounds_retain_snapshot(self):
-        good = self.state()
-        with patch.object(wb, "MAX_FILES", 0):
-            self.assertEqual(self.state()["revision"], good["revision"])
-            self.assertTrue(self.state()["error"])
-        with patch.object(wb, "MAX_ENTRIES", 0):
-            self.assertTrue(self.state()["error"])
-        with patch.object(wb, "MAX_TOTAL_BYTES", 1):
-            self.assertTrue(self.state()["error"])
-        self.write("review.md", "x" * (wb.MAX_FILE_BYTES + 1))
-        self.assertTrue(self.state()["error"])
 
     def test_project_name_persists_and_preserves_other_fields(self):
-        project = {"schema_version": 1, "name": "First", "language": "zh",
+        project = {"schema_version": 2, "name": "First", "language": "zh",
                    "current_evaluation": "v2", "custom": {"values": [1, False, None, "研究"]}}
         self.write("project.json", project)
-        goal = self.write("goal.json", {"examples": []})
-        goal_before = goal.read_bytes()
+        proposal = self.write("proposal.json", {"examples": []})
+        proposal_before = proposal.read_bytes()
         before = self.state()
         status, saved, _ = self.rename(self.rename_body("  New name  "))
         self.assertEqual(status, 200)
@@ -285,8 +134,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(fresh["files"]["project.json"], {"content": dict(project, name="New name"),
                                                         "sha256": saved["sha256"]})
         self.assertEqual(wb.Reader(self.root).snapshot()["files"], fresh["files"])
-        self.assertEqual(goal.read_bytes(), goal_before)
-        self.assertFalse((self.root / "feedback").exists())
+        self.assertEqual(proposal.read_bytes(), proposal_before)
         self.assertEqual(list(self.root.glob(".pending-*")), [])
 
     def test_project_name_trims_unicode_and_counts_codepoints(self):
@@ -321,7 +169,7 @@ class WorkspaceTests(unittest.TestCase):
     def test_project_name_stale_hash_checks_disk_and_recovers(self):
         body = self.rename_body()
         self.state()
-        path = self.write("project.json", {"schema_version": 1, "name": "Agent edit", "language": "en"})
+        path = self.write("project.json", {"schema_version": 2, "name": "Agent edit", "language": "en"})
         before = path.read_bytes()
         self.assertEqual(self.rename(body)[0], 409)
         self.assertEqual(path.read_bytes(), before)
@@ -334,24 +182,6 @@ class WorkspaceTests(unittest.TestCase):
         self.assertFalse(path.exists())
         self.assertEqual(list(self.root.glob(".pending-*")), [])
 
-    def test_project_name_requires_valid_current_schema_and_file_limits(self):
-        for project in ({}, {"schema_version": True}, {"schema_version": 1.0}, {"schema_version": 2},
-                        [], "null", '{"schema_version":', '{"schema_version":1,"schema_version":1}',
-                        '{"schema_version":1,"custom":1e999}'):
-            with self.subTest(project=project):
-                path = self.write("project.json", project)
-                before = path.read_bytes()
-                self.assertEqual(self.rename(self.rename_body())[0], 409)
-                self.assertEqual(path.read_bytes(), before)
-        for project, limit in (({"schema_version": 1, "name": "First"}, 64),
-                               ({"schema_version": 1, "custom": "x" * 128}, 64)):
-            with self.subTest(project=project):
-                path = self.write("project.json", project)
-                before = path.read_bytes()
-                with patch.object(wb, "MAX_FILE_BYTES", limit):
-                    self.assertEqual(self.rename(self.rename_body("研" * 120))[0], 409)
-                self.assertEqual(path.read_bytes(), before)
-        self.assertEqual(list(self.root.glob(".pending-*")), [])
 
     def test_project_name_cooperates_with_canonical_records_lock(self):
         source = SOURCE.parents[1] / "skills" / "research-workspace" / "scripts" / "records.py"
@@ -422,7 +252,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_project_name_symlink_and_nonregular_file_protection(self):
         body = self.rename_body()
-        outside = self.write("outside.json", {"schema_version": 1, "name": "Outside"}, root=self.base)
+        outside = self.write("outside.json", {"schema_version": 2, "name": "Outside"}, root=self.base)
         before = outside.read_bytes()
         path = self.root / "project.json"
         path.unlink()
@@ -438,7 +268,7 @@ class WorkspaceTests(unittest.TestCase):
         path.mkdir()
         self.assertEqual(self.rename(body)[0], 409)
         path.rmdir()
-        self.write("project.json", {"schema_version": 1, "name": "First"})
+        self.write("project.json", {"schema_version": 2, "name": "First"})
         linked_root = self.base / "linked-project"
         linked_root.symlink_to(self.root, target_is_directory=True)
         with self.assertRaises(wb.RequestError) as error:
@@ -477,7 +307,7 @@ class WorkspaceTests(unittest.TestCase):
     def test_project_name_rechecks_destination_before_replace(self):
         body = self.rename_body()
         path = self.root / "project.json"
-        outside = self.write("outside.json", {"schema_version": 1, "name": "Outside"}, root=self.base)
+        outside = self.write("outside.json", {"schema_version": 2, "name": "Outside"}, root=self.base)
         before = outside.read_bytes()
         fsync = os.fsync
         def swap_destination(fd):
@@ -514,94 +344,6 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.rename(body, headers={"Host": f"localhost:{self.port}",
                                                     "Origin": f"http://localhost:{self.port}"})[0], 200)
 
-    def test_project_name_preserves_historical_feedback_and_original_binding(self):
-        body = self.feedback(**self.binding("project.json"))
-        saved = dict(body, source="workspace", created_at="2026-01-01T00:00:00Z")
-        relative = f"feedback/incoming/{body['id']}.json"
-        path = self.write(relative, saved)
-        before = path.read_bytes()
-        self.assertEqual(self.rename(self.rename_body())[0], 200)
-        fresh = self.state()
-        self.assertIsNone(fresh["error"])
-        self.assertEqual(fresh["files"][relative]["content"], saved)
-        self.assertNotEqual(saved["target_sha256"], fresh["files"]["project.json"]["sha256"])
-        self.assertEqual(self.post(body)[0], 404)
-        self.assertEqual(path.read_bytes(), before)
-        self.assertEqual(fresh["files"]["project.json"]["content"]["name"], "Renamed")
-
-    def test_feedback_endpoint_removed_without_creating_files(self):
-        before = self.state()
-        project = (self.root / "project.json").read_bytes()
-        for kind in ("comment", "change", "preference", "acceptance"):
-            for binding in ({}, self.binding("project.json")):
-                with self.subTest(kind=kind, binding=binding):
-                    body = self.feedback(kind=kind, **binding)
-                    for _ in range(2):
-                        self.assertEqual(self.post(body)[:2], (404, {"error": "Not found"}))
-        for path in ("/api/feedback", "/api/feedback/", "/api/feedback?other=1", "/api/%66eedback"):
-            with self.subTest(path=path):
-                self.assertEqual(self.request(path=path)[0], 404)
-                self.assertEqual(self.request("POST", path, self.feedback())[0], 404)
-        fresh = self.state()
-        self.assertIsNone(fresh["error"])
-        self.assertEqual(fresh["files"], before["files"])
-        self.assertEqual(fresh["revision"], before["revision"])
-        self.assertEqual((self.root / "project.json").read_bytes(), project)
-        self.assertEqual(list(self.root.iterdir()), [self.root / "project.json"])
-
-    def test_feedback_response_endpoint_removed_without_creating_files(self):
-        path = "feedback/requests/question-1.json"
-        self.write(path, {"id": "question-1", "options": ["yes", "no"], **self.binding("project.json")})
-        body = self.feedback(kind="response", request_id="question-1", choice="yes",
-                             sample_id="sample-1", **self.binding(path))
-        before = self.state()
-        entries = sorted(self.root.rglob("*"))
-        self.assertEqual(self.post(body)[:2], (404, {"error": "Not found"}))
-        self.assertEqual(self.state()["files"], before["files"])
-        self.assertEqual(sorted(self.root.rglob("*")), entries)
-
-    def test_removed_feedback_endpoint_does_not_parse_or_write_body(self):
-        before = (self.root / "project.json").read_bytes()
-        for body in ({}, b"[]", b"null", b"{broken", b'"\xff"', self.rename_body(),
-                     self.feedback(id="../escape")):
-            with self.subTest(body=body):
-                self.assertEqual(self.post(body)[0], 404)
-        for headers in ({"Content-Type": "text/plain"}, {"Transfer-Encoding": "chunked"},
-                        {"Content-Length": str(wb.MAX_BODY_BYTES + 1)}):
-            with self.subTest(headers=headers):
-                self.assertEqual(self.post(b"{}", headers=headers)[0], 404)
-        base = f"POST /api/feedback HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nOrigin: {self.origin}\r\n"
-        self.assertEqual(self.raw_request(base + "\r\n"), 404)
-        self.assertEqual(self.raw_request(base + "Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}"), 404)
-        self.assertEqual((self.root / "project.json").read_bytes(), before)
-        self.assertEqual(list(self.root.iterdir()), [self.root / "project.json"])
-
-    def test_historical_feedback_remains_readable_and_unchanged(self):
-        request = {"id": "question-1", "options": ["yes"], **self.binding("project.json")}
-        self.write("feedback/requests/question-1.json", request)
-        response = self.feedback(id="response-1", kind="response", request_id="question-1", choice="yes",
-                                 **self.binding("feedback/requests/question-1.json"))
-        comment = self.feedback(id="comment-1", **self.binding("project.json"))
-        records = {"feedback/requests/question-1.json": request,
-                   "feedback/responses/response-1.json": dict(response, source="workspace", created_at="2026-01-01T00:00:00Z"),
-                   "feedback/incoming/comment-1.json": dict(comment, source="workspace", created_at="2026-01-01T00:00:00Z"),
-                   "feedback/handled/handled-1.json": {"id": "handled-1", "feedback_id": "comment-1"}}
-        for path, content in records.items():
-            self.write(path, content)
-        entries = sorted(self.root.rglob("*"))
-        before = {path: path.read_bytes() for path in entries if path.is_file()}
-        state = self.state()
-        self.assertIsNone(state["error"])
-        for path, content in records.items():
-            self.assertEqual(state["files"][path], {"content": content,
-                             "sha256": hashlib.sha256(before[self.root / path]).hexdigest()})
-        for body in (response, comment, dict(comment, text="Changed")):
-            self.assertEqual(self.post(body)[0], 404)
-        self.assertEqual(self.state()["files"], state["files"])
-        self.assertEqual(wb.Reader(self.root).snapshot()["files"], state["files"])
-        self.assertEqual(sorted(self.root.rglob("*")), entries)
-        for path, raw in before.items():
-            self.assertEqual(path.read_bytes(), raw)
 
     def test_host_validation_for_reads_and_unsupported_methods(self):
         for host in ("evil.example", "127.0.0.1", "127.0.0.1:1", f"127.0.0.1:{self.port}.evil", f"localhost:{self.port}."):
@@ -629,7 +371,7 @@ class WorkspaceTests(unittest.TestCase):
     def test_reader_symlinks_and_nonregular_files(self):
         good = self.state()
         secret = self.write("secret.json", {"secret": "hidden"})
-        linked = self.root / "goal.json"
+        linked = self.root / "proposal.json"
         linked.symlink_to(secret)
         self.assertEqual(self.state()["files"], good["files"])
         self.assertIn("Symlink", self.state()["error"])
@@ -643,25 +385,24 @@ class WorkspaceTests(unittest.TestCase):
         (self.root / "code").symlink_to(self.base)
         self.assertIsNone(self.state()["error"])
 
-    def test_historical_feedback_symlinks_at_every_level(self):
+
+    def test_root_ancestor_symlink_blocks_read_and_name_write(self):
+        parent = self.base / "alias"
+        parent.symlink_to(self.base, target_is_directory=True)
+        reader = wb.Reader(parent / "project")
+        before = (self.root / "project.json").read_bytes()
+        self.assertTrue(reader.snapshot()["error"])
+        with self.assertRaises(wb.RequestError):
+            wb.save_project_name(reader, self.rename_body())
+        self.assertEqual((self.root / "project.json").read_bytes(), before)
+
+    def test_malformed_resource_target_retains_last_snapshot(self):
+        self.write("resources.json", {"items": [{"id": "data", "path": "data.txt", "monitor": {"kind": "file"}}]})
         good = self.state()
-        outside = self.base / "outside"
-        outside.mkdir()
-        body = self.feedback(id="comment-1")
-        for relative in ("feedback", "feedback/incoming", "feedback/incoming/comment-1.json"):
-            with self.subTest(relative=relative):
-                path = self.root / relative
-                path.parent.mkdir(parents=True, exist_ok=True)
-                target = outside / "missing.json" if relative.endswith(".json") else outside
-                path.symlink_to(target)
-                self.assertEqual(self.post(body)[0], 404)
-                state = self.state()
-                self.assertIn("Symlink", state["error"])
-                self.assertEqual(state["files"], good["files"])
-                self.assertTrue(path.is_symlink())
-                self.assertEqual(list(outside.iterdir()), [])
-                path.unlink()
-        self.assertIsNone(self.state()["error"])
+        self.write("resources.json", {"items": [{"id": "data", "path": ["not", "text"], "monitor": {"kind": "file"}}]})
+        bad = self.state()
+        self.assertEqual(bad["files"], good["files"])
+        self.assertTrue(bad["error"])
 
     def test_cli_rejects_symlinked_runtime_without_external_writes(self):
         outside = self.base / "outside-runtime"
@@ -674,24 +415,6 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(list(outside.iterdir()), [])
         self.assertTrue((self.root / ".workspace").is_symlink())
 
-    def test_independent_projects(self):
-        other = self.base / "second"
-        other.mkdir()
-        self.write("project.json", {"schema_version": 1, "name": "Second"}, root=other)
-        server = self.start(other)
-        status, state, _ = self.request(port=server.server_address[1])
-        self.assertEqual(status, 200)
-        self.assertEqual(state["files"]["project.json"]["content"]["name"], "Second")
-        self.assertEqual(self.state()["files"]["project.json"]["content"]["name"], "First")
-        self.assertEqual(self.rename(self.rename_body())[0], 200)
-        self.assertEqual(self.state()["files"]["project.json"]["content"]["name"], "Renamed")
-        self.assertEqual(self.request(port=server.server_address[1])[1]["files"], state["files"])
-        self.assertEqual(self.post(self.feedback())[0], 404)
-        other_port = server.server_address[1]
-        self.assertEqual(self.post(self.feedback(), port=other_port,
-                                   headers={"Origin": f"http://127.0.0.1:{other_port}"})[0], 404)
-        self.assertFalse((self.root / "feedback").exists())
-        self.assertEqual(list(other.iterdir()), [other / "project.json"])
 
     def test_cli_url_runtime_and_keyboard_interrupt(self):
         process = subprocess.Popen([sys.executable, "-B", str(SOURCE), "--project", str(self.root),
@@ -715,6 +438,113 @@ class WorkspaceTests(unittest.TestCase):
         _, errors = process.communicate(timeout=5)
         self.assertEqual(process.returncode, 0, errors)
         self.assertFalse(runtime.exists())
+
+
+    def rename_body(self, name="Renamed"):
+        return {"name": name, "expected_sha256": hashlib.sha256((self.root / "project.json").read_bytes()).hexdigest()}
+
+    def test_required_format_and_unknown_json_fields(self):
+        for content in ({}, {"schema_version": True}, {"schema_version": 1}, [], '{"schema_version":2,"schema_version":2}'):
+            with self.subTest(content=content):
+                self.write("project.json", content)
+                result = wb.Reader(self.root).snapshot()
+                self.assertEqual(result["files"], {})
+                self.assertTrue(result["error"])
+        (self.root / "project.json").unlink()
+        self.assertTrue(wb.Reader(self.root).snapshot()["error"])
+
+    def test_known_arrays_and_strict_json(self):
+        for path, content in (("proposal.json", {"examples": {}}), ("resources.json", {"items": "bad"}),
+                              ("project.json", {"schema_version":2,"deliveries":{}}),
+                              ("experiments/e/analysis.json", []),
+                              ("experiments/e/analysis.json", '{"score":NaN}'),
+                              ("experiments/e/analysis.json", '{"score":1e999}')):
+            with self.subTest(path=path):
+                original = (self.root / "project.json").read_bytes()
+                written = self.write(path, content)
+                self.assertTrue(self.state()["error"])
+                written.unlink()
+                (self.root / "project.json").write_bytes(original)
+
+    def test_pending_intents_do_not_block_refresh(self):
+        self.write("experiments/e/config.json", {"id":"e"})
+        self.write("experiments/e/evals/a/config.json", {"id":"a","evaluation_version":"v1"})
+        for state in ("pending", "running", "completed", "succeeded", "failed", "cancelled"):
+            self.write("experiments/e/evals/a/status.json", {"state":state})
+            self.write("proposal.json", {"summary":state,"examples":[]})
+            value = self.state()
+            self.assertIsNone(value["error"])
+            self.assertEqual(value["files"]["proposal.json"]["content"]["summary"], state)
+        good = self.state()
+        for state in (None, [], 3, "invented"):
+            self.write("experiments/e/evals/a/status.json", {"state":state})
+            self.assertEqual(self.state()["files"], good["files"])
+            self.assertTrue(self.state()["error"])
+
+    def test_closed_allowlist_keeps_source_models_and_logs_private(self):
+        for pattern in wb.PATTERNS:
+            path = pattern.replace("*", "one")
+            if path == "project.json":
+                continue
+            content = '{"sample_id":"a","input":"text"}\n' if path.endswith(".jsonl") else {}
+            if path.endswith("/status.json"):
+                content = {"state":"running"}
+            self.write(path, content)
+        for path in ("src/private.json", "experiments/one/model/weights.json", "experiments/one/run.log", "evaluation/one/private.jsonl"):
+            self.write(path, "secret")
+        value = self.state()
+        self.assertIsNone(value["error"])
+        self.assertEqual(set(value["files"]), {pattern.replace("*", "one") for pattern in wb.PATTERNS})
+        self.write("comparison/outputs.jsonl", '{}\n[]\n')
+        self.assertTrue(self.state()["error"])
+
+    def test_read_bounds_retain_snapshot(self):
+        good = self.state()
+        for field in ("MAX_FILES", "MAX_ENTRIES", "MAX_TOTAL_BYTES", "MAX_FILE_BYTES"):
+            with patch.object(wb, field, 0):
+                value = self.state()
+                self.assertEqual(value["files"], good["files"])
+                self.assertTrue(value["error"])
+
+    def test_project_name_requires_current_format_and_limits(self):
+        for project in ({}, {"schema_version": True}, {"schema_version":2.0}, {"schema_version":1}, [], "null", '{"schema_version":', '{"schema_version":2,"schema_version":2}', '{"schema_version":2,"custom":1e999}'):
+            path = self.write("project.json", project)
+            before = path.read_bytes()
+            self.assertEqual(self.rename(self.rename_body())[0],409)
+            self.assertEqual(path.read_bytes(),before)
+        for project in ({"schema_version":2,"name":"First"}, {"schema_version":2,"custom":"x"*128}):
+            path=self.write("project.json",project)
+            with patch.object(wb,"MAX_FILE_BYTES",64):
+                self.assertEqual(self.rename(self.rename_body("研"*120))[0],409)
+        self.assertEqual(list(self.root.glob(".pending-*")),[])
+
+    def test_independent_projects(self):
+        other=self.base/"second"
+        other.mkdir()
+        self.write("project.json",{"schema_version":2,"name":"Second"},root=other)
+        server=self.start(other)
+        value=self.request(port=server.server_address[1])[1]
+        self.assertEqual(value["files"]["project.json"]["content"]["name"],"Second")
+        self.assertEqual(self.rename(self.rename_body())[0],200)
+        self.assertEqual(self.request(port=server.server_address[1])[1]["files"],value["files"])
+        self.assertEqual(self.request("POST","/api/execute",{})[0],404)
+
+    def test_resource_observations_are_saved_and_do_not_change_inventory(self):
+        path=self.write("data/file.txt","sample")
+        inventory={"items":[{"id":"file","title":"Data","type":"dataset","status":"unknown","path":"data/file.txt","monitor":{"kind":"file"}}]}
+        saved=self.write("resources.json",inventory).read_bytes()
+        first=self.state()
+        self.assertEqual(first["observations"]["items"][0]["state"],"ready")
+        runtime=self.root/".workspace/runtime/resources.json"
+        self.assertEqual(json.loads(runtime.read_text()),first["observations"])
+        path.write_text("modified content")
+        self.server.reader.monitor.last_poll=float("-inf")
+        second=self.state()
+        self.assertEqual(second["observations"]["items"][0]["state"],"changed")
+        path.unlink()
+        self.server.reader.monitor.last_poll=float("-inf")
+        self.assertEqual(self.state()["observations"]["items"][0]["state"],"missing")
+        self.assertEqual((self.root/"resources.json").read_bytes(),saved)
 
 
 if __name__ == "__main__":
