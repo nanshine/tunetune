@@ -34,7 +34,8 @@ PATTERNS = (
     "evaluation/*/definition.json", "evaluation/*/samples.jsonl",
     "experiments/*/config.json", "experiments/*/status.json", "experiments/*/analysis.json",
     "experiments/*/evals/*/config.json", "experiments/*/evals/*/status.json",
-    "experiments/*/evals/*/outputs.jsonl", "comparison/outputs.jsonl",
+    "experiments/*/evals/*/outputs.jsonl", "experiments/*/model/invoke.json",
+    "comparison/inputs.jsonl", "comparison/outputs.jsonl",
 )
 
 monitor_spec = importlib.util.spec_from_file_location("workspace_monitor", Path(__file__).with_name("monitor.py"))
@@ -211,7 +212,7 @@ def media_reference(snapshot, path):
             for example in content.get("examples", []):
                 if isinstance(example, dict):
                     visible.extend(example[key] for key in ("input", "expected_output") if key in example)
-        elif name == "comparison/outputs.jsonl" or name.endswith("/samples.jsonl") or name.endswith("/outputs.jsonl"):
+        elif name.startswith("comparison/") or name.endswith("/samples.jsonl") or name.endswith("/outputs.jsonl"):
             for row in content:
                 visible.extend(row[key] for key in ("input", "reference", "output", "outputs") if key in row)
     return any(contains(value) for value in visible)

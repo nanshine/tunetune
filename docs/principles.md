@@ -36,12 +36,12 @@ Verify actual local model files, dependencies and intended inference behavior th
 
 API experiments preserve the provider/model identity, calling configuration, actual outputs, time and available usage/cost. A local description hash cannot establish immutable remote weights. Keep online references visible but distinct from private local delivery. Credentials never belong in conversation, records, snapshots or logs.
 
-Show real same-input outputs and label synthetic examples. Multi-modal media use explicit safe references, not hidden transfers or large JSON payloads. A working demonstration proves execution, not business quality.
+Show real same-input outputs, including the person's own acceptance inputs, and label synthetic examples. Multi-modal media use explicit safe references, not hidden transfers or large JSON payloads. A working demonstration proves execution, not business quality.
 
 ## Minimal, discoverable machinery
 
 Maintain five concise skills: research-workspace, tunetune-init, build-evaluation, run-experiments and explore. Put stable technical decision guidance in relevant references, verify current official details during research and avoid exhaustive model catalogs or fixed recipes. File mechanics live only in the shared canonical guide and deterministic tools.
 
-Create research outputs when needed. Preserve conditional writes, immutable evidence, project isolation and path/symlink protections. Keep unrelated code, caches, private inputs and secrets out of snapshots and distribution. Format 3 is explicitly incompatible with old projects; refuse them without automatic migration or overwrite.
+Create research outputs when needed, inside the project: environments, downloads, caches and temporary files included, so deleting the directory removes the study. The panel replaces separate reports and usage documents. Preserve conditional writes, immutable evidence, project isolation and path/symlink protections. Keep unrelated code, caches, private inputs and secrets out of snapshots and distribution. Format 3 is explicitly incompatible with old projects; refuse them without automatic migration or overwrite.
 
 The default installation uses the current conversation directory and a prebuilt official kit. Install skills where the application discovers them, verify the files and continue by reading the installed skills. Give a short refresh or reopen instruction, preserving the original request, only when the skills are reported missing or the application documents that a reload is required. Test execution and Agent behavior as well as record validity: a valid file does not prove sound research.

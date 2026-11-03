@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowLeftRight, Box, Info } from 'lucide-react';
-import { comparableModels, comparisonSamples, compatibleMeasurements, document, evaluationRuns, object, preferredEvaluation, text } from './model';
+import { acceptanceInputs, comparableModels, comparisonSamples, compatibleMeasurements, document, evaluationRuns, object, preferredEvaluation, text } from './model';
 import type { Snapshot } from './model';
 import { RecordView, sampleLabel } from './RecordView';
 
@@ -23,6 +23,7 @@ export function ComparisonView({ files, projectName, initialExperimentId, connec
   const leftId = left?.id ?? '';
   const rightId = right?.id ?? '';
   const outputFile = files['comparison/outputs.jsonl'];
+  const acceptance = acceptanceInputs(files);
   const rows = comparisonSamples(files, leftId, rightId, version);
   const activeIndex = Math.min(sampleIndex, Math.max(0, rows.length - 1));
   const row = rows[activeIndex];
@@ -47,13 +48,13 @@ export function ComparisonView({ files, projectName, initialExperimentId, connec
       <div className={`connection ${error ? 'warning' : ''}`} role="status" title={status}><span className="connection-dot" aria-hidden="true" />{status}</div>
     </header>
     <main className="comparison-layout">
-      <aside className="sample-sidebar" aria-label="对照样例">
-        <div className="comparison-section-heading"><h2>对照样例</h2><span className="sample-count">{rows.length ? activeIndex + 1 : 0} / {rows.length}</span></div>
+      <aside className="sample-sidebar" aria-label={acceptance ? '验收样例' : '对照样例'}>
+        <div className="comparison-section-heading"><h2>{acceptance ? '验收样例' : '对照样例'}</h2><span className="sample-count">{rows.length ? activeIndex + 1 : 0} / {rows.length}</span></div>
         <div className="sample-list">{rows.map((item, index) => <button key={text(item.sample_id, String(index))} className={index === activeIndex ? 'active' : ''} aria-pressed={index === activeIndex} onClick={() => setSampleIndex(index)}><span>{sampleLabel(item, index)}</span><small>{text(item.input, '查看相同输入')}</small></button>)}</div>
-        {!rows.length && <div className="empty-section"><h3>尚无对照样例</h3><p className="muted">{outputFile ? '对照输出文件为空。' : '请在 Agent 会话中准备同一输入的模型输出。'}</p></div>}
+        {!rows.length && <div className="empty-section"><h3>尚无对照样例</h3><p className="muted">{acceptance ? '验收输入为空。' : outputFile ? '对照输出文件为空。' : '可在 Agent 会话中提供想验收的真实输入，各模型会在相同输入下给出输出。'}</p></div>}
       </aside>
       <section id="model-comparison" className="comparison-workspace" tabIndex={-1}>
-        <div className="comparison-title"><h1>模型对比</h1><p>在相同输入下阅读输出，生成请求与选择请在 Agent 会话中沟通。</p></div>
+        <div className="comparison-title"><h1>模型对比</h1><p>{acceptance ? '用你的真实输入验收模型：这里只阅读输出，不打分；' : '在相同输入下阅读输出，'}生成请求与选择请在 Agent 会话中沟通。</p></div>
         {models.length > 0 ? <>
           <div className="model-selectors">
             <div><label>左侧模型<select value={leftId} onChange={event => setLeftSelection(event.target.value)}>{models.map(item => <option key={item.id} value={item.id}>{item.title}{item.targetKind === 'api' ? ' · 在线参照' : ''}</option>)}</select></label><p className="model-description">{[left?.modelName, left?.method].filter(Boolean).join(' · ')}</p></div>

@@ -12,7 +12,18 @@ The proposal states direction: goals, requirements and assumptions, recommendati
 
 Resources are the sole inventory and preparation plan. Types are open text; useful groups include data/annotation, environment, hardware/storage, models, code/tools, services and credentials. `purpose` explains use; `source` identifies origin; `preparation` describes acquisition, estimated download/cache/unpacked space and next check; `access` explains data transfer, fees and credential requirements without secrets. Mark estimates and unknowns honestly. `path` is project-relative and may be a planned destination; `location` identifies an external location. Use at most one. `size` and `version` are strings.
 
-Status is `ready|missing|changed|busy|unknown`. Optional `monitor:{kind:file|memory|nvidia_gpu|python,index?:nonnegative_integer}` observes limited facts, not suitability. Runtime observations live in `.workspace/runtime/resources.json` as `{checked_at,items:[{id,state,detail?,size?,modified_at?}]}` and do not overwrite inventory. No record can inject monitor commands.
+## Project layout
+
+Everything the study creates stays inside the project, so deleting the directory removes it:
+
+- `resources/`: acquired models, datasets, code and isolated environments, such as `resources/env`.
+- `inputs/`: prepared data derived from the person's material and shared by experiments, such as training sets. Evaluation preparation stays under `evaluation/`.
+- `evaluation/`, `experiments/` and `comparison/`: measurement, attempts and acceptance outputs described below.
+- `.workspace/cache/` and `.workspace/tmp/`: package and model-hub caches and temporary files; neither is research evidence.
+
+Create directories only when needed. Do not add reports, suggestion lists, usage notes or other documents at the root: the panel shows records, and a model's `invoke.json` describes how to call it. Anything kept outside the project, such as a reused global model cache, is a resource with a `location`.
+
+Resource status is `ready|missing|changed|busy|unknown`. Optional `monitor:{kind:file|memory|nvidia_gpu|python,index?:nonnegative_integer}` observes limited facts, not suitability. Runtime observations live in `.workspace/runtime/resources.json` as `{checked_at,items:[{id,state,detail?,size?,modified_at?}]}` and do not overwrite inventory. No record can inject monitor commands.
 
 ## Evaluations and source isolation
 
@@ -62,6 +73,8 @@ Under `experiments/<experiment-id>/evals/<run-id>/`:
 Pin the target and whole evaluation manifest. A successful evaluation has every sample's actual output and every declared metric. Inputs/references must match fixed samples. Use fresh IDs for retries or model retests; retraining is unnecessary.
 
 Compare only compatible frozen evaluations, inputs and inference conditions. Keep differing settings visible and do not imply an algorithm-only comparison where prompts, tools or context differ. Reuse measured outputs. Optional `comparison/outputs.jsonl` stores `{sample_id,input,outputs:{experiment_id:JSON_value}}`; missing entries stay missing. This optional same-input view is not proof of compatible scores.
+
+Optional `comparison/inputs.jsonl` holds acceptance inputs `{sample_id,input}`, with extra display fields allowed: real inputs the person wants to see answered, such as proposal examples, new material or all current items. They are read, not scored, and are not unseen evidence. The runner's compare mode calls each named model's entry point on them and merges the outputs; the panel shows each acceptance input beside the selected models' outputs.
 
 Explicit display attachments use `{type:image|audio|video|file,path:project_relative_path}` inside input/output/example content. Only reference material suitable for the user to view. The service serves allowlisted media formats only when explicitly referenced in current display records; no external path or arbitrary project file access. 3D assets are links, not embedded viewers.
 

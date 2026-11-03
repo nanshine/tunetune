@@ -17,6 +17,7 @@ Start with the current proposal, resources and relevant evidence. Read the share
 - After coverage, prepare the listed resources and continue within a finite budget, counting failures and retests and reserving final validation.
 - Calibrate the actual scoring path, check coverage before freezing and enforce separation of development and independent final checks. Evaluations call each model through its `invoke.json` entry point and contain no candidate-specific inference.
 - Pin inputs and preserve frozen configurations and terminal measurements. Inspect real outputs, processes and logs; a status alone does not prove success or liveness.
+- Keep environments, downloads, caches and temporary files inside the project; add no root reports or usage documents, since the panel shows records and `invoke.json` shows how to call a model.
 - Coordinate one writer, protect paths and private data, and keep secrets out of records, arguments, snapshots and logs. Limited resource observations do not prove readiness.
 - API descriptions identify calling conditions, not immutable provider weights. Only verified local models qualify for delivery; selection neither copies nor deploys them.
 - End with the next authorized action, a specific decision and recommendation, or a completed delivery. Never disguise an untrained fallback as fulfillment of a training request.

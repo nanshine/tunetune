@@ -143,7 +143,9 @@ class DemoTests(unittest.TestCase):
         state = reader.snapshot()
         self.assertIsNone(state["error"])
         files = state["files"]
-        self.assertEqual(len(files), 74)
+        self.assertEqual(len(files), 84)
+        self.assertEqual(len([path for path in files if path.endswith("/model/invoke.json")]), 10)
+        self.assertFalse([path for path in files if "/model/" in path and not path.endswith("/invoke.json")])
         self.assertEqual(len([path for path in files if path.endswith("/config.json") and "/evals/" not in path]), 10)
         self.assertEqual(len([path for path in files if path.endswith("/config.json") and "/evals/" in path]), 12)
         self.assertEqual(len(files["comparison/outputs.jsonl"]["content"]), 8)

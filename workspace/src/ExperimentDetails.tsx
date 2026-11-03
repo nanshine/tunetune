@@ -33,6 +33,7 @@ export function ExperimentDetails({ experiment, results, files, currentVersion, 
         {!Object.keys(active.metrics).length && <p className="muted">此评测尚无指标结果。</p>}
         <SamplesView key={active.path} rows={outputFile ? array(outputFile.content).map(object) : null} outputs metricLabels={active.metricLabels} />
       </> : <p className="muted">尚无评测记录。执行成功不等于效果已经验证。</p>}</section>
+      {experiment.invoke.length > 0 && <section className="detail-section"><h3>怎么用</h3><p className="muted">在研究目录中运行，最后附上输入和输出文件路径。输入每行包含 sample_id 和 input，输出每行包含 sample_id 和 output；评测与验收也通过这一入口调用。</p><pre className="invoke-command"><code>{[...experiment.invoke, '<输入.jsonl>', '<输出.jsonl>'].map(part => /[\s"'$]/.test(part) ? JSON.stringify(part) : part).join(' ')}</code></pre></section>}
       <section className="detail-section"><h3>结论 {delivered && <span className="badge">已交付</span>}</h3><OutcomeBadge analysis={experiment.analysis} /><p className="brief-text">{experiment.analysis.summary || '尚无分析结论；执行成功不等于效果已验证。'}</p>{experiment.state === 'succeeded' && experiment.targetKind && <button onClick={onCompare}><Columns2 size={16} />模型对比</button>}</section>
     </div>
   </aside>;

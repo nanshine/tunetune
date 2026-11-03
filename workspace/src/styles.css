@@ -346,3 +346,9 @@ pre { overflow-wrap: anywhere; white-space: pre-wrap; font-size: 12px; line-heig
 .record-media img, .record-media video { max-height: 420px; object-fit: contain; border-radius: 8px; }
 .record-media figcaption { color: var(--muted); font-size: 12px; margin-top: 6px; overflow-wrap: anywhere; }
 .brief-text a, .resource-facts a, .record-text a { overflow-wrap: anywhere; }
+.review-summary { margin-bottom: 12px; }
+.review-summary p { margin: 0 0 4px; }
+h4 .record-badge { margin-left: 8px; padding: 2px 7px; font-size: 11px; font-weight: 500; vertical-align: middle; }
+.record-badge.review-confirmed, .record-badge.review-corrected { color: var(--success); background: #e8f5ef; }
+.record-badge.review-draft { color: #8a5a00; background: #fff4dd; }
+.invoke-command { margin: 8px 0 0; padding: 10px 12px; overflow-x: auto; border-radius: 8px; background: var(--subtle); font-size: 12px; white-space: pre-wrap; word-break: break-all; }

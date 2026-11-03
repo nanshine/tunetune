@@ -336,6 +336,37 @@ class RunTests(unittest.TestCase):
         self.assertEqual([w for w in records.validate(self.tree)["warnings"] if "invoke" in w],
                          ["Delivery e1 has no invoke.json entry point"])
 
+    def packaged(self, ident, body):
+        self.prepare("import json,os,sys; from pathlib import Path\n"
+                     "(Path(os.environ['TUNETUNE_OUTPUT'])/'invoke.json').write_text(json.dumps("
+                     f"{{'argv':[sys.executable,'-B','experiments/{ident}/model/predict.py']}}))\n", ident)
+        runner.execute(self.tree, f"experiments/{ident}")
+        self.raw(f"experiments/{ident}/model/predict.py",
+                 ("import json,sys\nrows=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]\n" + body).encode())
+        records.finalize(self.tree, f"experiments/{ident}")
+
+    def test_compare_runs_entry_points_on_acceptance_inputs_and_merges(self):
+        self.packaged("upper", "with open(sys.argv[2],'w') as f:\n    [f.write(json.dumps({'sample_id':r['sample_id'],'output':r['input'].upper()})+chr(10)) for r in rows]\n")
+        self.packaged("broken", "sys.exit(3)\n")
+        with self.assertRaises(OSError):
+            runner.compare(self.tree, ["upper"], 5)
+        self.raw("comparison/inputs.jsonl", b'{"sample_id":"a","input":"hi","note":"real"}\n{"sample_id":"b","input":"yo"}\n')
+        with self.assertRaisesRegex(ValueError, "invoke.json"):
+            self.evaluation()
+            runner.compare(self.tree, ["e1"], 5)
+        result = runner.compare(self.tree, ["upper", "broken"], 5)
+        self.assertEqual(result["experiments"]["upper"]["outputs"], 2)
+        self.assertEqual(result["experiments"]["broken"]["returncode"], 3)
+        rows = records.read_record(self.tree, "comparison/outputs.jsonl")
+        self.assertEqual([row["outputs"] for row in rows], [{"upper": "HI"}, {"upper": "YO"}])
+        self.assertTrue(self.tree.exists("comparison/logs/broken.log"))
+        self.raw("comparison/inputs.jsonl", b'{"sample_id":"a","input":"hi"}\n{"sample_id":"b","input":"changed"}\n')
+        runner.compare(self.tree, ["broken"], 5)
+        rows = records.read_record(self.tree, "comparison/outputs.jsonl")
+        self.assertEqual([row["outputs"] for row in rows], [{"upper": "HI"}, {}])
+        self.assertTrue(records.validate(self.tree)["valid"])
+        self.assertFalse([p for p in (self.root / ".workspace/runtime").iterdir() if p.name.startswith("compare-")])
+
     def test_finalize_refuses_incomplete_results_and_invalid_entry_points(self):
         self.prepare("import os; from pathlib import Path\n"
                      "(Path(os.environ['TUNETUNE_OUTPUT'])/'invoke.json').write_text('{\"argv\":[]}')\n", "bad")

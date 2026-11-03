@@ -64,6 +64,24 @@ describe('evaluation definitions and fixed samples', () => {
     for (const phrase of ['问题', '回答内容', '参考内容', '质量', '0.9']) expect(html).toContain(phrase);
     for (const phrase of ['hidden-', 'NaN', 'invalid', '<pre']) expect(html).not.toContain(phrase);
   });
+  it('shows each reference review status and a summary, but not on run outputs', () => {
+    const reviewed: Snapshot['files'] = {
+      'evaluation/v3/definition.json': file({ version: 'v3', description: '审阅', metrics: [] }),
+      'evaluation/v3/samples.jsonl': file([
+        { sample_id: 'a', input: '一', reference: '甲', reference_status: 'confirmed' },
+        { sample_id: 'b', input: '二', reference: '乙', reference_status: 'corrected' },
+        { sample_id: 'c', input: '三', reference: '丙', reference_status: 'invented' },
+        { sample_id: 'd', input: '四' },
+      ]),
+    };
+    const html = render('evaluation/v3/definition.json', reviewed);
+    expect(html).toContain('参考答案：已确认 1 · 已修正 1 · 待审核 1');
+    expect(html).toContain('分数只表示与草稿的一致程度');
+    expect(html).toContain('review-confirmed');
+    const outputs = renderToStaticMarkup(createElement(SamplesView, { outputs: true, rows: [{ input: '一', output: '甲', reference: '甲' }] }));
+    expect(outputs).not.toContain('待审核');
+    expect(render('evaluation/v1/definition.json')).toContain('待审核 1');
+  });
   it('has accessible pagination limits and explicit missing outputs', () => {
     const html = renderToStaticMarkup(createElement(SamplesView, { outputs: true, rows: [{ input: '问题' }] }));
     expect(html).toContain('<button disabled="">上一例');

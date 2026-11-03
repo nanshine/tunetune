@@ -82,6 +82,14 @@ python3 "$RECORDS" finalize --project "$PROJECT" --path experiments/e1/evals/r1
 
 Only a `completed` attempt can be finalized. For an experiment it creates or verifies the model manifest (or hashes `--target`, a file inside `model/`; `--kind api` for API descriptors) and publishes `target`. For an evaluation run it copies inputs and references from the frozen samples, requires every sample and declared metric, publishes `outputs.jsonl` and marks success. Checks run before publication; on refusal inspect, fix the cause in a new attempt or mark the status `failed` explicitly. Manual finalization remains available and must preserve all process facts. Repeated evaluations use new nested IDs without retraining. Never reset status or delete a reserved log to rerun an ID.
 
+### Acceptance outputs
+
+```sh
+python3 "$RUN" --project "$PROJECT" --compare e1 e2 --timeout 600
+```
+
+Each named experiment must be a verified succeeded model with `invoke.json`. Its argv runs from the project root with a private copy of `comparison/inputs.jsonl` and an output path appended, without holding the writer lock; its log is saved as `comparison/logs/<id>.log`. Rows `{sample_id,output}` from a zero exit replace that experiment's earlier outputs; a failed or timed-out model keeps its earlier outputs for unchanged inputs and is reported. Outputs for changed or removed inputs are dropped. The merge refuses if `comparison/outputs.jsonl` changed meanwhile. Exit 1 reports at least one failed model. This is not an evaluation and records no scores.
+
 The supervisor reserves its process-group identity until cleanup. Completion, timeout and handled CLI SIGINT/SIGTERM kill only this invocation's group, including workers left after payload exit. Commands must not detach or daemonize. Escaped processes, hard-killed runners, power loss, arbitrary filesystem writes, log size and global spending are not contained. These tools are not a sandbox, scheduler or authorization engine. Python embedders own their host's signal lifecycle; use the CLI subprocess when managed cancellation is needed.
 
 ## Python API

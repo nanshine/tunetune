@@ -19,7 +19,7 @@ SHA = re.compile(r"[a-f0-9]{64}\Z")
 FINAL = ("succeeded", "failed", "cancelled")
 ATTEMPT = rf"experiments/{ID}(?:/evals/{ID})?"
 RECORD = re.compile(
-    rf"(?:project|proposal|resources)\.json|comparison/outputs\.jsonl|"
+    rf"(?:project|proposal|resources)\.json|comparison/(?:inputs|outputs)\.jsonl|"
     rf"evaluation/{ID}/(?:definition\.json|samples\.jsonl)|"
     rf"{ATTEMPT}/(?:config|status)\.json|experiments/{ID}/analysis\.json|"
     rf"experiments/{ID}/evals/{ID}/outputs\.jsonl")
@@ -222,17 +222,18 @@ def shape(path, data):
         ids = []
         for row in rows:
             require(isinstance(row, dict), "JSONL row must be an object")
-            required = ("sample_id", "input") if path.startswith("evaluation/") else (
+            plain = path.startswith("evaluation/") or path == "comparison/inputs.jsonl"
+            required = ("sample_id", "input") if plain else (
                 "sample_id", "input", "outputs" if path.startswith("comparison/") else "output")
             require(all(k in row for k in required), "Missing sample/output fields")
             require(isinstance(row["sample_id"], str) and row["sample_id"].strip(), "sample_id must be nonempty")
-            if path.startswith("comparison/"):
+            if path == "comparison/outputs.jsonl":
                 fields(row, required)
                 require(isinstance(row["outputs"], dict), "Comparison outputs must be an object")
                 for experiment, output in row["outputs"].items():
                     identifier(experiment)
                     require(output is not None, "Comparison output must be present")
-            elif path.startswith("evaluation/"):
+            elif plain:
                 require(row.get("reference_status", "draft") in ("confirmed", "corrected", "draft"), "Invalid reference_status")
             else:
                 fields(row, required, ("reference", "scores"))
@@ -613,7 +614,7 @@ def check_record(tree, path, obj):
 
 
 def mutable(path, old, tree=None):
-    return (path in ("project.json", "proposal.json", "resources.json", "comparison/outputs.jsonl")
+    return (path in ("project.json", "proposal.json", "resources.json", "comparison/inputs.jsonl", "comparison/outputs.jsonl")
             or path.startswith("evaluation/draft/") or path.endswith("/analysis.json")
             or path.endswith("/status.json") and old["state"] not in FINAL)
 

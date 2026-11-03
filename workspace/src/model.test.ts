@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deliveredModels, deliveryIds, evaluationRuns, experiments, layout, OBSERVATION_MAX_AGE_MS, outcomeLabels, parseSnapshot, preferredEvaluation, resourceObservation, statusLabel } from './model';
+import { comparisonSamples, deliveredModels, deliveryIds, evaluationRuns, experiments, layout, OBSERVATION_MAX_AGE_MS, outcomeLabels, parseSnapshot, preferredEvaluation, resourceObservation, statusLabel } from './model';
 import type { Observations, ResearchFile, Snapshot } from './model';
 const file = (content: unknown): ResearchFile => ({ content, sha256: 'a'.repeat(64) });
 const files: Snapshot['files'] = {
@@ -94,6 +94,26 @@ describe('格式 3 research files', () => {
     expect(deliveryIds(configured)).toEqual(['exp-1', 'missing', 'incomplete', 'no-model']);
     expect(deliveredModels(configured).map(item => item.id)).toEqual(['exp-1']);
     expect(deliveredModels({ ...files, 'project.json': file({ deliveries: [] }) })).toEqual([]);
+  });
+  it('reads an entry point only from the model directory target', () => {
+    const entry = file({ argv: ['.venv/bin/python', 'experiments/exp-2/model/predict.py'] });
+    const packaged = { ...files,
+      'experiments/exp-2/config.json': file({ title: '打包模型' }),
+      'experiments/exp-2/status.json': file({ state: 'succeeded', target: { kind: 'local', path: 'experiments/exp-2/model', sha256: 'a'.repeat(64) } }),
+      'experiments/exp-2/model/invoke.json': entry,
+      'experiments/exp-1/model/invoke.json': entry,
+    };
+    const byId = Object.fromEntries(experiments(packaged).map(item => [item.id, item.invoke]));
+    expect(byId['exp-2']).toEqual(['.venv/bin/python', 'experiments/exp-2/model/predict.py']);
+    expect(byId['exp-1']).toEqual([]);
+    expect(experiments({ ...packaged, 'experiments/exp-2/model/invoke.json': file({ argv: [1] }) }).find(item => item.id === 'exp-2')?.invoke).toEqual([]);
+  });
+  it('builds acceptance rows from inputs and hides outputs for changed inputs', () => {
+    const acceptance = { ...files,
+      'comparison/inputs.jsonl': file([{ sample_id: 'a', input: '新' }, { sample_id: 'b', input: '改' }, { sample_id: 'c', input: '未运行' }]),
+      'comparison/outputs.jsonl': file([{ sample_id: 'a', input: '新', outputs: { 'exp-1': '甲' } }, { sample_id: 'b', input: '旧', outputs: { 'exp-1': '乙' } }]),
+    };
+    expect(comparisonSamples(acceptance, 'exp-1', 'exp-1', 'v1').map(row => row.outputs)).toEqual([{ 'exp-1': '甲' }, {}, {}]);
   });
   it('lays out lineage consistently and tolerates unresolved or cyclic ancestry', () => {
     const items = experiments(files);

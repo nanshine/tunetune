@@ -6,13 +6,16 @@ import json
 import os
 import re
 import selectors
+import shutil
 import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 
-from records import ATTEMPT, PROCESS, Tree, digest, encoded, parts, read_record, require, shape, verify_inputs
+from records import (ATTEMPT, ID, PROCESS, Tree, check_invoke, check_record, digest, encoded, parts, read_record, require,
+                     shape, strict, verify_inputs, verify_model, verify_path_hash)
 
 
 # Use fchdir in a fresh interpreter, not preexec_fn or a path that can be
@@ -186,6 +189,80 @@ def execute(tree, path):
                 return status
 
 
+def compare(tree, experiments, timeout):
+    """Run verified models' invoke.json entries on comparison/inputs.jsonl and merge comparison/outputs.jsonl.
+
+    This is a same-input acceptance view, not a measurement: nothing is scored and
+    failed or missing outputs stay missing. Models run without the writer lock.
+    """
+    require(experiments and len(set(experiments)) == len(experiments)
+            and all(isinstance(e, str) and re.fullmatch(ID, e) for e in experiments), "Name distinct experiment IDs")
+    require(isinstance(timeout, (int, float)) and 0 < timeout < float("inf"), "Invalid timeout")
+    with tree.locked():
+        read_record(tree, "project.json")
+        raw_inputs = tree.read("comparison/inputs.jsonl")
+        inputs = shape("comparison/inputs.jsonl", raw_inputs)
+        require(inputs, "comparison/inputs.jsonl is empty")
+        entries = {}
+        for ident in experiments:
+            target = verify_model(tree, "experiments/" + ident)["target"]
+            require(check_invoke(tree, target["path"]), f"Experiment {ident} has no invoke.json entry point")
+            entries[ident] = (target, strict(tree.read(target["path"] + "/invoke.json"))["argv"])
+        previous = tree.read("comparison/outputs.jsonl") if tree.exists("comparison/outputs.jsonl") else None
+    with tree.directory([".workspace", "runtime"], create=True):
+        pass
+    report, produced = {}, {}
+    scratch = tempfile.mkdtemp(prefix="compare-", dir=os.path.join(tree.root, ".workspace", "runtime"))
+    try:
+        source = os.path.join(scratch, "inputs.jsonl")
+        with open(source, "wb") as stream:
+            stream.write(raw_inputs)
+        known = {row["sample_id"] for row in inputs}
+        for ident, (target, argv) in entries.items():
+            output, log_path = os.path.join(scratch, ident + ".jsonl"), os.path.join(scratch, ident + ".log")
+            started = time.monotonic()
+            with open(log_path, "wb") as log:
+                process = subprocess.Popen([*argv, source, output], cwd=tree.root, stdin=subprocess.DEVNULL, stdout=log,
+                                           stderr=subprocess.STDOUT, start_new_session=True, shell=False)
+                try:
+                    returncode, timed_out = process.wait(timeout=timeout), False
+                except subprocess.TimeoutExpired:
+                    returncode, timed_out = None, True
+                finally:
+                    kill_owned_group(process)
+            with open(log_path, "rb") as stream:
+                tree.publish(f"comparison/logs/{ident}.log", stream.read(), replace=tree.exists(f"comparison/logs/{ident}.log"))
+            verify_path_hash(tree, target["path"], target["sha256"])
+            rows = {}
+            if returncode == 0 and os.path.exists(output):
+                with open(output, "rb") as stream:
+                    for line in stream.read().decode("utf-8").splitlines():
+                        if line.strip():
+                            row = strict(line)
+                            require(isinstance(row, dict) and row.get("sample_id") in known, f"{ident}: unknown output sample_id")
+                            if row.get("output") is not None:
+                                rows[row["sample_id"]] = row["output"]
+                produced[ident] = rows
+            report[ident] = dict(returncode=returncode, timed_out=timed_out, elapsed_seconds=time.monotonic() - started,
+                                 outputs=len(rows), log=f"comparison/logs/{ident}.log")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    with tree.locked():
+        current = tree.read("comparison/outputs.jsonl") if tree.exists("comparison/outputs.jsonl") else None
+        require(current == previous, "Conflict: comparison/outputs.jsonl changed during the run")
+        old = {row["sample_id"]: row for row in shape("comparison/outputs.jsonl", previous)} if previous else {}
+        merged = []
+        for row in inputs:
+            kept = old.get(row["sample_id"], {})
+            outputs = {k: v for k, v in kept.get("outputs", {}).items() if k not in produced} if kept.get("input") == row["input"] else {}
+            outputs.update({ident: values[row["sample_id"]] for ident, values in produced.items() if row["sample_id"] in values})
+            merged.append({"sample_id": row["sample_id"], "input": row["input"], "outputs": outputs})
+        data = "".join(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n" for row in merged).encode("utf-8")
+        check_record(tree, "comparison/outputs.jsonl", shape("comparison/outputs.jsonl", data))
+        tree.publish("comparison/outputs.jsonl", data, replace=previous is not None)
+    return {"path": "comparison/outputs.jsonl", "experiments": report}
+
+
 class InterruptedRun(Exception):
     pass
 
@@ -193,7 +270,10 @@ class InterruptedRun(Exception):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", required=True)
-    parser.add_argument("--path", required=True, help="experiments/<id> or experiments/<id>/evals/<run-id>")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--path", help="experiments/<id> or experiments/<id>/evals/<run-id>")
+    target.add_argument("--compare", nargs="+", metavar="EXPERIMENT", help="run invoke.json entries on comparison/inputs.jsonl")
+    parser.add_argument("--timeout", type=float, default=600, help="per-model timeout for --compare")
     args = parser.parse_args()
     tree = None
     previous = {}
@@ -208,6 +288,10 @@ def main():
         for sig in (signal.SIGTERM, signal.SIGINT):
             previous[sig] = signal.signal(sig, interrupt)
         tree = Tree(args.project)
+        if args.compare:
+            result = compare(tree, args.compare, args.timeout)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0 if all(item["returncode"] == 0 for item in result["experiments"].values()) else 1
         status = execute(tree, args.path)
         print(json.dumps(status, ensure_ascii=False))
         return 0 if status["state"] == "completed" else 1

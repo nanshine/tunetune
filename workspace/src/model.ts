@@ -8,11 +8,27 @@ export type Outcome = 'baseline' | 'keep' | 'discard' | 'inconclusive' | 'invali
 export type Analysis = { outcome: Outcome | 'unknown'; summary: string };
 export type Usage = { requests?: number; input_tokens?: number; output_tokens?: number; cost?: number; currency?: string; latency_seconds?: number };
 export const roleLabels: Record<string, string> = { baseline: '基线', candidate: '候选改进', reference: '质量参照', recommended: '推荐路线', challenge: '挑战路线' };
-export type Experiment = { id: string; title: string; parent: string | null; state: string; modelPath: string; targetKind: 'local' | 'api' | ''; role: string; usage: Usage; method: string; modelName: string; framework: string; hypothesis: string; parameters: JsonObject; analysis: Analysis };
+export type Experiment = { id: string; title: string; parent: string | null; state: string; modelPath: string; targetKind: 'local' | 'api' | ''; invoke: string[]; role: string; usage: Usage; method: string; modelName: string; framework: string; hypothesis: string; parameters: JsonObject; analysis: Analysis };
 export type EvaluationRun = { id: string; experimentId: string; version: string; state: string; metrics: Record<string, number>; metricLabels: Record<string, string>; path: string; recordedAt: string; evaluationHash: string; inputFingerprint: string; usage: Usage };
 
 export const outcomeLabels: Record<Outcome | 'unknown', string> = { baseline: '基线', keep: '保留', discard: '舍弃', inconclusive: '暂不确定', invalid: '无效', unknown: '尚无结论' };
 export const resourceStates: Record<ResourceState, string> = { ready: '已就绪', missing: '缺失', changed: '已变化', busy: '使用中', unknown: '未知' };
+export type ReferenceStatus = 'confirmed' | 'corrected' | 'draft';
+export const referenceStatusLabels: Record<ReferenceStatus, string> = { confirmed: '已确认', corrected: '已修正', draft: '待审核' };
+// Unmarked references are drafts: only the person's review makes them their judgment.
+export function referenceStatus(row: JsonObject): ReferenceStatus | null {
+  if (!Object.hasOwn(row, 'reference')) return null;
+  const value = text(row.reference_status);
+  return value === 'confirmed' || value === 'corrected' ? value : 'draft';
+}
+export function referenceReview(rows: JsonObject[]): Record<ReferenceStatus, number> {
+  const counts: Record<ReferenceStatus, number> = { confirmed: 0, corrected: 0, draft: 0 };
+  for (const row of rows) {
+    const status = referenceStatus(row);
+    if (status) counts[status] += 1;
+  }
+  return counts;
+}
 export const stateLabels: Record<string, string> = { pending: '待运行', running: '记录为运行中', completed: '待核验', succeeded: '成功', failed: '失败', cancelled: '已取消', unknown: '尚无记录' };
 
 export function object(value: unknown): JsonObject {
@@ -75,9 +91,12 @@ export function experiments(files: Snapshot['files']): Experiment[] {
     const status = document(files, `experiments/${id}/status.json`);
     const record = document(files, `experiments/${id}/analysis.json`);
     const outcome = text(record.outcome);
+    const modelPath = text(object(status.target).path);
+    const argv = array(document(files, `experiments/${id}/model/invoke.json`).argv);
     return {
       id, title: text(config.title, id), parent: text(config.parent_experiment_id) || null,
-      state: text(status.state, 'pending'), modelPath: text(object(status.target).path),
+      state: text(status.state, 'pending'), modelPath,
+      invoke: modelPath === `experiments/${id}/model` && argv.length && argv.every(item => typeof item === 'string') ? argv as string[] : [],
       targetKind: object(status.target).kind === 'local' || object(status.target).kind === 'api' ? object(status.target).kind as 'local' | 'api' : '', role: text(config.role), usage: object(status.usage) as Usage,
       method: text(config.method), modelName: text(config.model_name), framework: text(config.framework), hypothesis: text(config.hypothesis), parameters: object(config.parameters),
       analysis: { outcome: Object.hasOwn(outcomeLabels, outcome) ? outcome as Analysis['outcome'] : 'unknown', summary: text(record.summary) },
@@ -159,8 +178,19 @@ export function compatibleMeasurements(left: EvaluationRun | undefined, right: E
   return !!left && !!right && left.state === 'succeeded' && right.state === 'succeeded' && !!left.evaluationHash && left.evaluationHash === right.evaluationHash && left.version === right.version && left.inputFingerprint === right.inputFingerprint;
 }
 
+export function acceptanceInputs(files: Snapshot['files']): boolean {
+  return Array.isArray(files['comparison/inputs.jsonl']?.content);
+}
 export function comparisonSamples(files: Snapshot['files'], leftId: string, rightId: string, version: string): JsonObject[] {
   const explicit = files['comparison/outputs.jsonl'];
+  if (acceptanceInputs(files)) {
+    // Acceptance inputs define the rows; outputs for a since-changed input are not shown.
+    const produced = new Map(array(explicit?.content).map(object).map(row => [text(row.sample_id), row]));
+    return array(files['comparison/inputs.jsonl'].content).map(object).map(row => {
+      const done = produced.get(text(row.sample_id));
+      return { ...row, outputs: done && JSON.stringify(done.input) === JSON.stringify(row.input) ? object(done.outputs) : {} };
+    });
+  }
   if (explicit) return array(explicit.content).map(object);
   const results = evaluationRuns(files);
   const left = preferredEvaluation(results.filter(run => run.experimentId === leftId), version);
