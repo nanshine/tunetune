@@ -9,7 +9,7 @@ import { ExperimentDetails } from './ExperimentDetails';
 import { experiments } from './model';
 
 const file = (content: unknown): ResearchFile => ({ content, sha256: 'a'.repeat(64) });
-const files: Snapshot['files'] = { 'project.json': file({ schema_version: 3, deliveries: ['local', 'api'] }) };
+const files: Snapshot['files'] = { 'project.json': file({ schema_version: 4, deliveries: ['local', 'api'] }) };
 for (const id of ['local', 'api']) {
   files[`experiments/${id}/config.json`] = file({ role: id === 'api' ? 'reference' : 'baseline' });
   files[`experiments/${id}/status.json`] = file({ state: 'succeeded', target: { kind: id, path: `experiments/${id}/model`, sha256: 'b'.repeat(64) } });
@@ -18,12 +18,12 @@ for (const id of ['local', 'api']) {
   files[`experiments/${id}/evals/a/outputs.jsonl`] = file([{ sample_id: 'same', input: '问题', output: id === 'api' ? { answer: '参照答案' } : ['本地答案'] }]);
 }
 
-describe('format 3 research behavior', () => {
+describe('format 4 research behavior', () => {
   it('keeps API references available for comparison and out of local deliveries', () => {
     expect(comparableModels(files).map(item => item.id)).toEqual(['api', 'local']);
     expect(deliveredModels(files).map(item => item.id)).toEqual(['local']);
-    const html = renderToStaticMarkup(createElement(ExperimentDetails, { experiment: experiments(files)[0], results: evaluationRuns(files), files, currentVersion: 'v1', delivered: false, onClose: () => {}, onCompare: () => {} }));
-    for (const value of ['质量参照', '在线 API', '远端模型完全复现', '费用 0 USD', '2 秒', '模型对比']) expect(html).toContain(value);
+    const html = renderToStaticMarkup(createElement(ExperimentDetails, { experiment: experiments(files)[0], experimentsById: new Map(), results: evaluationRuns(files), files, currentVersion: 'v1', delivered: false, onOpenAcceptance: () => {} }));
+    for (const value of ['质量参照', '在线 API', '远端模型完全复现']) expect(html).toContain(value);
   });
   it('reuses compatible measured outputs, and never silently merges other inputs or hashes', () => {
     expect(comparisonSamples(files, 'local', 'api', 'v1')).toEqual([{ sample_id: 'same', input: '问题', outputs: { local: ['本地答案'], api: { answer: '参照答案' } } }]);
@@ -38,14 +38,16 @@ describe('format 3 research behavior', () => {
   it('rejects old projects and invalid usage without replacing usable contents', () => {
     const snapshot = { files, revision: 'r', synced_at: '', error: null };
     expect(parseSnapshot(snapshot).files).toBe(files);
-    expect(() => parseSnapshot({ ...snapshot, files: { ...files, 'project.json': file({ schema_version: 2, deliveries: [] }) } })).toThrow('格式 3');
+    expect(() => parseSnapshot({ ...snapshot, files: { ...files, 'project.json': file({ schema_version: 2, deliveries: [] }) } })).toThrow('格式 4');
     for (const usage of [{ cost: -1 }, { latency_seconds: Infinity }, { currency: 1 }, { api_key: 'secret' }]) expect(() => parseSnapshot({ ...snapshot, files: { ...files, 'experiments/api/status.json': file({ state: 'failed', usage }) } })).toThrow('用量');
   });
   it('shows researched alternatives, resource plans and safe primary-source links', () => {
     const resources = { items: [{ id: 'm', title: '语义模型', purpose: '识别语义', source: 'https://example.com/model', preparation: '约 100 MB，保存到 models/', access: '仅本地使用' }] };
-    const proposal = { approaches: [{ title: '语义分类', roles: ['recommended', 'reference'], rationale: '参考 https://example.com/docs。', limitations: '需验证长文', resource_ids: ['m'] }] };
-    const html = renderToStaticMarkup(createElement(ProposalView, { proposal, resources })) + renderToStaticMarkup(createElement(ResourcesView, { resources }));
-    for (const value of ['推荐路线', '质量参照', '语义模型', '约 100 MB', '仅本地使用', 'href="https://example.com/docs"', 'href="https://example.com/model"']) expect(html).toContain(value);
+    const proposal = { summary: '标签分类', examples: [], approaches: [{ title: '语义分类', roles: ['recommended', 'reference'], rationale: '用中文向量模型', limitations: '需验证长文', resource_ids: ['m'] }],
+      sources: [{ title: '模型卡', url: 'https://example.com/docs' }, { title: '坏链接', url: 'javascript:alert(1)' }] };
+    const html = renderToStaticMarkup(createElement(ProposalView, { files: { 'proposal.json': file(proposal), 'resources.json': file(resources) } })) + renderToStaticMarkup(createElement(ResourcesView, { resources }));
+    for (const value of ['推荐路线', '质量参照', '语义模型', '识别语义', 'href="https://example.com/docs"', 'example.com']) expect(html).toContain(value);
+    expect(html).not.toContain('javascript:');
   });
 });
 

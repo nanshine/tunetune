@@ -1,6 +1,6 @@
 # Deterministic research tools
 
-Use Python 3.10+ on POSIX macOS/Linux; no additional packages. Resolve the installed shared skill's absolute path. Write your own helper scripts and temporary inputs under `$PROJECT/.workspace/tmp/`, never the system temporary directory, so the study stays removable. `$RECORDS` below is its `scripts/records.py`, `$RUN` is the sibling `scripts/run.py`, `$HELPERS` is their absolute scripts directory, and `$PROJECT` is the absolute research-project directory. Read [records.md](records.md) for format 3. Incompatible project schemas are rejected, not migrated.
+Use Python 3.10+ on POSIX macOS/Linux; no additional packages. Resolve the installed shared skill's absolute path. Write your own helper scripts and temporary inputs under `$PROJECT/.workspace/tmp/`, never the system temporary directory, so the study stays removable. `$RECORDS` below is its `scripts/records.py`, `$RUN` is the sibling `scripts/run.py`, `$HELPERS` is their absolute scripts directory, and `$PROJECT` is the absolute research-project directory. Read [records.md](records.md) for format 4. Incompatible project schemas are rejected, not migrated.
 
 ## Inspect and validate
 
@@ -8,13 +8,15 @@ Use Python 3.10+ on POSIX macOS/Linux; no additional packages. Resolve the insta
 python3 "$RECORDS" hash --project "$PROJECT" --path proposal.json
 python3 "$RECORDS" validate --project "$PROJECT"
 python3 "$RECORDS" next-id --project "$PROJECT" --slug embed-lr
+python3 "$RECORDS" view --project "$PROJECT" --open proposal --attention "proposal:请确认研究提案"
+python3 "$RECORDS" view --project "$PROJECT" --open review --focus e000-keyword --clear
 ```
 
 `hash` returns `{path,sha256}` for actual file bytes. `validate` returns `{valid,errors,warnings,unfinished}`. Validation checks core records, record shapes, references, frozen file sets and byte hashes, model containment, declared metrics and evaluation samples/outputs. Missing or nonfinal attempt statuses are unfinished; `completed` still awaits output verification. Missing installed-tool metadata is a warning; an incompatible schema range is an error.
 
 Exit 0 means no validation errors, not scientific validity or finished research. Errors exit 1; argument errors exit 2. Results are JSON on stdout; operational errors are JSON on stderr. Validation is read-only and can observe partial multi-file publication. It does not prove process liveness, dependency completeness, suitability of resources or user authorization. Explicit external resource locations are descriptive and never fetched.
 
-`next-id` returns `{id}` with the next `eNNN` number after existing experiment directories and plan items, plus the optional lowercase slug. It reserves nothing by itself; write the ID into the plan or an experiment config.
+`view` publishes panel focus: windows to open, an experiment to centre and attention notes `view:message` shown on the matching tile. Notes for a view replace earlier notes for that view; `--clear` drops all earlier notes. Clear a note once its decision is made. `next-id` returns `{id}` with the next `eNNN` number after existing experiment directories and plan items, plus the optional lowercase slug. It reserves nothing by itself; write the ID into the plan or an experiment config.
 
 ## Publish records
 
@@ -85,13 +87,21 @@ python3 "$RECORDS" finalize --project "$PROJECT" --path experiments/e1/evals/r1
 
 Only a `completed` attempt can be finalized. For an experiment it creates or verifies the model manifest (or hashes `--target`, a file inside `model/`; `--kind api` for API descriptors) and publishes `target`. For an evaluation run it copies inputs and references from the frozen samples, requires every sample and declared metric, publishes `outputs.jsonl` and marks success. Checks run before publication; on refusal inspect, fix the cause in a new attempt or mark the status `failed` explicitly. Manual finalization remains available and must preserve all process facts. Repeated evaluations use new nested IDs without retraining. Never reset status or delete a reserved log to rerun an ID.
 
+### Trying one input
+
+```sh
+echo '{"title":"新文章","text":"……"}' | python3 "$RUN" --project "$PROJECT" --try e002-embed-lr --timeout 180
+```
+
+Runs one verified local model's entry point on one JSON input from stdin in a private temporary directory and prints `{experiment,returncode,timed_out,elapsed_seconds,output?|log_tail?}`. Nothing is recorded. The panel's trial box uses this.
+
 ### Acceptance outputs
 
 ```sh
 python3 "$RUN" --project "$PROJECT" --compare e1 e2 --timeout 600
 ```
 
-Each named experiment must be a verified succeeded model with `invoke.json`. Its argv runs from the project root with a private copy of `comparison/inputs.jsonl` and an output path appended, without holding the writer lock; its log is saved as `comparison/logs/<id>.log`. Rows `{sample_id,output}` from a zero exit replace that experiment's earlier outputs; a failed or timed-out model keeps its earlier outputs for unchanged inputs and is reported. Outputs for changed or removed inputs are dropped. The merge refuses if `comparison/outputs.jsonl` changed meanwhile. Exit 1 reports at least one failed model. This is not an evaluation and records no scores.
+Each named experiment must be a verified succeeded model with `invoke.json`; `--local-only`, used by the panel's run button, refuses API models so the panel never spends money. Its argv runs from the project root with a private copy of `comparison/inputs.jsonl` and an output path appended, without holding the writer lock; its log is saved as `comparison/logs/<id>.log`. Rows `{sample_id,output}` from a zero exit replace that experiment's earlier outputs; a failed or timed-out model keeps its earlier outputs for unchanged inputs and is reported. Outputs for changed or removed inputs are dropped. The merge refuses if `comparison/outputs.jsonl` changed meanwhile. Exit 1 reports at least one failed model. This is not an evaluation and records no scores.
 
 The supervisor reserves its process-group identity until cleanup. Completion, timeout and handled CLI SIGINT/SIGTERM kill only this invocation's group, including workers left after payload exit. Commands must not detach or daemonize. Escaped processes, hard-killed runners, power loss, arbitrary filesystem writes, log size and global spending are not contained. These tools are not a sandbox, scheduler or authorization engine. Python embedders own their host's signal lifecycle; use the CLI subprocess when managed cancellation is needed.
 
@@ -104,8 +114,8 @@ The supervisor reserves its process-group identity until cleanup. Completion, ti
 - `freeze(tree,root,source,path)` and `manifest(tree,path) -> {path,files,manifest_sha256}`.
 - `verify_hash(tree,path,expected)`, `verify_manifest(tree,base,expected=None)`, `verify_path_hash(tree,path,expected)`, `verify_inputs(tree,attempt_path,config)`.
 - `validate(tree) -> {valid,errors,warnings,unfinished}`.
-- `next_id(tree,slug=None) -> {id}`.
-- Sibling `run.py`: `execute(tree,attempt_path) -> status`.
+- `next_id(tree,slug=None) -> {id}`; `set_view(tree,open_views,focus,attention,clear)`; `publish_response(...)` is for the panel only.
+- Sibling `run.py`: `execute(tree,attempt_path) -> status`, `compare(tree,experiments,timeout,local_only=False)` and `try_model(tree,experiment,value,timeout)`.
 
 Writing, freezing, manifest generation and execution acquire the lock themselves; do not call them while holding `tree.locked()`. Rejected operations raise errors. Neither tool imports or controls the panel.
 

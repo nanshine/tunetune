@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Validate and publish format-3 research files without executing commands."""
+"""Validate and publish format-4 research files without executing commands."""
 import argparse
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
@@ -17,9 +17,12 @@ import uuid
 ID = r"[A-Za-z0-9_-]+"
 SHA = re.compile(r"[a-f0-9]{64}\Z")
 FINAL = ("succeeded", "failed", "cancelled")
+SCHEMA = 4
+VIEWS = ("proposal", "plan", "resources", "evaluation", "review", "acceptance")
+RESPONSE_TARGETS = {"proposal": "proposal.json", "plan": "plan.json", "evaluation_review": "evaluation/draft/samples.jsonl"}
 ATTEMPT = rf"experiments/{ID}(?:/evals/{ID})?"
 RECORD = re.compile(
-    rf"(?:project|proposal|resources|plan)\.json|comparison/(?:inputs|outputs)\.jsonl|"
+    rf"(?:project|proposal|resources|plan)\.json|comparison/(?:inputs|outputs)\.jsonl|responses/{ID}\.json|"
     rf"evaluation/{ID}/(?:definition\.json|samples\.jsonl)|"
     rf"{ATTEMPT}/(?:config|status)\.json|experiments/{ID}/analysis\.json|"
     rf"experiments/{ID}/evals/{ID}/outputs\.jsonl")
@@ -216,7 +219,7 @@ class Tree:
 
 def shape(path, data):
     parts(path)
-    require(bool(RECORD.fullmatch(path)), "Path is not a format-3 research record")
+    require(bool(RECORD.fullmatch(path)), "Path is not a format-4 research record")
     if path.endswith(".jsonl"):
         rows = [strict(line) for line in data.decode("utf-8").splitlines() if line.strip()]
         ids = []
@@ -247,8 +250,8 @@ def shape(path, data):
     leaf = path.split("/")[-1]
     evaluation_run = "/evals/" in path
     if path == "project.json":
-        require(type(obj.get("schema_version")) is int and obj["schema_version"] == 3,
-                "Unsupported schema_version: format 3 required; no automatic migration")
+        require(type(obj.get("schema_version")) is int and obj["schema_version"] == SCHEMA,
+                "Unsupported schema_version: format 4 required; no automatic migration")
         fields(obj, ("schema_version", "name", "language", "current_evaluation", "deliveries"))
         if obj["current_evaluation"] is not None:
             identifier(obj["current_evaluation"])
@@ -258,11 +261,18 @@ def shape(path, data):
             identifier(item)
         require(len(obj["deliveries"]) == len(set(obj["deliveries"])), "Duplicate delivery")
     elif path == "proposal.json":
-        fields(obj, ("summary", "sections", "examples"), ("feasibility", "approaches"))
-        require(isinstance(obj["sections"], list) and isinstance(obj["examples"], list), "sections/examples must be arrays")
-        for section in obj["sections"]:
-            fields(section, ("title", "body"))
-            require(all(isinstance(v, str) for v in section.values()), "Invalid proposal section")
+        texts = ("goal", "output", "evaluation", "budget", "stopping", "delivery")
+        fields(obj, ("summary", "examples"), (*texts, "considered", "approaches", "sources", "assumptions", "feasibility"))
+        require(isinstance(obj["summary"], str) and all(isinstance(obj[k], str) for k in texts if k in obj), "Invalid proposal text")
+        require(isinstance(obj["examples"], list), "examples must be an array")
+        require(isinstance(obj.get("considered", []), list) and isinstance(obj.get("sources", []), list), "considered/sources must be arrays")
+        for item in obj.get("considered", []):
+            fields(item, ("family", "decision", "reason"))
+            require(item["decision"] in ("adopted", "excluded") and isinstance(item["family"], str) and isinstance(item["reason"], str), "Invalid considered family")
+        for item in obj.get("sources", []):
+            fields(item, ("title", "url"))
+            require(isinstance(item["title"], str) and isinstance(item["url"], str) and re.fullmatch(r"https?://[^\s]+", item["url"]), "Invalid source")
+        require(isinstance(obj.get("assumptions", []), list) and all(isinstance(x, str) for x in obj.get("assumptions", [])), "assumptions must be strings")
         ids = []
         for example in obj["examples"]:
             fields(example, ("id", "input"), ("expected_output",))
@@ -287,6 +297,23 @@ def shape(path, data):
             fields(obj["feasibility"], ("verdict", "reason"))
             require(obj["feasibility"]["verdict"] in ("feasible", "conditional", "infeasible", "unknown")
                     and isinstance(obj["feasibility"]["reason"], str), "Invalid feasibility")
+    elif path.startswith("responses/"):
+        fields(obj, ("id", "kind", "target", "created_at", "decision"), ("note", "items"))
+        require(obj["id"] == path[len("responses/"):-len(".json")], "Response ID must match its file name")
+        require(obj["kind"] in RESPONSE_TARGETS, "Invalid response kind")
+        fields(obj["target"], ("path", "sha256"))
+        require(obj["target"]["path"] == RESPONSE_TARGETS[obj["kind"]] and isinstance(obj["target"]["sha256"], str)
+                and SHA.fullmatch(obj["target"]["sha256"]), "Invalid response target")
+        timestamp(obj["created_at"])
+        require(obj["decision"] in ("approve", "revise", "continue", "stop", "submit"), "Invalid response decision")
+        require(isinstance(obj.get("note", ""), str) and len(obj.get("note", "")) <= 4000, "Invalid response note")
+        require(isinstance(obj.get("items", []), list) and len(obj.get("items", [])) <= 2000, "items must be an array")
+        for item in obj.get("items", []):
+            fields(item, ("sample_id", "verdict"), ("reference", "note"))
+            require(isinstance(item["sample_id"], str) and item["sample_id"], "Invalid response sample")
+            require(item["verdict"] in ("confirm", "correct", "question"), "Invalid response verdict")
+            require(item["verdict"] != "correct" or "reference" in item, "A correction needs its reference")
+            require(isinstance(item.get("note", ""), str), "Invalid response item note")
     elif path == "plan.json":
         fields(obj, ("rounds",), ("ideas",))
         require(isinstance(obj["rounds"], list), "rounds must be an array")
@@ -344,9 +371,10 @@ def shape(path, data):
         require(isinstance(obj["metrics"], list), "metrics must be an array")
         ids = []
         for metric in obj["metrics"]:
-            fields(metric, ("id", "label", "direction"))
+            fields(metric, ("id", "label", "direction"), ("description",))
             identifier(metric["id"])
-            require(isinstance(metric["label"], str) and metric["direction"] in ("maximize", "minimize"), "Invalid metric definition")
+            require(isinstance(metric["label"], str) and metric["direction"] in ("maximize", "minimize")
+                    and isinstance(metric.get("description", ""), str), "Invalid metric definition")
             ids.append(metric["id"])
         require(len(ids) == len(set(ids)), "Duplicate metric ID")
     elif leaf == "analysis.json":
@@ -432,11 +460,11 @@ def read_record(tree, path):
 
 
 def check_installed_metadata(tree):
-    """Fresh, uninstalled trees are allowed; installed tools must be format 3 only."""
+    """Fresh, uninstalled trees are allowed; installed tools must be format 4 only."""
     if not tree.exists(".workspace/manifest.json"):
         return False
     kit = strict(tree.read(".workspace/manifest.json"))
-    require(isinstance(kit, dict) and all(type(kit.get(key)) is int and kit[key] == 3
+    require(isinstance(kit, dict) and all(type(kit.get(key)) is int and kit[key] == SCHEMA
             for key in ("schema_min", "schema_max")), "Incompatible kit schema range")
     return True
 
@@ -655,7 +683,8 @@ def mutable(path, old, tree=None):
 
 def write(tree, path, source, create=False, expected=None):
     parts(path)
-    require(bool(RECORD.fullmatch(path)), "Path is not a writable format-3 research record")
+    require(bool(RECORD.fullmatch(path)), "Path is not a writable format-4 research record")
+    require(not path.startswith("responses/"), "Responses are written only by the person through the panel")
     require(not create or expected is None, "Choose create or expected SHA-256, not both")
     require(".." not in os.fspath(source).split("/"), "Parent traversal is not allowed")
     source_path = Path(os.path.abspath(source))
@@ -819,7 +848,7 @@ def validate(tree):
     def error(path, exc):
         report["errors"].append(f"{path}: {exc}")
     names = [p for p in ("project.json", "proposal.json", "plan.json", "resources.json") if tree.exists(p)]
-    for prefix in ("evaluation", "experiments", "comparison"):
+    for prefix in ("evaluation", "experiments", "comparison", "responses"):
         try:
             if tree.exists(prefix):
                 names.extend(tree.files(prefix))
@@ -884,14 +913,72 @@ def next_id(tree, slug=None):
     return {"id": f"e{number:03d}" + (f"-{slug}" if slug else "")}
 
 
+def publish_response(tree, kind, decision, target_sha256, note=None, items=None):
+    """Record the person's answer from the panel, bound to the exact bytes they saw."""
+    require(kind in RESPONSE_TARGETS, "Invalid response kind")
+    hash_value(target_sha256)
+    target = RESPONSE_TARGETS[kind]
+    with tree.locked():
+        require(tree.exists(target), f"{target} does not exist")
+        require(digest(tree.read(target)) == target_sha256, "Conflict: the file changed after it was shown; reload and respond again")
+        ident = "r" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:6]
+        value = {"id": ident, "kind": kind, "target": {"path": target, "sha256": target_sha256},
+                 "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "decision": decision}
+        if note:
+            value["note"] = note
+        if items:
+            value["items"] = items
+        path = f"responses/{ident}.json"
+        data = encoded(value)
+        shape(path, data)
+        if kind == "evaluation_review":
+            known = {row["sample_id"] for row in read_record(tree, target)}
+            require(all(item["sample_id"] in known for item in items or []), "Unknown reviewed sample")
+        tree.publish(path, data)
+    return value
+
+
+def set_view(tree, open_views=(), focus=None, attention=(), clear=False):
+    """Publish panel focus for the person; this is display state, not research evidence."""
+    for view in open_views:
+        require(view in VIEWS, f"Unknown view: {view}")
+    if focus is not None:
+        identifier(focus)
+    notes = []
+    for raw in attention:
+        view, sep, message = raw.partition(":")
+        require(sep and view in VIEWS and message.strip() and len(message) <= 200, "Attention must be view:message")
+        notes.append({"view": view, "message": message.strip()})
+    with tree.locked():
+        previous = {}
+        if tree.exists(".workspace/view.json"):
+            try:
+                previous = strict(tree.read(".workspace/view.json"))
+            except ValueError:
+                previous = {}
+        kept = [] if clear else [n for n in previous.get("attention", []) if isinstance(n, dict) and n.get("view") not in {x["view"] for x in notes}]
+        value = {"revision": int(previous.get("revision", 0)) + 1 if isinstance(previous.get("revision", 0), int) else 1,
+                 "open": list(dict.fromkeys(open_views)), "attention": kept + notes,
+                 "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+        if focus is not None:
+            value["focus"] = {"experiment": focus}
+        tree.publish(".workspace/view.json", encoded(value), replace=tree.exists(".workspace/view.json"))
+    return value
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("hash", "validate", "write", "freeze", "manifest", "finalize", "next-id"):
+    for name in ("hash", "validate", "write", "freeze", "manifest", "finalize", "next-id", "view"):
         command = commands.add_parser(name)
         command.add_argument("--project", required=True)
         if name == "next-id":
             command.add_argument("--slug")
+        elif name == "view":
+            command.add_argument("--open", action="append", default=[], choices=VIEWS)
+            command.add_argument("--focus")
+            command.add_argument("--attention", action="append", default=[], help="view:message for the person")
+            command.add_argument("--clear", action="store_true", help="drop earlier attention notes")
         elif name != "validate":
             command.add_argument("--path", required=True)
         if name == "finalize":
@@ -910,6 +997,8 @@ def main():
         tree = Tree(args.project)
         if args.command == "validate":
             result = validate(tree)
+        elif args.command == "view":
+            result = set_view(tree, args.open, args.focus, args.attention, args.clear)
         elif args.command == "next-id":
             result = next_id(tree, args.slug)
         elif args.command == "hash":

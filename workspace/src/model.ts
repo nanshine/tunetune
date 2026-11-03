@@ -3,7 +3,10 @@ export type ResearchFile = { content: unknown; sha256: string };
 export type ResourceState = 'ready' | 'missing' | 'changed' | 'busy' | 'unknown';
 export type ResourceObservation = { id: string; state: ResourceState; detail?: string; size?: string | number; modified_at?: string };
 export type Observations = { checked_at: string; items: ResourceObservation[] };
-export type Snapshot = { files: Record<string, ResearchFile>; revision: string; synced_at: string; error: string | null; observations?: Observations };
+export type ViewName = 'proposal' | 'plan' | 'resources' | 'evaluation' | 'review' | 'acceptance';
+export type ViewState = { revision: number; open: ViewName[]; focus: { experiment?: string }; attention: { view: ViewName; message: string }[] };
+export type AcceptanceJob = { id: string; state: 'running' | 'succeeded' | 'failed'; experiments: string[]; started_at: string; finished_at?: string; failed?: string[]; message?: string };
+export type Snapshot = { files: Record<string, ResearchFile>; revision: string; synced_at: string; error: string | null; observations?: Observations; view?: ViewState | null; acceptance?: AcceptanceJob | null };
 export type Outcome = 'baseline' | 'keep' | 'discard' | 'inconclusive' | 'invalid';
 export type Analysis = { outcome: Outcome | 'unknown'; summary: string };
 export type Usage = { requests?: number; input_tokens?: number; output_tokens?: number; cost?: number; currency?: string; latency_seconds?: number };
@@ -65,8 +68,8 @@ export function parseSnapshot(value: unknown): Snapshot {
     }
   }
   const files = data.files as Snapshot['files'];
-  if (Object.keys(files).length && document(files, 'project.json').schema_version !== 3) throw new Error('此研究使用旧版文件，请使用支持该版本的工具打开；新版仅支持格式 3');
-  for (const [path, key] of [['resources.json', 'items'], ['proposal.json', 'sections'], ['proposal.json', 'examples'], ['project.json', 'deliveries']]) {
+  if (Object.keys(files).length && document(files, 'project.json').schema_version !== 4) throw new Error('这个研究目录使用旧版文件格式，当前工作台只能打开格式 4 的研究');
+  for (const [path, key] of [['resources.json', 'items'], ['proposal.json', 'examples'], ['project.json', 'deliveries']]) {
     if (files[path] && !Array.isArray(document(files, path)[key])) throw new Error(`${path}：${key} 必须是列表`);
   }
   if (data.observations !== undefined) {
@@ -83,6 +86,51 @@ export function parseSnapshot(value: unknown): Snapshot {
     }
   }
   return data as Snapshot;
+}
+
+export type PlanState = 'planned' | 'running' | 'done' | 'dropped';
+export type PlanItem = { id: string; title: string; question: string; expected: string; state: PlanState; intervention: string; parent: string | null; comparator: string; cost: string; note: string; resourceIds: string[] };
+export type PlanRound = { round: number; goal: string; budget: string; conclusion: string; items: PlanItem[] };
+export const planStateLabels: Record<PlanState, string> = { planned: '计划中', running: '进行中', done: '已完成', dropped: '已放弃' };
+export function plan(files: Snapshot['files']): { rounds: PlanRound[]; ideas: { title: string; reason: string }[] } {
+  const raw = document(files, 'plan.json');
+  const rounds = array(raw.rounds).map(object).map((round, index) => ({
+    round: typeof round.round === 'number' ? round.round : index + 1, goal: text(round.goal), budget: text(round.budget), conclusion: text(round.conclusion),
+    items: array(round.items).map(object).filter(item => /^[A-Za-z0-9_-]+$/.test(text(item.id))).map(item => {
+      const state = text(item.state);
+      return { id: text(item.id), title: text(item.title, text(item.id)), question: text(item.question), expected: text(item.expected),
+        state: (Object.hasOwn(planStateLabels, state) ? state : 'planned') as PlanState, intervention: text(item.intervention), parent: text(item.parent) || null,
+        comparator: text(item.comparator), cost: text(item.cost), note: text(item.note), resourceIds: array(item.resource_ids).filter((id): id is string => typeof id === 'string') };
+    }),
+  }));
+  return { rounds, ideas: array(raw.ideas).map(object).map(idea => ({ title: text(idea.title), reason: text(idea.reason) })).filter(idea => idea.title) };
+}
+// Planned work that has no experiment yet; shown as dashed canvas nodes.
+export function plannedNodes(files: Snapshot['files']): PlanItem[] {
+  const existing = new Set(experiments(files).map(item => item.id));
+  const seen = new Set<string>();
+  return plan(files).rounds.flatMap(round => round.items).reverse().filter(item => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return !existing.has(item.id) && (item.state === 'planned' || item.state === 'running');
+  }).reverse();
+}
+// "e002-embed-lr" reads as "E002"; other IDs are shown as written.
+export function experimentNumber(id: string): string {
+  const match = /^e(\d{3,})(?:-|$)/.exec(id);
+  return match ? `E${match[1]}` : id;
+}
+
+export type ResponseKind = 'proposal' | 'plan' | 'evaluation_review';
+export const responseTargets: Record<ResponseKind, string> = { proposal: 'proposal.json', plan: 'plan.json', evaluation_review: 'evaluation/draft/samples.jsonl' };
+// The person's latest answer still applies only while the file they answered is unchanged.
+export function currentResponse(files: Snapshot['files'], kind: ResponseKind): JsonObject | null {
+  const target = files[responseTargets[kind]];
+  if (!target) return null;
+  const answers = collection(files, /^responses\/[A-Za-z0-9_-]+\.json$/).map(([, value]) => value)
+    .filter(value => value.kind === kind && text(object(value.target).sha256) === target.sha256)
+    .sort((a, b) => text(a.created_at).localeCompare(text(b.created_at)));
+  return answers.at(-1) ?? null;
 }
 
 export function experiments(files: Snapshot['files']): Experiment[] {
@@ -150,25 +198,40 @@ export function resourceObservation(resource: JsonObject, observations: Observat
   return observation ? { state: observation.state, observation } : { state: fallback };
 }
 
-export function layout(items: Pick<Experiment, 'id' | 'parent'>[]): Map<string, { x: number; y: number }> {
+export const NODE_WIDTH = 248;
+export const NODE_HEIGHT = 92;
+const COLUMN_GAP = 72;
+const ROW_GAP = 24;
+// A tidy tree: each subtree occupies its own rows and a parent is centred on its children,
+// so fixed-size nodes never overlap and branches never cross.
+export function layout(items: { id: string; parent: string | null }[]): Map<string, { x: number; y: number }> {
   const byId = new Map(items.map(item => [item.id, item]));
-  const levels = new Map<string, number>();
-  function depth(id: string, visited = new Set<string>()): number {
-    if (levels.has(id)) return levels.get(id)!;
-    if (visited.has(id)) return 0;
-    visited.add(id);
-    const parent = byId.get(id)?.parent;
-    const level = parent && byId.has(parent) ? depth(parent, visited) + 1 : 0;
-    levels.set(id, level);
-    return level;
+  const children = new Map<string, string[]>();
+  const roots: string[] = [];
+  function reachesSelf(id: string): boolean {
+    const seen = new Set<string>();
+    let current = byId.get(id)?.parent ?? null;
+    while (current && byId.has(current)) {
+      if (current === id || seen.has(current)) return true;
+      seen.add(current);
+      current = byId.get(current)?.parent ?? null;
+    }
+    return false;
   }
-  const rows = new Map<number, number>();
-  return new Map(items.map(item => {
-    const level = depth(item.id);
-    const row = rows.get(level) ?? 0;
-    rows.set(level, row + 1);
-    return [item.id, { x: level * 360 + 48, y: row * 360 + 160 }];
-  }));
+  for (const item of items) {
+    if (item.parent && byId.has(item.parent) && !reachesSelf(item.id)) children.set(item.parent, [...(children.get(item.parent) ?? []), item.id]);
+    else roots.push(item.id);
+  }
+  const positions = new Map<string, { x: number; y: number }>();
+  let row = 0;
+  function place(id: string, depth: number): number {
+    const kids = children.get(id) ?? [];
+    const centre = kids.length ? kids.map(kid => place(kid, depth + 1)).reduce((sum, value, _, all) => sum + value / all.length, 0) : row++;
+    positions.set(id, { x: depth * (NODE_WIDTH + COLUMN_GAP), y: centre * (NODE_HEIGHT + ROW_GAP) });
+    return centre;
+  }
+  for (const root of roots) place(root, 0);
+  return positions;
 }
 
 export function comparableModels(files: Snapshot['files']): Experiment[] {

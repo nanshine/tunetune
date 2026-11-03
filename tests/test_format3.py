@@ -28,10 +28,10 @@ class Format3Tests(unittest.TestCase):
         self.root.mkdir()
         self.tree = records.Tree(self.root)
         self.addCleanup(self.tree.close)
-        self.raw("project.json", dict(schema_version=3, name="Fixture", language="en", current_evaluation=None, deliveries=[]))
-        self.raw("proposal.json", dict(summary="Fixture", sections=[], examples=[]))
+        self.raw("project.json", dict(schema_version=4, name="Fixture", language="en", current_evaluation=None, deliveries=[]))
+        self.raw("proposal.json", dict(summary="Fixture", examples=[]))
         self.raw("resources.json", dict(items=[]))
-        self.raw(".workspace/manifest.json", dict(schema_min=3, schema_max=3))
+        self.raw(".workspace/manifest.json", dict(schema_min=4, schema_max=4))
 
     def raw(self, path, value):
         target = self.root / path
@@ -126,6 +126,37 @@ print('simulated request completed; key was read only from the environment')
             self.write("plan.json", plan)
         self.assertEqual(records.validate(self.tree)["errors"], [])
 
+    def test_responses_bind_to_shown_bytes_and_only_the_panel_writes_them(self):
+        self.write("proposal.json", dict(summary="Tag posts", examples=[], goal="Navigation tags",
+                                         considered=[dict(family="Embeddings", decision="adopted", reason="Few labels")]))
+        shown = self.sha("proposal.json")
+        response = records.publish_response(self.tree, "proposal", "approve", shown, "Looks right")
+        self.assertEqual(records.read_record(self.tree, f"responses/{response['id']}.json")["note"], "Looks right")
+        with self.assertRaisesRegex(ValueError, "Conflict"):
+            records.publish_response(self.tree, "proposal", "approve", "0" * 64)
+        with self.assertRaisesRegex(ValueError, "only by the person"):
+            self.write("responses/r1.json", dict(response, id="r1"))
+        self.raw("evaluation/draft/samples.jsonl", b'{"sample_id":"s1","input":"x","reference":["a"],"reference_status":"draft"}\n')
+        draft = self.sha("evaluation/draft/samples.jsonl")
+        with self.assertRaisesRegex(ValueError, "Unknown reviewed sample"):
+            records.publish_response(self.tree, "evaluation_review", "submit", draft, items=[dict(sample_id="s9", verdict="confirm")])
+        with self.assertRaisesRegex(ValueError, "needs its reference"):
+            records.publish_response(self.tree, "evaluation_review", "submit", draft, items=[dict(sample_id="s1", verdict="correct")])
+        records.publish_response(self.tree, "evaluation_review", "submit", draft, items=[dict(sample_id="s1", verdict="correct", reference=["b"])])
+        self.assertEqual(records.validate(self.tree)["errors"], [])
+        with self.assertRaisesRegex(ValueError, "Invalid source"):
+            self.write("proposal.json", dict(summary="x", examples=[], sources=[dict(title="x", url="javascript:alert(1)")]))
+
+    def test_view_state_accumulates_attention_per_view(self):
+        first = records.set_view(self.tree, ["proposal"], attention=["proposal:请确认提案"])
+        second = records.set_view(self.tree, ["evaluation"], "e001-embed", ["review:22 篇标签待审阅"])
+        self.assertEqual(second["revision"], first["revision"] + 1)
+        self.assertEqual([n["view"] for n in second["attention"]], ["proposal", "review"])
+        self.assertEqual(second["focus"], {"experiment": "e001-embed"})
+        self.assertEqual(records.set_view(self.tree, [], clear=True)["attention"], [])
+        with self.assertRaisesRegex(ValueError, "view:message"):
+            records.set_view(self.tree, [], attention=["nowhere:x"])
+
     def test_next_id_counts_existing_experiments(self):
         self.assertEqual(records.next_id(self.tree), {"id": "e000"})
         (self.root / "experiments/e007-old").mkdir(parents=True)
@@ -201,7 +232,7 @@ print('simulated request completed; key was read only from the environment')
                     source="https://example.com/model", version="fixed", size="Estimated 100 MB",
                     path="resources/model", preparation="Download after approval; allow 200 MB including cache", access="No data leaves this computer")
         self.write("resources.json", dict(items=[item]))
-        proposal = dict(summary="Compare methods", sections=[], examples=[], approaches=[dict(id="semantic", title="Semantic route",
+        proposal = dict(summary="Compare methods", examples=[], approaches=[dict(id="semantic", title="Semantic route",
                         roles=["recommended", "reference"], rationale="Investigate semantic generalization", limitations="Unmeasured",
                         resource_ids=["semantic-model"])])
         self.write("proposal.json", proposal)
@@ -252,7 +283,7 @@ print('simulated request completed; key was read only from the environment')
         self.raw("project.json", dict(schema_version=2, name="Old", language="en", current_evaluation=None, deliveries=[]))
         before = {p.relative_to(self.root).as_posix(): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
         with self.assertRaises(ValueError):
-            self.write("proposal.json", dict(summary="Must not apply", sections=[], examples=[]))
+            self.write("proposal.json", dict(summary="Must not apply", examples=[]))
         with self.assertRaises(ValueError):
             runner.execute(self.tree, "experiments/reference")
         after = {p.relative_to(self.root).as_posix(): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}

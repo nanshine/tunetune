@@ -16,7 +16,7 @@
     {
       "id": 2,
       "name": "complete-delegation",
-      "prompt": "In this format-3 study, I approve the current recommendation, listed local resources and a 20-minute CPU-only loop. Start from the existing calibrated evaluation, prepare the listed dependencies and run bounded experiments. Do not use online APIs, change evaluation or export.",
+      "prompt": "In this format-4 study, I approve the current recommendation, listed local resources and a 20-minute CPU-only loop. Start from the existing calibrated evaluation, prepare the listed dependencies and run bounded experiments. Do not use online APIs, change evaluation or export.",
       "expected_output": "Continue through resource preparation and experiments without another proposal approval.",
       "files": [],
       "assertions": [

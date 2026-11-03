@@ -1,19 +1,25 @@
-# Research files — format 3
+# Research files — format 4
 
-The Agent maintains research files; the panel observes them. Decisions and authorization stay in conversation. Kit 0.5.0 supports format 3 only: refuse older projects and tools without migration or replacement. This is the single format guide.
+The Agent maintains research files; the panel shows them and records the person's responses. Work starts, stops and changes boundaries in conversation. Kit 0.6.0 supports format 4 only: refuse older projects and tools without migration or replacement. This is the single format guide.
 
 ## Current study
 
-- `project.json`: `{schema_version:3,name,language,current_evaluation:null|string,deliveries:[experiment_id]}`.
-- `proposal.json`: `{summary,sections:[{title,body}],examples:[{id,input,expected_output?}],approaches?:[{id,title,roles:[baseline|recommended|reference|challenge],rationale,limitations?,resource_ids?:[resource_id]}],feasibility?:{verdict:feasible|conditional|infeasible|unknown,reason}}`.
+- `project.json`: `{schema_version:4,name,language,current_evaluation:null|string,deliveries:[experiment_id]}`.
+- `proposal.json`: `{summary,examples:[{id,input,expected_output?}],goal?,output?,considered?:[{family,decision:adopted|excluded,reason}],approaches?:[{id,title,roles:[baseline|recommended|reference|challenge],rationale,limitations?,resource_ids?:[resource_id]}],evaluation?,budget?,stopping?,delivery?,assumptions?:[string],sources?:[{title,url}],feasibility?:{verdict:feasible|conditional|infeasible|unknown,reason}}`. Text fields are plain sentences for a beginner; links belong in `sources`, not in prose.
 - `plan.json` (optional until the first round): `{rounds:[{round,goal,budget,items:[{id,title,question,expected,state:planned|running|done|dropped,intervention?,parent?,comparator?,cost?,resource_ids?:[resource_id],note?}],conclusion?}],ideas?:[{title,reason}]}`.
 - `resources.json`: `{items:[{id,title,type,status,purpose?,source?,preparation?,access?,path?,location?,version?,size?,monitor?}]}`.
 
-The proposal states direction: goals, requirements and assumptions, recommendation and evidence, alternatives, intended evaluation, finite budget and stopping conditions, and delivery. Approach roles can overlap; complexity is not quality. Resource IDs must exist. Create resources before referencing them in the proposal. Revise it only when the goal, requirements, recommended direction or authorized scope changes. Measurements, run progress and round summaries belong in experiment analyses, never in the proposal. Do not create approval records or revision archives.
+The proposal states direction: goals, requirements and assumptions, the intervention families considered with reasons, recommendation and evidence, alternatives, intended evaluation, finite budget and stopping conditions, and delivery. Approach roles can overlap; complexity is not quality. Resource IDs must exist. Create resources before referencing them in the proposal. Revise it only when the goal, requirements, recommended direction or authorized scope changes. Measurements, run progress and round summaries belong in experiment analyses, never in the proposal. Do not create approval records or revision archives.
 
 The plan records experiment rounds. Rounds are numbered from 1 and appended; a later round never rewrites an earlier one except to update item states, notes and its one-sentence conclusion. Each item reserves the experiment ID it will use, so the panel can show planned work before it exists. `expected` names the observation that would change the next decision; `parent` is intended method ancestry and `comparator` the experiment it must beat. `running` and `done` items require an existing experiment. Dropped items say why in `note`. Results stay in experiment analyses; the plan references IDs only. Ideas not worth a round keep a reason.
 
 Resources are the sole inventory and preparation plan. Types are open text; useful groups include data/annotation, environment, hardware/storage, models, code/tools, services and credentials. `purpose` explains use; `source` identifies origin; `preparation` describes acquisition, estimated download/cache/unpacked space and next check; `access` explains data transfer, fees and credential requirements without secrets. Mark estimates and unknowns honestly. `path` is project-relative and may be a planned destination; `location` identifies an external location. Use at most one. `size` and `version` are strings.
+
+## Responses and panel focus
+
+`responses/<id>.json` records the person's answer from the panel: `{id,kind:proposal|plan|evaluation_review,target:{path,sha256},created_at,decision:approve|revise|continue|stop|submit,note?,items?:[{sample_id,verdict:confirm|correct|question,reference?,note?}]}`. The target is `proposal.json`, `plan.json` or `evaluation/draft/samples.jsonl` and its hash is the exact bytes shown. Responses are created only by the panel and never edited; the record writer refuses them. A response whose target hash no longer matches answered an older version. For a review, apply confirmed and corrected references to the draft with their `reference_status`, discuss questions, and keep unreviewed items as `draft`.
+
+`.workspace/view.json` is display state written by `records.py view`: `{revision,open:[view],focus?:{experiment},attention:[{view,message}],updated_at}` with views `proposal|plan|resources|evaluation|review|acceptance`. The panel applies each new revision once and shows attention marks until they are cleared. It is not research evidence.
 
 ## Project layout
 

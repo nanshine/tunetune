@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { comparisonSamples, deliveredModels, deliveryIds, evaluationRuns, experiments, layout, OBSERVATION_MAX_AGE_MS, outcomeLabels, parseSnapshot, preferredEvaluation, resourceObservation, statusLabel } from './model';
+import { comparisonSamples, currentResponse, deliveredModels, deliveryIds, evaluationRuns, experimentNumber, experiments, layout, NODE_HEIGHT, NODE_WIDTH, OBSERVATION_MAX_AGE_MS, plan, plannedNodes, outcomeLabels, parseSnapshot, preferredEvaluation, resourceObservation, statusLabel } from './model';
 import type { Observations, ResearchFile, Snapshot } from './model';
 const file = (content: unknown): ResearchFile => ({ content, sha256: 'a'.repeat(64) });
 const files: Snapshot['files'] = {
-  'project.json': file({ schema_version: 3, deliveries: ['exp-1'] }),
+  'project.json': file({ schema_version: 4, deliveries: ['exp-1'] }),
   'experiments/exp-1/config.json': file({ id: 'exp-1', title: '初次训练', parameters: {} }),
   'experiments/exp-1/status.json': file({ state: 'succeeded', target: { kind: 'local', path: 'experiments/exp-1/model/model.bin', sha256: 'a'.repeat(64) } }),
   'experiments/exp-1/evals/a/config.json': file({ evaluation_version: 'v1' }),
@@ -13,18 +13,18 @@ const files: Snapshot['files'] = {
 };
 const snapshot = (source = files, observations?: Observations) => ({ files: source, revision: '1', synced_at: '', error: null, ...(observations ? { observations } : {}) });
 
-describe('格式 3 research files', () => {
-  it('validates the snapshot envelope and requires 格式 3', () => {
+describe('format 4 research files', () => {
+  it('validates the snapshot envelope and requires format 4', () => {
     expect(parseSnapshot(snapshot()).files).toEqual(files);
     expect(parseSnapshot(snapshot({})).files).toEqual({});
     expect(() => parseSnapshot({ ...snapshot(), files: [] })).toThrow();
-    expect(() => parseSnapshot(snapshot({ 'project.json': file({ schema_version: 1, deliveries: [] }) }))).toThrow('格式 3');
+    expect(() => parseSnapshot(snapshot({ 'project.json': file({ schema_version: 1, deliveries: [] }) }))).toThrow('格式 4');
     expect(() => parseSnapshot(snapshot({ 'project.json': { content: {}, sha256: '' } }))).toThrow();
   });
   it('rejects malformed structured records without replacing the last usable snapshot', () => {
     const good = parseSnapshot(snapshot());
     let current = good;
-    for (const bad of [{ 'proposal.json': file({ sections: [], examples: 'bad' }) }, { 'proposal.json': file({ sections: 'bad', examples: [] }) }, { 'resources.json': file({ items: null }) }, { 'test.json': file([]) }, { 'outputs.jsonl': file([null]) }, { 'project.json': file({ schema_version: 3, deliveries: null }) }] as Snapshot['files'][]) {
+    for (const bad of [{ 'proposal.json': file({ examples: 'bad' }) }, { 'resources.json': file({ items: null }) }, { 'test.json': file([]) }, { 'outputs.jsonl': file([null]) }, { 'project.json': file({ schema_version: 4, deliveries: null }) }] as Snapshot['files'][]) {
       expect(() => { current = parseSnapshot(snapshot({ ...files, ...bad })); }).toThrow();
       expect(current).toBe(good);
     }
@@ -85,7 +85,7 @@ describe('格式 3 research files', () => {
   });
   it('resolves chosen models only when succeeded and model_path is present', () => {
     const configured = { ...files,
-      'project.json': file({ schema_version: 3, deliveries: ['exp-1', 'exp-1', 'missing', 'incomplete', 'no-model'] }),
+      'project.json': file({ schema_version: 4, deliveries: ['exp-1', 'exp-1', 'missing', 'incomplete', 'no-model'] }),
       'experiments/incomplete/config.json': file({ title: '未核验' }),
       'experiments/incomplete/status.json': file({ state: 'completed', target: { kind: 'local', path: 'experiments/incomplete/model/a', sha256: 'a'.repeat(64) } }),
       'experiments/no-model/config.json': file({ title: '无模型' }),
@@ -115,14 +115,29 @@ describe('格式 3 research files', () => {
     };
     expect(comparisonSamples(acceptance, 'exp-1', 'exp-1', 'v1').map(row => row.outputs)).toEqual([{ 'exp-1': '甲' }, {}, {}]);
   });
-  it('lays out lineage consistently and tolerates unresolved or cyclic ancestry', () => {
-    const items = experiments(files);
-    const child = { ...items[0], id: 'exp-2', parent: 'exp-1' };
-    expect(layout([...items, child]).get('exp-2')!.x).toBeGreaterThan(layout(items).get('exp-1')!.x);
-    const changed = [{ ...items[0], state: 'failed' }];
-    expect(layout(changed)).toEqual(layout(items));
-    expect(layout([{ ...items[0], parent: 'exp-2' }, child]).size).toBe(2);
-    expect(layout([{ ...child, parent: 'missing' }]).get('exp-2')!.x).toBe(48);
+  it('lays out lineage as a tidy tree without overlaps and tolerates unresolved or cyclic ancestry', () => {
+    const tree = [{ id: 'a', parent: null }, { id: 'b', parent: 'a' }, { id: 'c', parent: 'a' }, { id: 'd', parent: 'c' }, { id: 'e', parent: null }];
+    const positions = layout(tree);
+    expect(positions.get('b')!.x).toBeGreaterThan(positions.get('a')!.x);
+    expect(positions.get('a')!.y).toBe((positions.get('b')!.y + positions.get('c')!.y) / 2);
+    const boxes = [...positions.values()];
+    for (const [i, one] of boxes.entries()) for (const other of boxes.slice(i + 1)) expect(Math.abs(one.x - other.x) >= NODE_WIDTH || Math.abs(one.y - other.y) >= NODE_HEIGHT).toBe(true);
+    expect(layout([{ id: 'x', parent: 'y' }, { id: 'y', parent: 'x' }]).size).toBe(2);
+    expect(layout([{ id: 'x', parent: 'missing' }]).get('x')).toEqual({ x: 0, y: 0 });
+  });
+  it('reads experiment rounds, planned nodes, numbers and current answers', () => {
+    const planned = { ...files, 'plan.json': file({ rounds: [{ round: 1, goal: '语义路线', budget: '2 个实验', items: [
+      { id: 'exp-1', title: '已存在', question: 'q', expected: 'e', state: 'done' },
+      { id: 'e002-embed', title: '向量加分类头', question: 'q', expected: 'e', state: 'planned', parent: 'exp-1' },
+      { id: 'e003-drop', title: '放弃', question: 'q', expected: 'e', state: 'dropped' }] }], ideas: [{ title: 'SetFit', reason: '标签不够' }] }) };
+    expect(plan(planned).rounds[0].items.map(item => item.state)).toEqual(['done', 'planned', 'dropped']);
+    expect(plannedNodes(planned).map(item => item.id)).toEqual(['e002-embed']);
+    expect([experimentNumber('e002-embed'), experimentNumber('lexical')]).toEqual(['E002', 'lexical']);
+    const proposal: Snapshot['files'] = { ...files, 'proposal.json': { content: { summary: 'x', examples: [] }, sha256: 'b'.repeat(64) },
+      'responses/r1.json': file({ kind: 'proposal', target: { path: 'proposal.json', sha256: 'c'.repeat(64) }, created_at: '2026-11-03T01:00:00Z', decision: 'approve' }) };
+    expect(currentResponse(proposal, 'proposal')).toBeNull();
+    proposal['responses/r2.json'] = file({ kind: 'proposal', target: { path: 'proposal.json', sha256: 'b'.repeat(64) }, created_at: '2026-11-03T02:00:00Z', decision: 'revise' });
+    expect(currentResponse(proposal, 'proposal')?.decision).toBe('revise');
   });
 });
 

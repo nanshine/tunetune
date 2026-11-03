@@ -45,7 +45,7 @@ def installed_fixture(root):
     payload = {name: (ROOT / source).read_bytes() for name, source in sources.items()}
     payload.update({
         ".workspace/app/assets/index.html": b"<!doctype html><title>Installed-like test fixture only</title>",
-        ".workspace/manifest.json": records.encoded({"schema_min": 3, "schema_max": 3, "version": "test-fixture"}),
+        ".workspace/manifest.json": records.encoded({"schema_min": 4, "schema_max": 4, "version": "test-fixture"}),
     })
     for name, content in payload.items():
         destination = root / name
@@ -99,16 +99,14 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(report["unfinished"], [])
         project = read_json(self.project / "project.json")
         self.assertEqual(set(project), {"schema_version", "name", "language", "current_evaluation", "deliveries"})
-        self.assertEqual(project["schema_version"], 3)
+        self.assertEqual(project["schema_version"], 4)
         self.assertEqual(project["current_evaluation"], "v2")
         self.assertEqual(project["deliveries"], demo.DELIVERIES)
         proposal = read_json(self.project / "proposal.json")
-        self.assertEqual(set(proposal), {"summary", "sections", "examples", "feasibility", "approaches"})
-        self.assertEqual(len(proposal["sections"]), 4)
+        self.assertEqual(set(proposal), {"summary", "goal", "output", "considered", "evaluation", "budget", "stopping", "delivery", "examples", "feasibility", "approaches"})
+        self.assertEqual({item["decision"] for item in proposal["considered"]}, {"adopted", "excluded"})
         self.assertEqual({role for approach in proposal["approaches"] for role in approach["roles"]}, {"baseline", "recommended", "reference", "challenge"})
         self.assertIn(demo.NOTICE, proposal["summary"])
-        for section in proposal["sections"]:
-            self.assertEqual(set(section), {"title", "body"})
         for example in proposal["examples"]:
             self.assertEqual(set(example), {"id", "input", "expected_output"})
         expected = {"project.json", "proposal.json", "resources.json", "data/train.jsonl", "data/comparison.jsonl",

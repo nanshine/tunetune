@@ -1,71 +1,86 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Background, Handle, Position, ReactFlow, useReactFlow, useViewport } from '@xyflow/react';
 import type { Node, NodeProps } from '@xyflow/react';
-import { ArrowUpRight, CheckCircle2, Clock3, FlaskConical, Maximize2, Minus, Plus, XCircle } from 'lucide-react';
-import { outcomeLabels, layout, compatibleMeasurements, preferredEvaluation, roleLabels, statusLabel } from './model';
-import { UsageView } from './UsageView';
-import type { Analysis, EvaluationRun, Experiment } from './model';
+import { Maximize2, Minus, Plus, Star } from 'lucide-react';
+import { compatibleMeasurements, experimentNumber, layout, NODE_HEIGHT, NODE_WIDTH, outcomeLabels, preferredEvaluation, statusLabel } from './model';
+import type { Analysis, EvaluationRun, Experiment, PlanItem } from './model';
 
-type ExperimentNode = Node<{ experiment: Experiment; evaluation?: EvaluationRun; currentVersion: string; delivered: boolean; comparisonWarning?: boolean; onSelect: () => void; onCompare: () => void }, 'experiment'>;
+type ExperimentData = { kind: 'experiment'; experiment: Experiment; evaluation?: EvaluationRun; delivered: boolean; comparisonWarning?: boolean };
+type PlannedData = { kind: 'planned'; item: PlanItem };
+type CanvasNode = Node<ExperimentData | PlannedData, 'experiment'>;
 
-export function StateIcon({ state }: { state: string }) {
-  if (state === 'succeeded') return <CheckCircle2 size={16} aria-hidden="true" />;
-  if (state === 'failed') return <XCircle size={16} aria-hidden="true" />;
-  return <Clock3 size={16} aria-hidden="true" />;
-}
 export function OutcomeBadge({ analysis }: { analysis: Analysis }) {
-  return <span className={`record-badge outcome-${analysis.outcome}`}>{outcomeLabels[analysis.outcome]}</span>;
+  return <span className={`badge outcome-${analysis.outcome}`}>{outcomeLabels[analysis.outcome]}</span>;
+}
+export function StateDot({ state }: { state: string }) {
+  return <span className={`state-dot state-${state}`} role="img" aria-label={statusLabel(state)} title={statusLabel(state)} />;
 }
 
-export function ExperimentSummary({ experiment, evaluation, currentVersion, delivered, comparisonWarning, onSelect, onCompare }: ExperimentNode['data']) {
-  const sameVersion = evaluation?.version === currentVersion ? evaluation : undefined;
+// The node shows identity, state and one headline measurement; everything else is in the details window.
+export function ExperimentSummary({ experiment, evaluation, delivered, comparisonWarning }: Omit<ExperimentData, 'kind'>) {
+  const measured = evaluation?.state === 'succeeded' ? Object.entries(evaluation.metrics)[0] : undefined;
   return <>
-    <div className="card-heading"><span className="node-icon"><FlaskConical size={18} aria-hidden="true" /></span><div><span className="mono">{experiment.id}</span><h3>{experiment.title}</h3></div>{delivered && <span className="badge">已交付</span>}</div>
-    <div className="role-list">{experiment.role && <span className="record-badge">{roleLabels[experiment.role] || experiment.role}</span>}{experiment.targetKind && <span className="record-badge">{experiment.targetKind === 'api' ? '在线 API' : '本地模型'}</span>}</div>
-    <UsageView usage={experiment.usage} />
-    <div className="result-row"><span>执行</span><span className={`status ${experiment.state}`}><StateIcon state={experiment.state} />{statusLabel(experiment.state)}</span></div>
-    <div className="result-row"><span>结论</span><OutcomeBadge analysis={experiment.analysis} /></div>
-    {(experiment.modelName || experiment.method) && <p className="node-method">{[experiment.modelName, experiment.method].filter(Boolean).join(' · ')}</p>}
-    {sameVersion ? <div className="evaluation-summary"><div className="result-row"><span>评测 <strong>{sameVersion.version}</strong></span><span className={`status ${sameVersion.state}`}><StateIcon state={sameVersion.state} />{statusLabel(sameVersion.state)}</span></div>{sameVersion.state === 'succeeded' && <div className="metric-list">{Object.entries(sameVersion.metrics).slice(0, 3).map(([key, value]) => <span key={key}>{Object.hasOwn(sameVersion.metricLabels, key) ? sameVersion.metricLabels[key] : key}<strong>{value.toLocaleString()}</strong></span>)}</div>}</div> : <div className="result-row muted"><span>评测 {currentVersion}</span><span>尚无同版本结果</span></div>}
-    {comparisonWarning && <p className="muted">评测内容或输入不同，分数不宜直接比较。</p>}
-    <div className="node-actions"><button className="primary nodrag" onClick={event => { event.stopPropagation(); onSelect(); }} aria-label={`查看实验 ${experiment.id}`}>查看详情<ArrowUpRight size={14} /></button>{experiment.state === 'succeeded' && experiment.targetKind && <button className="nodrag" onClick={event => { event.stopPropagation(); onCompare(); }}>模型对比</button>}</div>
+    <div className="node-top"><span className="node-number">{experimentNumber(experiment.id)}</span><StateDot state={experiment.state} />{delivered && <span className="node-delivered" title="已选为交付模型"><Star size={12} aria-hidden="true" />交付</span>}</div>
+    <h3 className="node-title">{experiment.title}</h3>
+    <div className="node-bottom">
+      {measured ? <span className={`node-metric ${comparisonWarning ? 'incompatible' : ''}`} title={comparisonWarning ? '评测内容或输入不同，分数不宜直接比较' : undefined}><span>{Object.hasOwn(evaluation!.metricLabels, measured[0]) ? evaluation!.metricLabels[measured[0]] : measured[0]}</span><strong>{measured[1].toLocaleString(undefined, { maximumFractionDigits: 3 })}</strong></span> : <span className="node-metric empty">尚无同版本评测</span>}
+      {experiment.analysis.outcome !== 'unknown' && <OutcomeBadge analysis={experiment.analysis} />}
+    </div>
   </>;
 }
 
-function ExperimentCard({ data, selected }: NodeProps<ExperimentNode>) {
-  return <article className={`experiment-card ${selected ? 'selected' : ''}`}>
+function CanvasCard({ data, selected }: NodeProps<CanvasNode>) {
+  if (data.kind === 'planned') return <article className="experiment-node planned" aria-label={`计划中的实验 ${data.item.title}`}>
+    <Handle type="target" position={Position.Left} />
+    <div className="node-top"><span className="node-number">{experimentNumber(data.item.id)}</span><span className="badge">计划中</span></div>
+    <h3 className="node-title">{data.item.title}</h3>
+    <p className="node-question">{data.item.question}</p>
+    <Handle type="source" position={Position.Right} />
+  </article>;
+  return <article className={`experiment-node ${selected ? 'selected' : ''}`}>
     <Handle type="target" position={Position.Left} />
     <ExperimentSummary {...data} />
     <Handle type="source" position={Position.Right} />
   </article>;
 }
-const nodeTypes = { experiment: ExperimentCard };
+const nodeTypes = { experiment: CanvasCard };
 
 function CanvasControls() {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const { zoom } = useViewport();
-  return <div className="canvas-controls" aria-label="画布缩放"><button className="icon-button" aria-label="缩小画布" onClick={() => zoomOut({ duration: 0 })}><Minus size={16} /></button><span>{Math.round(zoom * 100)}%</span><button className="icon-button" aria-label="放大画布" onClick={() => zoomIn({ duration: 0 })}><Plus size={16} /></button><span className="control-divider" /><button className="fit-button" onClick={() => fitView({ padding: 0.2, duration: 0 })}><Maximize2 size={15} />回到全图</button></div>;
+  return <div className="canvas-controls" aria-label="画布缩放"><button className="icon-button" aria-label="缩小画布" onClick={() => zoomOut({ duration: 0 })}><Minus size={15} /></button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button className="icon-button" aria-label="放大画布" onClick={() => zoomIn({ duration: 0 })}><Plus size={15} /></button><span className="control-divider" /><button className="ghost-button" onClick={() => fitView({ padding: 0.25, duration: 200 })}><Maximize2 size={14} />全图</button></div>;
 }
 
-export function Lineage({ items, results, currentVersion, selected, deliveries, onSelect, onCompare }: { items: Experiment[]; results: EvaluationRun[]; currentVersion: string; selected: string | null; deliveries: Set<string>; onSelect: (id: string) => void; onCompare: (id: string) => void }) {
-  const topology = JSON.stringify(items.map(({ id, parent }) => ({ id, parent })));
-  const positions = useMemo(() => layout(JSON.parse(topology) as Experiment[]), [topology]);
-  const [dimensions, setDimensions] = useState<Record<string, { width: number; height: number }>>({});
-  const nodes: ExperimentNode[] = items.map(experiment => ({
-    id: experiment.id, type: 'experiment', measured: dimensions[experiment.id], position: positions.get(experiment.id)!, selected: selected === experiment.id,
-    data: { experiment, evaluation: preferredEvaluation(results.filter(result => result.experimentId === experiment.id), currentVersion), currentVersion, delivered: deliveries.has(experiment.id), onSelect: () => onSelect(experiment.id), onCompare: () => onCompare(experiment.id) },
+function FocusNode({ id, positions }: { id: string | null; positions: Map<string, { x: number; y: number }> }) {
+  const { setCenter, getZoom } = useReactFlow();
+  useEffect(() => {
+    const position = id ? positions.get(id) : undefined;
+    if (position) void setCenter(position.x + NODE_WIDTH / 2, position.y + NODE_HEIGHT / 2, { zoom: Math.max(getZoom(), 0.8), duration: 250 });
+  }, [id, positions, setCenter, getZoom]);
+  return null;
+}
+
+export function Lineage({ items, planned = [], results, currentVersion, selected, focus = null, deliveries, onSelect }: { items: Experiment[]; planned?: PlanItem[]; results: EvaluationRun[]; currentVersion: string; selected: string | null; focus?: string | null; deliveries: Set<string>; onSelect: (id: string) => void }) {
+  const topology = JSON.stringify([...items.map(({ id, parent }) => ({ id, parent })), ...planned.map(({ id, parent }) => ({ id, parent }))]);
+  const positions = useMemo(() => layout(JSON.parse(topology) as { id: string; parent: string | null }[]), [topology]);
+  const nodes: CanvasNode[] = items.map(experiment => ({
+    id: experiment.id, type: 'experiment', position: positions.get(experiment.id)!, selected: selected === experiment.id, width: NODE_WIDTH, height: NODE_HEIGHT,
+    data: { kind: 'experiment', experiment, evaluation: preferredEvaluation(results.filter(result => result.experimentId === experiment.id), currentVersion), delivered: deliveries.has(experiment.id) },
   }));
-  const measured = nodes.flatMap(node => node.data.evaluation?.state === 'succeeded' ? [node.data.evaluation] : []);
+  nodes.push(...planned.map(item => ({ id: item.id, type: 'experiment' as const, position: positions.get(item.id)!, width: NODE_WIDTH, height: NODE_HEIGHT, selectable: false, data: { kind: 'planned' as const, item } })));
+  const measured = nodes.flatMap(node => node.data.kind === 'experiment' && node.data.evaluation?.state === 'succeeded' ? [node.data.evaluation] : []);
   for (const node of nodes) {
+    if (node.data.kind !== 'experiment') continue;
     const result = node.data.evaluation;
     if (result?.state === 'succeeded') node.data.comparisonWarning = measured.some(other => other.experimentId !== result.experimentId && !compatibleMeasurements(result, other));
   }
-  const edges = items.filter(item => item.parent && items.some(parent => parent.id === item.parent)).map(item => ({ id: `${item.parent}-${item.id}`, source: item.parent!, target: item.id, type: 'smoothstep' }));
-  return <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changes => {
-    const measured = changes.flatMap(change => change.type === 'dimensions' && change.dimensions ? [[change.id, change.dimensions]] : []);
-    if (measured.length) setDimensions(previous => ({ ...previous, ...Object.fromEntries(measured) }));
-  }} onNodeClick={(_, node) => onSelect(node.id)} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null} minZoom={0.25} maxZoom={1.5} fitView fitViewOptions={{ padding: 0.2, maxZoom: 1 }} ariaLabelConfig={{ 'node.a11yDescription.default': '只读实验节点，可查看详情或模型对比。', 'node.a11yDescription.keyboardDisabled': '只读实验节点，可查看详情或模型对比。', 'edge.a11yDescription.default': '实验派生关系，不代表指标比较对象。' }} proOptions={{ hideAttribution: false }}>
-    <Background gap={24} size={1} color="#d8dee8" />
+  const ids = new Set(nodes.map(node => node.id));
+  const edges = [...items.map(item => ({ id: item.id, parent: item.parent, planned: false })), ...planned.map(item => ({ id: item.id, parent: item.parent, planned: true }))]
+    .filter(item => item.parent && ids.has(item.parent))
+    .map(item => ({ id: `${item.parent}-${item.id}`, source: item.parent!, target: item.id, type: 'default', className: item.planned ? 'planned-edge' : '' }));
+  return <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => { if (items.some(item => item.id === node.id)) onSelect(node.id); }} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null} minZoom={0.25} maxZoom={1.5} fitView fitViewOptions={{ padding: 0.3, maxZoom: 1 }} ariaLabelConfig={{ 'node.a11yDescription.default': '实验节点，按 Enter 查看详情。', 'node.a11yDescription.keyboardDisabled': '实验节点，点击查看详情。', 'edge.a11yDescription.default': '方法派生关系，不代表指标比较对象。' }} proOptions={{ hideAttribution: false }}>
+    <Background gap={20} size={1.2} color="#d3d9e3" />
     <CanvasControls />
+    <FocusNode id={focus} positions={positions} />
   </ReactFlow>;
 }

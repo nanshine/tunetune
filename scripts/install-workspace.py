@@ -9,7 +9,7 @@ import re
 import stat
 import tempfile
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
 
 
@@ -88,8 +88,8 @@ def verify_kit(kit):
     manifest = json_object(manifest_bytes, "manifest.json")
     if (manifest.get("version") != VERSION or type(manifest.get("schema_min")) is not int
             or type(manifest.get("schema_max")) is not int
-            or manifest["schema_min"] != 3 or manifest["schema_max"] != 3):
-        raise ValueError("Unsupported kit version or schema range; kit 0.5.0 requires schema 3 only")
+            or manifest["schema_min"] != 4 or manifest["schema_max"] != 4):
+        raise ValueError("Unsupported kit version or schema range; kit 0.6.0 requires schema 4 only")
     entries = manifest.get("files")
     if not isinstance(entries, list):
         raise ValueError("Manifest files must be a list of {path, sha256}")

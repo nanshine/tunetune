@@ -11,7 +11,7 @@ Load [research-workspace](../research-workspace/SKILL.md), the proposal, resourc
 
 Prepare representative successes, failures and boundary cases, with stable sample identities and justified references or executable checks. A strong model or the Agent can draft references but cannot make its own answers independent truth.
 
-When references encode the person's judgment, they review them before freezing. Present the draft references with the boundary cases and disagreements that matter, record each sample's `reference_status`, and freeze only reviewed references. If the person explicitly delegates labeling instead, keep the drafts as `draft` and report scores as agreement with that draft, not with their preference. This review is the one routine pause after the proposal decision; prepare resources and the baseline meanwhile. Objective references from trusted sources need no review.
+When references encode the person's judgment, they review them before freezing. Put the draft samples in `evaluation/draft/samples.jsonl`, open the panel's review with an attention note, and in conversation point out the boundary cases and disagreements that matter. The person confirms, corrects or questions each item there; apply their response to each sample's `reference_status`, settle questions, and freeze only reviewed references. Never ask them to read a local file instead. If the person explicitly delegates labeling instead, keep the drafts as `draft` and report scores as agreement with that draft, not with their preference. This review is the one routine pause after the proposal decision; prepare resources and the baseline meanwhile. Objective references from trusted sources need no review.
 
 ## Separation
 
@@ -29,4 +29,4 @@ Use the shared record tools to freeze evaluation only after these checks and any
 
 ## Hand over
 
-Select the evaluation with conflict detection and continue into [run-experiments](../run-experiments/SKILL.md) within authorization. If the person asked to see the evaluation and baseline first, write the first round of the experiment plan, give the panel link and ask once whether to proceed, with your recommendation. Explain measurement limits; beyond the reference review, ask only for a consequential unresolved judgment, presenting concrete examples and a recommendation.
+Select the evaluation with conflict detection and continue into [run-experiments](../run-experiments/SKILL.md) within authorization. If the person asked to see the evaluation and baseline first, write the first round of the experiment plan, open it in the panel with an attention note and ask once whether to proceed, with your recommendation. Explain measurement limits; beyond the reference review, ask only for a consequential unresolved judgment, presenting concrete examples and a recommendation.

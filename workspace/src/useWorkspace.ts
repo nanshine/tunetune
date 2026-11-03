@@ -46,5 +46,23 @@ export function useWorkspace() {
       } },
     } : previous);
   }
-  return { snapshot, connectionError, renameProject };
+  return { snapshot, connectionError, renameProject, submitResponse, runAcceptance, tryModel };
+}
+
+const failures: Record<number, string> = { 400: '内容不完整，请检查后重试。', 409: '内容刚被更新或有任务正在运行，请稍后再试。', 503: '这个研究目录还没有安装研究工具。', 504: '模型没有在限定时间内给出结果。' };
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const value = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(failures[response.status] ?? `请求失败（HTTP ${response.status}）`);
+  return value as T;
+}
+export type ReviewItem = { sample_id: string; verdict: 'confirm' | 'correct' | 'question'; reference?: unknown; note?: string };
+export function submitResponse(body: { kind: 'proposal' | 'plan' | 'evaluation_review'; decision: string; target_sha256: string; note?: string; items?: ReviewItem[] }) {
+  return post<{ id: string }>('/api/responses', body);
+}
+export function runAcceptance(experimentIds: string[]) {
+  return post<{ id: string; state: string }>('/api/acceptance/run', { experiments: experimentIds });
+}
+export function tryModel(experiment: string, input: unknown) {
+  return post<{ output?: unknown; error?: string; log_tail?: string; elapsed_seconds?: number }>('/api/try', { experiment, input });
 }

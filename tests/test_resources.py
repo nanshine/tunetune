@@ -52,7 +52,7 @@ class ResourceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
-        (self.root / "project.json").write_text('{"schema_version":3}')
+        (self.root / "project.json").write_text('{"schema_version":4}')
 
     def prepare(self, destination="resources/file.bin", **options):
         source = options.pop("source", self.url + "/data")
@@ -112,7 +112,7 @@ class ResourceTests(unittest.TestCase):
         project = self.root / "project.json"
         project.write_text('{"schema_version":2}')
         before = project.read_bytes()
-        with self.assertRaisesRegex(ValueError, "format 3"):
+        with self.assertRaisesRegex(ValueError, "format 4"):
             self.prepare(fetch=True)
         self.assertEqual(project.read_bytes(), before)
         self.assertFalse((self.root / "resources").exists())

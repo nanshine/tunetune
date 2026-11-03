@@ -2,7 +2,7 @@
 
 和 Agent 一起，把日常需求逐步做成私有、可用的模型：理解需求 → 研究提案与资源计划 → 校准评测 → 基线与有界实验 → 对比并交付。
 
-Agent 会调查有竞争力的方法，而不止寻找最容易运行的基线；必要时用强模型作质量参照，再判断怎样在你的资源范围内得到实用结果。研究空间用无限实验画布展示提案、资源、评测和真实输出，它只读观察研究，唯一的写入是修改项目名称。问题、授权和决定都留在 Agent 会话。
+Agent 会调查有竞争力的方法，而不止寻找最容易运行的基线；必要时用强模型作质量参照，再判断怎样在你的资源范围内得到实用结果。研究空间用无限实验画布和可拖动的浮窗展示提案、实验方案、资源、评测和验收。需要你判断的内容可以直接在面板里回应：确认或修改提案和实验方案、逐条审阅参考答案、点击运行模型看真实输出。研究记录只由 Agent 写；开始、停止和改变边界仍在 Agent 会话中进行。
 
 ## 开始
 
@@ -19,13 +19,13 @@ Codex 使用当前目录的 `.agents/skills/`，Claude Code 使用 `.claude/skil
 已有正式解包目录时，由 Agent 执行：
 
 ```sh
-python3 /absolute/workspace-kit-0.5.0/install-workspace.py --kit /absolute/workspace-kit-0.5.0 --project /absolute/current-directory --host agents
+python3 /absolute/workspace-kit-0.6.0/install-workspace.py --kit /absolute/workspace-kit-0.6.0 --project /absolute/current-directory --host agents
 python3 /absolute/current-directory/.workspace/app/workspace.py --project /absolute/current-directory --port 0 --open
 ```
 
 Claude Code 使用 `--host claude`。独立研究目录仅在明确选择并处理技能发现范围后使用，不是默认入口。初始研究文件只有 `AGENTS.md`、`project.json`、`proposal.json` 和 `resources.json`，其余目录按需创建。
 
-**0.5.0 仅支持研究格式 3，明确拒绝旧格式和不兼容工具，不自动迁移或覆盖已有研究。** 同版重复安装只补齐缺失文件，保留兼容研究和项目指引。
+**0.6.0 仅支持研究格式 4，明确拒绝旧格式和不兼容工具，不自动迁移或覆盖已有研究。** 同版重复安装只补齐缺失文件，保留兼容研究和项目指引。
 
 ## 怎样开展研究
 
@@ -49,7 +49,7 @@ python3 -B -m unittest discover -s tests -v
 python3 scripts/build-kit.py
 ```
 
-生成 `dist/workspace-kit-0.5.0/` 和同名压缩包。已有版本输出不会覆盖，另一次构建使用 `--output /absolute/fresh-output`。分发包含五个同版 skills、共享指南与必要工具、服务和监测工具、最小模板及构建好的面板，不包含开发测试、研究数据、密钥、前端源码和依赖。发布包须另行附在正式 GitHub Release；构建不等于发布。
+生成 `dist/workspace-kit-0.6.0/` 和同名压缩包。已有版本输出不会覆盖，另一次构建使用 `--output /absolute/fresh-output`。分发包含四个同版 skills、共享指南与必要工具、服务和监测工具、最小模板及构建好的面板，不包含开发测试、研究数据、密钥、前端源码和依赖。发布包须另行附在正式 GitHub Release；构建不等于发布。
 
 主要目录：`skills/` 为研究工作流及按需技术参考，`workspace/` 为研究空间，`templates/workspace/` 为最小安装模板，`scripts/` 和 `tests/` 为开发工具及测试。稳定原则见 [docs/principles.md](docs/principles.md)。
 

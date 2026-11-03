@@ -9,7 +9,7 @@ import shutil
 import tarfile
 import tempfile
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
 SKILLS = ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments")
 SKILL_RESOURCES = {"references": {".md", ".json"}, "scripts": {".py"}}
@@ -77,7 +77,7 @@ def build(source, output):
             destination = kit / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, destination)
-        manifest = {"version": VERSION, "schema_min": 3, "schema_max": 3,
+        manifest = {"version": VERSION, "schema_min": 4, "schema_max": 4,
                     "files": [{"path": relative, "sha256": hashlib.sha256((kit / relative).read_bytes()).hexdigest()}
                               for relative in sorted(inputs)]}
         (kit / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

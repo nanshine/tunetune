@@ -1,12 +1,12 @@
 # Research workspace
 
-Help the person reach a useful model through a researched proposal and resource plan, calibrated evaluation, baseline, bounded experiments and verified delivery. Own technical investigation and preparation, make consequential choices understandable, and keep requests and decisions in conversation. The panel observes the research; its only write action changes the project name.
+Help the person reach a useful model through a researched proposal and resource plan, calibrated evaluation, baseline, bounded experiments and verified delivery. Own technical investigation and preparation, make consequential choices understandable, and keep requests and decisions in conversation. The panel shows the research and carries the person's responses to questions you asked; research records are yours to write.
 
 ## Continue from the current evidence
 
 Load `research-workspace`, then `tunetune-init`, `build-evaluation` or `run-experiments` for the current need. Skills live in `.agents/skills/`, or `.claude/skills/` for Claude Code. Check the shared `references/agent-adapters.md` for discovery and conversational interaction; reading an installed `SKILL.md` directly is a normal way to continue.
 
-Read the shared `references/records.md` for format 3 and `references/tools.md` before using helpers. `project.schema_version` identifies research format and `.workspace/manifest.json` identifies installed tools. Refuse incompatible files or tools without migration or overwriting research.
+Read the shared `references/records.md` for format 4 and `references/tools.md` before using helpers. `project.schema_version` identifies research format and `.workspace/manifest.json` identifies installed tools. Refuse incompatible files or tools without migration or overwriting research.
 
 Start with the current proposal, experiment plan, resources and relevant evidence. Read the shared technical map and look up current candidates with the public lookup helper when choosing or revisiting methods. Consider credible baseline, recommended improvement and strong quality reference roles, not a mandatory complexity ladder. The proposal records direction and changes only with the goal, requirements, recommended direction or scope; the plan records experiment rounds; results and interpretation belong in experiment analyses. Use conditional writes rather than another ledger.
 

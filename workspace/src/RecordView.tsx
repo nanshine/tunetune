@@ -1,9 +1,16 @@
 import { object, text } from './model';
 import type { JsonObject } from './model';
 
-const labels: Record<string, string> = { input: '输入', output: '输出', reference: '参考输出', text: '内容', message: '留言', question: '问题', answer: '回答', category: '类别', score: '得分', description: '说明', tags: '标签' };
+const labels: Record<string, string> = { input: '输入', output: '输出', reference: '参考输出', title: '标题', text: '正文', body: '正文', message: '留言', question: '问题', answer: '回答', category: '类别', score: '得分', description: '说明', tags: '标签' };
+// A readable one-line name for an input: its own title, then the start of its text.
+export function excerpt(value: unknown, length = 48): string {
+  if (typeof value === 'string') return value.replace(/\s+/g, ' ').trim().slice(0, length);
+  const record = object(value);
+  const first = text(record.title) || text(record.name) || text(record.question) || text(record.text) || text(record.content) || text(record.message);
+  return first.replace(/\s+/g, ' ').trim().slice(0, length);
+}
 export function sampleLabel(row: JsonObject, index: number): string {
-  return text(row.title) || text(row.label) || `样例 ${index + 1}`;
+  return text(row.title) || text(row.label) || excerpt(row.input) || `样例 ${index + 1}`;
 }
 export function mediaUrl(path: unknown): string | null {
   if (typeof path !== 'string' || !path || /[\\\\\u0000-\u001f?#:%]/.test(path)) return null;
@@ -23,6 +30,8 @@ export function RecordView({ value, depth = 0 }: { value: unknown; depth?: numbe
   if (value == null || value === '') return <span className="muted">尚无内容</span>;
   if (typeof value !== 'object') return <span className="record-text">{typeof value === 'string' ? <LinkedText value={value} /> : typeof value === 'boolean' ? value ? '是' : '否' : String(value)}</span>;
   if (depth > 8) return <span className="muted">内容层级过深，请在 Agent 会话中查看。</span>;
+  // Short word lists, such as tags or labels, read best inline.
+  if (Array.isArray(value) && value.length && value.every(item => typeof item === 'string' && item.length <= 24)) return <span className="chips">{value.map((item, index) => <span className="chip" key={index}>{String(item)}</span>)}</span>;
   if (Array.isArray(value)) return value.length ? <div className="record-list">{value.map((item, index) => <div className="record-item" key={index}><RecordView value={item} depth={depth + 1} /></div>)}</div> : <span className="muted">暂无内容</span>;
   const record = object(value);
   if (['image', 'audio', 'video', 'file'].includes(text(record.type)) && 'path' in record) {

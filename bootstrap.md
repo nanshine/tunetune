@@ -4,13 +4,13 @@ Handle installation and discovery, preserve the person's original request and la
 
 ## Obtain one compatible kit
 
-Use the user-supplied repository, normally https://github.com/nanshine/tunetune. Inspect published GitHub releases and select the actual compatible `workspace-kit-0.5.0.tar.gz` asset and download URL. Keep every component from that bundle. Do not guess asset URLs or substitute another publisher. If no compatible release exists, explain this and offer the explicitly chosen developer source-build route; do not claim ordinary installation succeeded.
+Use the user-supplied repository, normally https://github.com/nanshine/tunetune. Inspect published GitHub releases and select the actual compatible `workspace-kit-0.6.0.tar.gz` asset and download URL. Keep every component from that bundle. Do not guess asset URLs or substitute another publisher. If no compatible release exists, explain this and offer the explicitly chosen developer source-build route; do not claim ordinary installation succeeded.
 
 Check Python 3.10+ on macOS/Linux. Download and extract outside the project into a temporary directory. Accept only ordinary files and directories; reject absolute paths, traversal, links and special files. A tar data filter does not replace the explicit file-type check. Inspect the installer before running it. Manifest hashes verify content integrity, not publisher identity.
 
 ## Install in the current directory
 
-Inspect existing files and instructions. Kit 0.5.0 accepts format 3 only: refuse incompatible research and tools without migration. Substitute actual paths:
+Inspect existing files and instructions. Kit 0.6.0 accepts format 4 only: refuse incompatible research and tools without migration. Substitute actual paths:
 
 ```sh
 python3 <bundle>/install-workspace.py --kit <bundle> --project <current-directory> --host agents

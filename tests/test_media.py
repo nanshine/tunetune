@@ -24,7 +24,7 @@ class MediaTests(unittest.TestCase):
         self.root.mkdir()
         self.assets.mkdir()
         (self.assets / 'index.html').write_text('<title>Research</title>')
-        self.write('project.json', {'schema_version': 3, 'name': 'Media', 'deliveries': []})
+        self.write('project.json', {'schema_version': 4, 'name': 'Media', 'deliveries': []})
         self.server = wb.make_server(self.root, self.assets)
         self.thread = threading.Thread(target=self.server.serve_forever,
                                        kwargs={'poll_interval': 0.01}, daemon=True)
@@ -56,7 +56,7 @@ class MediaTests(unittest.TestCase):
         return self.request('/api/media?path=' + quote(path, safe=''))
 
     def reference(self, *references):
-        self.write('proposal.json', {'sections': [], 'examples': [{'input': list(references)}]})
+        self.write('proposal.json', {'summary': '', 'examples': [{'input': list(references)}]})
 
     def test_only_explicit_references_authorize_supported_media(self):
         cases = [('image', 'data/中文 image.png', b'\x89PNG\r\n\x1a\n', 'image/png'),
@@ -115,10 +115,10 @@ class MediaTests(unittest.TestCase):
     def test_non_displayed_metadata_does_not_authorize_media(self):
         path = 'private/image.png'
         self.write(path, b'private')
-        self.write('proposal.json', {'sections': [], 'examples': [],
+        self.write('proposal.json', {'summary': '', 'examples': [],
                                      'metadata': {'type': 'image', 'path': path}})
         self.assertEqual(self.media(path)[0], 404)
-        self.write('proposal.json', {'sections': [], 'examples': [{'input': 'text', 'metadata': {'type': 'image', 'path': path}}]})
+        self.write('proposal.json', {'summary': '', 'examples': [{'input': 'text', 'metadata': {'type': 'image', 'path': path}}]})
         self.assertEqual(self.media(path)[0], 404)
         self.write('experiments/e/config.json', {'parameters': {'type': 'image', 'path': path}})
         self.assertEqual(self.media(path)[0], 404)

@@ -14,6 +14,8 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
+import sys
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -35,8 +37,11 @@ PATTERNS = (
     "experiments/*/config.json", "experiments/*/status.json", "experiments/*/analysis.json",
     "experiments/*/evals/*/config.json", "experiments/*/evals/*/status.json",
     "experiments/*/evals/*/outputs.jsonl", "experiments/*/model/invoke.json",
-    "comparison/inputs.jsonl", "comparison/outputs.jsonl",
+    "comparison/inputs.jsonl", "comparison/outputs.jsonl", "responses/*.json",
 )
+SCHEMA = 4
+VIEWS = ("proposal", "plan", "resources", "evaluation", "review", "acceptance")
+ID = re.compile(r"[A-Za-z0-9_-]+\Z")
 
 monitor_spec = importlib.util.spec_from_file_location("workspace_monitor", Path(__file__).with_name("monitor.py"))
 monitor_module = importlib.util.module_from_spec(monitor_spec)
@@ -193,6 +198,107 @@ class SafeTree:
                     pass
 
 
+def find_helpers(root):
+    """Installed research tools, found only at the documented skill locations inside the project."""
+    for host in (".agents", ".claude"):
+        current = Path(root)
+        try:
+            for segment in (host, "skills", "research-workspace", "scripts"):
+                current = current / segment
+                if not stat.S_ISDIR(os.lstat(current).st_mode):
+                    raise OSError("Not a real directory")
+            if all(stat.S_ISREG(os.lstat(current / name).st_mode) for name in ("records.py", "run.py")):
+                return current
+        except OSError:
+            continue
+    return None
+
+
+def load_records(helpers):
+    if helpers is None:
+        return None
+    spec = importlib.util.spec_from_file_location("workspace_records", helpers / "records.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def submit_response(reader, body):
+    if reader.records is None:
+        raise RequestError(503, "Research tools are not installed in this project")
+    if not isinstance(body, dict) or not {"kind", "decision", "target_sha256"} <= set(body) <= {"kind", "decision", "target_sha256", "note", "items"}:
+        raise RequestError(400, "Invalid response fields")
+    note = body.get("note")
+    if note is not None and (not isinstance(note, str) or len(note) > 4000):
+        raise RequestError(400, "Invalid note")
+    tree = reader.records.Tree(reader.tree.root)
+    try:
+        return reader.records.publish_response(tree, body["kind"], body["decision"], body["target_sha256"],
+                                               note.strip() if note else None, body.get("items"))
+    except ValueError as exc:
+        raise RequestError(409 if "Conflict" in str(exc) or "busy" in str(exc).lower() else 400, str(exc)) from exc
+    finally:
+        tree.close()
+
+
+def helper_command(reader, *args):
+    return [sys.executable, "-E", "-s", str(reader.helpers / "run.py"), "--project", str(reader.tree.root), *args]
+
+
+def start_acceptance(reader, body):
+    """Run verified local models on the acceptance inputs; the runner merges their outputs."""
+    if reader.helpers is None:
+        raise RequestError(503, "Research tools are not installed in this project")
+    if not isinstance(body, dict) or set(body) != {"experiments"} or not isinstance(body["experiments"], list) \
+            or not 0 < len(body["experiments"]) <= 8 or not all(isinstance(e, str) and ID.fullmatch(e) for e in body["experiments"]) \
+            or len(set(body["experiments"])) != len(body["experiments"]):
+        raise RequestError(400, "Name one to eight distinct experiments")
+    if not reader.running.acquire(blocking=False):
+        raise RequestError(409, "Another model run is in progress")
+    job = {"id": uuid.uuid4().hex[:8], "state": "running", "experiments": body["experiments"], "started_at": now()}
+    reader.job = job
+
+    def work():
+        try:
+            result = subprocess.run(helper_command(reader, "--compare", *body["experiments"], "--timeout", "900", "--local-only"),
+                                    capture_output=True, text=True, timeout=900 * len(body["experiments"]) + 60)
+            report = {}
+            try:
+                report = json.loads(result.stdout or "{}").get("experiments", {})
+            except ValueError:
+                pass
+            failed = [k for k, v in report.items() if v.get("returncode") != 0]
+            job.update(state="succeeded" if result.returncode == 0 else "failed", finished_at=now(),
+                       failed=failed, message=(result.stderr or "")[-1500:])
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            job.update(state="failed", finished_at=now(), message=str(exc)[-1500:])
+        finally:
+            reader.running.release()
+    threading.Thread(target=work, daemon=True).start()
+    return job
+
+
+def try_model(reader, body):
+    if reader.helpers is None:
+        raise RequestError(503, "Research tools are not installed in this project")
+    if not isinstance(body, dict) or set(body) != {"experiment", "input"} or not isinstance(body["experiment"], str) \
+            or not ID.fullmatch(body["experiment"]):
+        raise RequestError(400, "Name one experiment and an input")
+    if not reader.running.acquire(blocking=False):
+        raise RequestError(409, "Another model run is in progress")
+    try:
+        result = subprocess.run(helper_command(reader, "--try", body["experiment"], "--timeout", "180"),
+                                input=json.dumps(body["input"], ensure_ascii=False), capture_output=True, text=True, timeout=240)
+    except subprocess.TimeoutExpired:
+        raise RequestError(504, "The model did not answer in time") from None
+    finally:
+        reader.running.release()
+    try:
+        return json.loads(result.stdout) if result.stdout.strip() else {"error": json.loads(result.stderr or "{}").get("error", "Run failed")}
+    except ValueError:
+        return {"error": (result.stderr or "Run failed")[-1500:]}
+
+
 def media_reference(snapshot, path):
     """Only explicit references in current display records expose project media."""
     if snapshot.get("error"):
@@ -226,6 +332,10 @@ class Reader:
         self._revision = hashlib.sha256(b"").hexdigest()
         self._synced_at = None
         self.monitor = monitor_module.ResourceMonitor(self.tree)
+        self.job = None
+        self.helpers = find_helpers(root)
+        self.records = load_records(self.helpers)
+        self.running = threading.Lock()
 
     def _paths(self):
         trie = {}
@@ -286,9 +396,9 @@ class Reader:
                     if not isinstance(content, dict):
                         raise ValueError("JSON must be an object")
                     if "schema_version" in content and (
-                        type(content["schema_version"]) is not int or content["schema_version"] != 3
+                        type(content["schema_version"]) is not int or content["schema_version"] != SCHEMA
                     ):
-                        raise ValueError("Unsupported schema_version (expected 3)")
+                        raise ValueError("Unsupported schema_version (expected 4)")
                     field = {"proposal.json": "examples", "resources.json": "items", "project.json": "deliveries"}.get(path)
                     if field in content and not isinstance(content[field], list):
                         raise ValueError(f"{field} must be an array")
@@ -314,8 +424,8 @@ class Reader:
             files[path] = {"content": content, "sha256": hashlib.sha256(raw).hexdigest()}
         if "project.json" not in files:
             raise ValueError("Missing required project.json")
-        if files["project.json"]["content"].get("schema_version") != 3:
-            raise ValueError("project.json requires schema_version=3")
+        if files["project.json"]["content"].get("schema_version") != SCHEMA:
+            raise ValueError("project.json requires schema_version=4")
         return files
 
     def snapshot(self):
@@ -333,7 +443,31 @@ class Reader:
             inventory = self._files.get("resources.json", {}).get("content", {"items": []})
             observations = self.monitor.snapshot(inventory) if not error else copy.deepcopy(self.monitor.report)
             return {"files": copy.deepcopy(self._files), "revision": self._revision,
-                    "synced_at": self._synced_at or now(), "error": error, "observations": observations}
+                    "synced_at": self._synced_at or now(), "error": error, "observations": observations,
+                    "view": self.view(), "acceptance": copy.deepcopy(self.job)}
+
+    def view(self):
+        """Display focus published by the Agent; invalid or missing state is simply ignored."""
+        try:
+            with self.tree.directory([".workspace"]) as parent:
+                fd = os.open("view.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                with os.fdopen(fd, "rb") as stream:
+                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                        return None
+                    raw = stream.read(64 * 1024 + 1)
+            value = strict_json(raw.decode("utf-8"))
+        except (OSError, ValueError, RecursionError):
+            return None
+        if not isinstance(value, dict) or type(value.get("revision")) is not int:
+            return None
+        focus = value.get("focus") if isinstance(value.get("focus"), dict) else {}
+        experiment = focus.get("experiment")
+        return {"revision": value["revision"],
+                "open": [v for v in value.get("open", []) if v in VIEWS] if isinstance(value.get("open"), list) else [],
+                "focus": {"experiment": experiment} if isinstance(experiment, str) and ID.fullmatch(experiment) else {},
+                "attention": [{"view": n["view"], "message": n["message"][:200]} for n in value.get("attention", [])
+                              if isinstance(n, dict) and n.get("view") in VIEWS and isinstance(n.get("message"), str)]
+                if isinstance(value.get("attention"), list) else []}
 
 
 class RequestError(Exception):
@@ -376,8 +510,8 @@ def save_project_name(reader, body):
                     if version(before) != version(os.fstat(stream.fileno())):
                         raise ValueError("project.json changed while reading")
                 project = strict_json(raw.decode("utf-8"))
-                if not isinstance(project, dict) or type(project.get("schema_version")) is not int or project["schema_version"] != 3:
-                    raise ValueError("project.json requires schema_version=3")
+                if not isinstance(project, dict) or type(project.get("schema_version")) is not int or project["schema_version"] != SCHEMA:
+                    raise ValueError("project.json requires schema_version=4")
                 if hashlib.sha256(raw).hexdigest() != expected:
                     raise RequestError(409, "Project is stale; refresh before renaming")
                 project["name"] = name
@@ -483,7 +617,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.headers.get_all("Origin", []) != ["http://" + self.headers["Host"]]:
                 raise RequestError(403, "Same Origin required")
-            if self.path != "/api/project/name":
+            routes = {"/api/project/name": save_project_name, "/api/responses": submit_response,
+                      "/api/acceptance/run": start_acceptance, "/api/try": try_model}
+            if self.path not in routes:
                 raise RequestError(404, "Not found")
             if self.headers.get_all("Transfer-Encoding"):
                 raise RequestError(400, "Transfer-Encoding is not supported")
@@ -500,7 +636,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(raw) != length:
                 raise RequestError(400, "Incomplete body")
             body = strict_json(raw.decode("utf-8"))
-            self.reply(200, save_project_name(self.server.reader, body))
+            self.reply(200, routes[self.path](self.server.reader, body))
         except RequestError as exc:
             self.reply(exc.status, {"error": str(exc)})
         except (ValueError, RecursionError):

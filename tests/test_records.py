@@ -27,10 +27,10 @@ class RecordsTests(unittest.TestCase):
         self.tree = records.Tree(self.root)
         self.addCleanup(self.tree.close)
         self.source = self.base / "input.json"
-        self.raw("project.json", dict(schema_version=3, name="Fixture", language="en", current_evaluation=None, deliveries=[]))
+        self.raw("project.json", dict(schema_version=4, name="Fixture", language="en", current_evaluation=None, deliveries=[]))
         self.raw("proposal.json", self.proposal())
         self.raw("resources.json", dict(items=[]))
-        self.raw(".workspace/manifest.json", dict(schema_min=3, schema_max=3))
+        self.raw(".workspace/manifest.json", dict(schema_min=4, schema_max=4))
 
     def raw(self, path, value):
         target = self.root / path
@@ -46,7 +46,7 @@ class RecordsTests(unittest.TestCase):
         return records.digest(self.tree.read(path))
 
     def proposal(self, summary="Synthetic unittest fixture only"):
-        return dict(summary=summary, sections=[], examples=[])
+        return dict(summary=summary, examples=[])
 
     def status(self, state, **details):
         return dict(state=state, updated_at=STAMP) | details
@@ -410,7 +410,8 @@ class RecordsTests(unittest.TestCase):
         self.assertEqual(records.read_record(self.tree, "evaluation/v1/definition.json"), original)
 
     def test_proposal_resources_and_monitor_contract(self):
-        self.put("proposal.json", dict(self.proposal(), sections=[dict(title="Use", body="Daily")],
+        self.put("proposal.json", dict(self.proposal(), goal="Daily use", considered=[dict(family="Rules", decision="adopted", reason="Cheap")],
+                 sources=[dict(title="Docs", url="https://example.org/docs")],
                  examples=[dict(id="x", input={"text": "test"}, expected_output="result")],
                  feasibility=dict(verdict="conditional", reason="Need data")), expected=self.sha("proposal.json"))
         resource = dict(id="data", title="Data", type="dataset", status="unknown")
@@ -482,8 +483,8 @@ class RecordsTests(unittest.TestCase):
         (source / "code.py").write_bytes(b"# fixture\n")
         self.raw("experiments/e1/model/weights", b"fixture")
         for metadata in (dict(schema_min=2, schema_max=2), dict(schema_min=1, schema_max=3),
-                         dict(schema_min=3, schema_max=4), dict(schema_min=True, schema_max=3),
-                         dict(schema_min=3.0, schema_max=3), dict(schema_min=3)):
+                         dict(schema_min=3, schema_max=4), dict(schema_min=3, schema_max=3), dict(schema_min=True, schema_max=4),
+                         dict(schema_min=4.0, schema_max=4), dict(schema_min=4)):
             with self.subTest(metadata=metadata):
                 self.raw(".workspace/manifest.json", metadata)
                 before = {p.relative_to(self.root): p.read_bytes() if p.is_file() else None

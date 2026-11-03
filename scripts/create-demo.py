@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a local synthetic classical-classifier demo in a fresh format-3 project.
+"""Create a local synthetic classical-classifier demo in a fresh format-4 project.
 
 No dependencies, network access, installation, or model downloads. Existing research
 is refused, including partial prior demo runs. Invoke only after installing a kit:
@@ -411,8 +411,8 @@ class Demo:
             self.records.shape(path, data)
             self.initial[path] = self.records.digest(data)
         manifest = self.read_json(".workspace/manifest.json")
-        if not manifest.get("schema_min", 4) == 3 == manifest.get("schema_max", 0):
-            raise ValueError("Installed kit does not support schema 3")
+        if not manifest.get("schema_min", 0) == 4 == manifest.get("schema_max", 0):
+            raise ValueError("Installed kit does not support schema 4")
         for path in ("AGENTS.md", ".workspace/app/workspace.py", ".workspace/app/monitor.py",
                      ".workspace/app/assets/index.html", HELPERS + "/run.py"):
             if not self.tree.read(path):
@@ -424,7 +424,7 @@ class Demo:
                         raise ValueError(f"Refusing existing research in {directory}; use a fresh installed project")
         project, proposal = self.read_json("project.json"), self.read_json("proposal.json")
         if (project["current_evaluation"] is not None or project["deliveries"]
-                or proposal["summary"] or proposal["sections"] or proposal["examples"] or "feasibility" in proposal
+                or proposal["summary"] or proposal["examples"] or "feasibility" in proposal
                 or proposal.get("approaches") or self.read_json("resources.json")["items"]):
             raise ValueError("Refusing an existing proposal, evaluation, delivery, or resource inventory")
         report = self.records.validate(self.tree)
@@ -504,12 +504,17 @@ class Demo:
     def core(self):
         self.record("proposal.json", {
             "summary": "个人收件箱四分类：从规则基线到可运行的小模型。 " + NOTICE,
-            "sections": [
-                {"title": "目标", "body": "将短英文消息分为 todo / expense / appointment / other，保留可对任意文本推理的模型与代码。"},
-                {"title": "研究路径", "body": "在CPU上运行规则基线与9个朴素贝叶斯变体，探索特征、平滑、增强和先验；父节点只表示方法来源，每次从零拟合。"},
-                {"title": "评测边界", "body": "52条训练消息、v1的16条基础样例、v2的24条边界样例和8条对比输入互不重叠。两版均为开发集，示例已暴露，不是独立盲测；只比较同版分数，概率未经校准。"},
-                {"title": "选择与使用", "body": "对比规则、词袋和混合增强三种方法对同一条消息的分类结果。选定后可让 Agent 直接用模型处理新消息。下一步需要真实脱敏样本和独立评测；当前选择不代表已经部署或验收。"},
+            "goal": "将短英文消息分为 todo / expense / appointment / other，保留可对任意文本推理的模型与代码。",
+            "output": "每条消息一个类别。",
+            "considered": [
+                {"family": "规则与关键词", "decision": "adopted", "reason": "作为无依赖基线，检查完整评分通路。"},
+                {"family": "经典特征加线性或朴素贝叶斯", "decision": "adopted", "reason": "数据少、CPU 即可，能比较特征与数据干预。"},
+                {"family": "语义模型或强语言模型", "decision": "excluded", "reason": "演示不下载权重、不调用 API。"},
             ],
+            "evaluation": "52条训练消息、v1的16条基础样例、v2的24条边界样例和8条对比输入互不重叠。两版均为开发集，示例已暴露，不是独立盲测；只比较同版分数，概率未经校准。",
+            "budget": "本地 CPU，几分钟内完成；无下载、无网络、无费用。",
+            "stopping": "跑完规则基线与 9 个朴素贝叶斯变体后停止。",
+            "delivery": "对比规则、词袋和混合增强三种方法对同一条消息的分类结果；选择不代表已经部署或验收。",
             "examples": [{"id": "task", "input": "Please send the invoice copy", "expected_output": "todo"},
                          {"id": "receipt", "input": "Receipt for groceries total 18 dollars", "expected_output": "expense"}],
             "approaches": [

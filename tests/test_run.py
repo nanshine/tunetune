@@ -34,8 +34,8 @@ class RunTests(unittest.TestCase):
         self.root.mkdir()
         self.tree = records.Tree(self.root)
         self.addCleanup(self.tree.close)
-        self.raw("project.json", dict(schema_version=3, name="Synthetic", language="en", current_evaluation=None, deliveries=[]))
-        self.raw("proposal.json", dict(summary="Fixture", sections=[], examples=[]))
+        self.raw("project.json", dict(schema_version=4, name="Synthetic", language="en", current_evaluation=None, deliveries=[]))
+        self.raw("proposal.json", dict(summary="Fixture", examples=[]))
         self.raw("resources.json", dict(items=[]))
         source = self.base / "evaluation"
         source.mkdir()
@@ -367,6 +367,21 @@ class RunTests(unittest.TestCase):
         self.assertTrue(records.validate(self.tree)["valid"])
         self.assertFalse([p for p in (self.root / ".workspace/runtime").iterdir() if p.name.startswith("compare-")])
 
+    def test_try_runs_one_local_input_without_recording_evidence(self):
+        self.packaged("upper", "with open(sys.argv[2],'w') as f:\n    [f.write(json.dumps({'sample_id':r['sample_id'],'output':r['input'].upper()})+chr(10)) for r in rows]\n")
+        self.packaged("broken", "print('model failed'); sys.exit(3)\n")
+        before = sorted(str(p) for p in self.root.rglob("*") if ".workspace" not in p.parts)
+        self.assertEqual(runner.try_model(self.tree, "upper", "new post", 5)["output"], "NEW POST")
+        failed = runner.try_model(self.tree, "broken", "x", 5)
+        self.assertEqual((failed["returncode"], "output" in failed), (3, False))
+        self.assertIn("model failed", failed["log_tail"])
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*") if ".workspace" not in p.parts))
+        self.assertFalse([p for p in (self.root / ".workspace/runtime").iterdir() if p.name.startswith("try-")])
+        with self.assertRaisesRegex(ValueError, "Invalid experiment"):
+            runner.try_model(self.tree, "../upper", "x", 5)
+        with self.assertRaises((ValueError, OSError)):
+            runner.try_model(self.tree, "missing", "x", 5)
+
     def test_finalize_refuses_incomplete_results_and_invalid_entry_points(self):
         self.prepare("import os; from pathlib import Path\n"
                      "(Path(os.environ['TUNETUNE_OUTPUT'])/'invoke.json').write_text('{\"argv\":[]}')\n", "bad")
@@ -460,7 +475,7 @@ class RunTests(unittest.TestCase):
 
     def test_incompatible_installed_metadata_refuses_execute_without_changes(self):
         for metadata in (dict(schema_min=2, schema_max=2), dict(schema_min=1, schema_max=3),
-                         dict(schema_min=3, schema_max=4), dict(schema_min=3, schema_max=True)):
+                         dict(schema_min=3, schema_max=4), dict(schema_min=3, schema_max=3), dict(schema_min=4, schema_max=True)):
             with self.subTest(metadata=metadata):
                 self.raw(".workspace/manifest.json", metadata)
                 before = {p.relative_to(self.root): p.read_bytes() if p.is_file() else None

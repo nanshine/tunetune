@@ -58,7 +58,7 @@ def download(url, output, budget, deadline, expected=None, internal=False):
     digest = hashlib.sha256()
     count = 0
     opener = build_opener(ProxyHandler({}) if urlsplit(url).hostname in ("127.0.0.1", "localhost", "::1") else ProxyHandler(), Redirects())
-    with opener.open(Request(url, headers={"User-Agent": "TuneTune/0.5.0"}), timeout=remaining(deadline)) as response:
+    with opener.open(Request(url, headers={"User-Agent": "TuneTune/0.6.0"}), timeout=remaining(deadline)) as response:
         length = response.headers.get("Content-Length")
         if length is not None and int(length) > budget:
             raise ValueError("Resource exceeds --max-bytes")
@@ -204,8 +204,8 @@ def prepare(project, source, destination, kind="http", revision=None, sha256=Non
     tree = records.Tree(project)
     try:
         records.check_installed_metadata(tree)
-        if tree.exists("project.json") and records.strict(tree.read("project.json")).get("schema_version") != 3:
-            raise ValueError("Incompatible project format; format 3 is required")
+        if tree.exists("project.json") and records.strict(tree.read("project.json")).get("schema_version") != 4:
+            raise ValueError("Incompatible project format; format 4 is required")
         if tree.exists(destination):
             raise ValueError("Resource destination already exists")
         result = dict(kind=kind, source=source, revision=revision, destination=destination,
