@@ -118,17 +118,17 @@ class DemoTests(unittest.TestCase):
                          ("definition.json", "samples.jsonl", "evaluate.py", "infer.py", "calibration.log", "manifest.json")}
         for index in range(1, 11):
             base = f"experiments/exp-{index:03d}"
-            expected |= {f"{base}/{name}" for name in ("config.json", "status.json", "analysis.json", "run.log", "model/model.json",
+            expected |= {f"{base}/{name}" for name in ("config.json", "status.json", "analysis.json", "run.log", "model/model.json", "model/invoke.json", "model/manifest.json",
                                                       "snapshot/train.py", "snapshot/infer.py", "snapshot/parameters.json", "snapshot/manifest.json")}
             versions = ("v1", "v2") if index <= 2 else ("v1",) if index <= 5 else ("v2",)
             for version in versions:
                 expected |= {f"{base}/evals/eval-{version}/{name}" for name in ("config.json", "status.json", "outputs.jsonl", "run.log")}
         actual = {path for path in self.generated_files if not path.startswith((".agents/", ".workspace/")) and path != "AGENTS.md"}
         self.assertEqual(actual, expected)
-        self.assertEqual(len(expected), 160)
-        self.assertEqual(self.report["files"], {"research": 160, "created": len(self.generated_files.keys() - self.initial_files.keys()),
+        self.assertEqual(len(expected), 180)
+        self.assertEqual(self.report["files"], {"research": 180, "created": len(self.generated_files.keys() - self.initial_files.keys()),
                                               "total": len(self.generated_files)})
-        self.assertEqual(self.report["files"]["created"], 158)
+        self.assertEqual(self.report["files"]["created"], 178)
         self.assertEqual({path for path in self.generated_files if path.startswith(".workspace/runtime/")},
                          {".workspace/runtime/records.lock"})
         self.assertFalse(list(self.project.rglob("__pycache__")))
@@ -259,8 +259,9 @@ class DemoTests(unittest.TestCase):
             signatures.add(sha(base / "model/model.json"))
             self.assert_process_facts(base)
             status = read_json(base / "status.json")
-            self.assertEqual(status["target"]["path"], f"experiments/exp-{index:03d}/model/model.json")
-            self.assertEqual(status["target"]["sha256"], sha(base / "model/model.json"))
+            self.assertEqual(status["target"]["path"], f"experiments/exp-{index:03d}/model")
+            self.assertEqual(status["target"]["sha256"], sha(base / "model/manifest.json"))
+            self.assertEqual(read_json(base / "model/invoke.json")["argv"][-1], "--jsonl")
             analysis = read_json(base / "analysis.json")
             self.assertEqual(set(analysis), {"outcome", "summary"})
             self.assertTrue(analysis["summary"])
@@ -291,7 +292,7 @@ class DemoTests(unittest.TestCase):
             self.assertEqual(set(row["outputs"]), set(demo.DELIVERIES))
         for experiment in demo.DELIVERIES:
             status = read_json(self.project / "experiments" / experiment / "status.json")
-            argv = [sys.executable, "-B", f"experiments/{experiment}/snapshot/infer.py", "--model", status["target"]["path"]]
+            argv = [sys.executable, "-B", f"experiments/{experiment}/snapshot/infer.py", "--model", status["target"]["path"] + "/model.json"]
             replay = subprocess.run(argv + ["--inputs", "data/comparison.jsonl"], cwd=self.project,
                                     check=True, capture_output=True, text=True, timeout=60)
             values = [json.loads(line) for line in replay.stdout.splitlines()]

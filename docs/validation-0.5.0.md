@@ -19,6 +19,6 @@ Format 3 adds approach/resource planning, experiment roles, verified local/API t
 
 ## Boundaries still requiring external acceptance
 
-Codex and Claude Code skill-list visibility in a newly installed interactive session has not been directly verified here. File publication, CLI continuations and package integrity are tested; they are not evidence of application discovery. Follow the installed agent-adapters guide to verify the five names before claiming setup is complete. No Release was published.
+Codex and Claude Code skill-list visibility in a newly installed interactive session has not been directly verified here. File publication, CLI continuations and package integrity are tested; they are not evidence of application discovery. The installed agent-adapters guide continues by reading the installed skills and gives reopen instructions only when they are reported missing or a reload is documented. No Release was published.
 
 Public resource acquisition is tested with local/mocked sources, not live large downloads. Git byte limits constrain extracted content, not wire traffic or internal object storage; cross-filesystem atomic publication safely fails. Actual model licensing, platform support, memory, quality and service cost need task-specific verification. Arbitrary executed code is not sandboxed by these helpers, and credential-log discipline cannot be guaranteed for arbitrary child programs.

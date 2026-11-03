@@ -18,15 +18,13 @@ python3 <bundle>/install-workspace.py --kit <bundle> --project <current-director
 
 Use `--host claude` for Claude Code. Install all five sibling skills in `.agents/skills/` or `.claude/skills/`, the application under `.workspace`, and only the minimal initial research files. Preserve existing compatible research and instructions, refuse tool conflicts and create stage directories only when needed. Keep the canonical format guide in the shared skill.
 
-A separate research directory is an explicit option, not a default. Before using it, arrange and verify application discovery from that directory; silently placing skills below the conversation directory does not meet installation acceptance.
+A separate research directory is an explicit option, not a default. Before using it, make sure the application will discover skills from that directory; silently placing skills below the conversation directory does not make them available.
 
-## Verify application discovery
+## Make the skills available
 
-Read the installed shared skill's `references/agent-adapters.md`. Verify that `research-workspace`, `tunetune-init`, `build-evaluation`, `run-experiments` and `explore` can be found or invoked in the application. Files existing on disk are not this check. Codex normally detects additions automatically; Claude Code may need `/reload-skills` for a new top-level directory. Use current application-supported actions.
+Read the installed shared skill's `references/agent-adapters.md`. Confirm that `research-workspace`, `tunetune-init`, `build-evaluation`, `run-experiments` and `explore` are installed where the application discovers skills, then continue in this conversation by reading the installed skills. Do not pause to ask the person to inspect a skill picker.
 
-If discovery cannot be verified automatically, ask for one concrete skill-picker check. If reopening is required, give the correct directory and a continuation sentence carrying the original request and completed setup. Say plainly, for example: “The files are installed. Please reopen this directory in Codex so the skills appear, then continue with: …”. Do not describe this as a research failure or use terms such as host refresh. Directly reading a skill can recover work but is not proof of list visibility.
-
-Do not claim installation complete and start research until discovery passes. Keep file installation, application discovery and panel availability distinct in the report. Do not promise support for an untested application.
+Mention a refresh only when the application documents one for this case, such as `/reload-skills` in Claude Code for a new top-level skills directory, or when the person reports the skills missing. Then say it in one plain sentence with the directory and a continuation sentence carrying the original request, for example: “If the TuneTune skills do not appear, reopen this directory in Codex and continue with: …”. Do not present it as a research failure or use internal terms. Report installation briefly; do not promise support for an untested application.
 
 ## Open and continue
 

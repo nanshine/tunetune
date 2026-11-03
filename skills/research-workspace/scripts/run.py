@@ -89,7 +89,7 @@ def execute(tree, path):
         config = shape(config_path, raw)
         execution = config["execution"]
         timeout = execution["timeout_seconds"]
-        for name in ("run.log", "outputs.jsonl"):
+        for name in ("run.log", "outputs.jsonl", "result"):
             require(not tree.exists(path + "/" + name), f"Attempt already has {name}; use a new ID")
         if "/evals/" not in path and tree.exists(path + "/model"):
             require(not tree.files(path + "/model"), "Attempt already has model files; use a new ID")
@@ -98,6 +98,20 @@ def execute(tree, path):
             require(status["state"] == "pending" and not any(k in status for k in (*PROCESS, "target", "metrics", "usage")),
                     "Attempt already started or completed; use a new ID")
         verify_inputs(tree, path, config)
+        # Conventional locations override same-named config values; see finalize in records.py.
+        locations = {"TUNETUNE_PROJECT": tree.root, "TUNETUNE_ATTEMPT": os.path.join(tree.root, path)}
+        if "/evals/" in path:
+            experiment = path.split("/evals/")[0]
+            target = read_record(tree, experiment + "/status.json")["target"]["path"]
+            locations.update(TUNETUNE_TARGET=os.path.join(tree.root, target),
+                             TUNETUNE_EVALUATION=os.path.join(tree.root, "evaluation", config["evaluation_version"]),
+                             TUNETUNE_OUTPUT=os.path.join(tree.root, path, "result"))
+            output = path + "/result"
+        else:
+            locations["TUNETUNE_OUTPUT"] = os.path.join(tree.root, path, "model")
+            output = path + "/model"
+        with tree.directory(parts(output), create=True):
+            pass
         cwd = [] if execution["cwd"] == "." else parts(execution["cwd"])
         with tree.directory(cwd) as cwd_fd, tree.directory(parts(path)) as record_fd:
             fd = os.open("run.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK,
@@ -124,7 +138,7 @@ def execute(tree, path):
                                 [sys.executable, "-I", "-c", LAUNCHER, str(cwd_fd), json.dumps(sorted(mask)),
                                  str(write_fd), *execution["argv"]],
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                env={**os.environ, **execution["environment"]}, pass_fds=(cwd_fd, write_fd),
+                                env={**os.environ, **execution["environment"], **locations}, pass_fds=(cwd_fd, write_fd),
                                 start_new_session=True, shell=False,
                             )
                         finally:

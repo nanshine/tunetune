@@ -295,6 +295,72 @@ class RunTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.execute(self.tree, EVAL)
 
+    def test_conventional_locations_and_finalize_publish_model_then_measurement(self):
+        self.prepare("import json,os; from pathlib import Path\n"
+                     "out=Path(os.environ['TUNETUNE_OUTPUT']); (out/'weights.txt').write_text('w')\n"
+                     "(out/'invoke.json').write_text(json.dumps({'argv':['python3','predict.py']}))\n"
+                     "print(json.dumps({k:os.environ[k] for k in ('TUNETUNE_PROJECT','TUNETUNE_ATTEMPT')}))\n", "e3")
+        with self.assertRaisesRegex(ValueError, "completed"):
+            records.finalize(self.tree, "experiments/e3")
+        self.assertEqual(runner.execute(self.tree, "experiments/e3")["state"], "completed")
+        self.assertEqual(json.loads(self.tree.read("experiments/e3/run.log")),
+                         {"TUNETUNE_PROJECT": str(self.root), "TUNETUNE_ATTEMPT": str(self.root / "experiments/e3")})
+        status = records.finalize(self.tree, "experiments/e3")
+        self.assertEqual(status["state"], "succeeded")
+        self.assertEqual(status["target"], dict(kind="local", path="experiments/e3/model",
+                                                sha256=self.sha("experiments/e3/model/manifest.json")))
+        self.assertEqual(status["returncode"], 0)
+        self.raw("tools/score.py", b"import json,os; from pathlib import Path\n"
+                 b"out=Path(os.environ['TUNETUNE_OUTPUT'])\n"
+                 b"assert (Path(os.environ['TUNETUNE_TARGET'])/'invoke.json').exists()\n"
+                 b"assert (Path(os.environ['TUNETUNE_EVALUATION'])/'samples.jsonl').exists()\n"
+                 b"(out/'outputs.jsonl').write_text(json.dumps({'sample_id':'one','output':'yes','scores':{'count':1}})+'\\n')\n"
+                 b"(out/'metrics.json').write_text(json.dumps({'count':1}))\n")
+        path = "experiments/e3/evals/r1"
+        self.publish(path + "/config.json", dict(id="r1", evaluation_version="v1", target_sha256=status["target"]["sha256"],
+                     evaluation_sha256=self.evaluation_hash,
+                     execution=dict(argv=[sys.executable, "-B", "tools/score.py"], cwd=".", environment={"TUNETUNE_OUTPUT": "ignored"}, timeout_seconds=5)))
+        self.assertEqual(runner.execute(self.tree, path)["state"], "completed", self.tree.read(path + "/run.log"))
+        result = records.finalize(self.tree, path)
+        self.assertEqual(result["metrics"], {"count": 1})
+        self.assertEqual(records.read_record(self.tree, path + "/outputs.jsonl"),
+                         [{"sample_id": "one", "input": "synthetic", "output": "yes", "scores": {"count": 1}}])
+        self.assertTrue(records.validate(self.tree)["valid"])
+        with self.assertRaisesRegex(ValueError, "completed"):
+            records.finalize(self.tree, path)
+        project = records.read_record(self.tree, "project.json")
+        self.publish("project.json", dict(project, deliveries=["e3"]), create=False)
+        self.assertFalse([w for w in records.validate(self.tree)["warnings"] if "invoke" in w])
+        self.evaluation()
+        self.publish("project.json", dict(project, deliveries=["e3", "e1"]), create=False)
+        self.assertEqual([w for w in records.validate(self.tree)["warnings"] if "invoke" in w],
+                         ["Delivery e1 has no invoke.json entry point"])
+
+    def test_finalize_refuses_incomplete_results_and_invalid_entry_points(self):
+        self.prepare("import os; from pathlib import Path\n"
+                     "(Path(os.environ['TUNETUNE_OUTPUT'])/'invoke.json').write_text('{\"argv\":[]}')\n", "bad")
+        runner.execute(self.tree, "experiments/bad")
+        with self.assertRaisesRegex(ValueError, "argument array"):
+            records.finalize(self.tree, "experiments/bad")
+        self.assertEqual(records.read_record(self.tree, "experiments/bad/status.json")["state"], "completed")
+        self.evaluation()
+        self.raw("experiments/e1/run.log", b"")
+        self.publish(EVAL + "/status.json", dict(state="completed", updated_at=STAMP, returncode=0))
+        self.raw(EVAL + "/result/outputs.jsonl", b'{"sample_id":"one","output":"yes"}\n')
+        self.raw(EVAL + "/result/metrics.json", {})
+        with self.assertRaisesRegex(ValueError, "declared metrics"):
+            records.finalize(self.tree, EVAL)
+        self.assertFalse(self.tree.exists(EVAL + "/outputs.jsonl"))
+        self.raw(EVAL + "/result/metrics.json", {"count": 1})
+        self.raw(EVAL + "/result/outputs.jsonl", b'{"sample_id":"other","output":"yes"}\n')
+        with self.assertRaisesRegex(ValueError, "Unknown output"):
+            records.finalize(self.tree, EVAL)
+        self.raw(EVAL + "/result/outputs.jsonl", b'{"sample_id":"one","output":"yes"}\n')
+        self.assertEqual(records.finalize(self.tree, EVAL)["state"], "succeeded")
+        records.shape("evaluation/v2/samples.jsonl", b'{"sample_id":"a","input":"x","reference":"y","reference_status":"corrected"}\n')
+        with self.assertRaisesRegex(ValueError, "reference_status"):
+            records.shape("evaluation/v2/samples.jsonl", b'{"sample_id":"a","input":"x","reference_status":"approved"}\n')
+
     def test_started_states_reserved_logs_outputs_and_models_never_rerun(self):
         for state in ("running", "completed", "succeeded", "failed", "cancelled"):
             self.raw("experiments/e1/status.json", dict(state=state, updated_at=STAMP))

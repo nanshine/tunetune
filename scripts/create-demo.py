@@ -156,10 +156,17 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--text")
     group.add_argument("--inputs", help="JSONL objects with sample_id and input")
+    group.add_argument("--jsonl", nargs=2, metavar=("INPUT", "OUTPUT"), help="invoke.json entry point")
     args = parser.parse_args()
     model = json.loads(Path(args.model).read_text(encoding="utf-8"))
     if args.text is not None:
         print(predict(model, args.text)[0])
+    elif args.jsonl:
+        rows = [json.loads(line) for line in Path(args.jsonl[0]).read_text(encoding="utf-8").splitlines() if line.strip()]
+        with Path(args.jsonl[1]).open("x", encoding="utf-8") as stream:
+            for row in rows:
+                stream.write(json.dumps({"sample_id": row["sample_id"], "output": predict(model, row["input"])[0]},
+                                        ensure_ascii=False) + "\n")
     else:
         rows = [json.loads(line) for line in Path(args.inputs).read_text(encoding="utf-8").splitlines() if line.strip()]
         for row in rows:
@@ -587,13 +594,15 @@ class Demo:
             if (model["parameters"] != parameters or model["fitted"] != (number != 1)
                     or model["training_sha256"] != self.sha("data/train.jsonl") or model["labels"] != list(LABELS)):
                 raise ValueError("Generated model does not match its declared training inputs")
-            model_hash = self.sha(model_path)
-            self.records.verify_hash(self.tree, model_path, model_hash)
-            self.finish(base, target={"kind": "local", "path": model_path, "sha256": model_hash})
+            # The entry point lets evaluations, comparisons and later use call the model the same way.
+            self.raw(base + "/model/invoke.json", {"argv": [self.python, "-B", snapshot + "/infer.py", "--model", model_path, "--jsonl"],
+                                                  "description": "JSONL {sample_id,input} -> {sample_id,output}"})
+            model_hash = self.records.manifest(self.tree, base + "/model")["manifest_sha256"]
+            self.finish(base, target={"kind": "local", "path": base + "/model", "sha256": model_hash})
         except Exception as exc:
             self.fail(base, exc)
             raise
-        self.models[ident] = {"path": model_path, "sha256": model_hash}
+        self.models[ident] = {"path": model_path, "target": base + "/model", "sha256": model_hash}
         self.evaluate(ident, "v1" if number <= 5 else "v2")
 
     def evaluate(self, experiment, version):
@@ -610,7 +619,7 @@ class Demo:
             self.run(base)
             # The evaluator emits only JSON; the runner does not decorate run.log.
             result = self.read_json(base + "/run.log")
-            self.records.verify_hash(self.tree, model["path"], model["sha256"])
+            self.records.verify_path_hash(self.tree, model["target"], model["sha256"])
             self.records.verify_manifest(self.tree, evaluation, evaluation_hash)
             sample_rows = self.records.shape(evaluation + "/samples.jsonl", self.tree.read(evaluation + "/samples.jsonl"))
             output_data = jsonl(result["outputs"])
@@ -654,15 +663,16 @@ class Demo:
         for experiment in DELIVERIES:
             model = self.models[experiment]
             snapshot = f"experiments/{experiment}/snapshot"
-            self.records.verify_hash(self.tree, model["path"], model["sha256"])
+            self.records.verify_path_hash(self.tree, model["target"], model["sha256"])
             self.records.verify_manifest(self.tree, snapshot, self.read_json(f"experiments/{experiment}/config.json")["snapshot_sha256"])
-            argv = [self.python, "-B", snapshot + "/infer.py", "--model", model["path"], "--inputs", "data/comparison.jsonl"]
+            output = Path(self.staging) / (experiment + "-comparison.jsonl")
+            argv = self.read_json(model["target"] + "/invoke.json")["argv"] + ["data/comparison.jsonl", str(output)]
             log = self.helper(argv)
-            values = [self.records.strict(line) for line in log.splitlines() if line.strip()]
-            if ([(row["sample_id"], row["input"]) for row in values] != [(row["sample_id"], row["input"]) for row in samples]
+            values = [self.records.strict(line) for line in output.read_text(encoding="utf-8").splitlines() if line.strip()]
+            if ([row["sample_id"] for row in values] != [row["sample_id"] for row in samples]
                     or any(row["output"] not in LABELS for row in values)):
                 raise ValueError("Comparison inference did not return all fixed inputs")
-            self.records.verify_hash(self.tree, model["path"], model["sha256"])
+            self.records.verify_path_hash(self.tree, model["target"], model["sha256"])
             outputs[experiment] = {row["sample_id"]: row["output"] for row in values}
             logs.append(experiment + "\n" + log)
         self.raw("comparison/run.log", "\n".join(logs))

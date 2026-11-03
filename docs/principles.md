@@ -12,11 +12,11 @@ Training is one possible intervention. A fixed-rule fallback does not fulfill an
 
 The Agent maintains project files; the panel observes the same evidence through an infinite experiment canvas and readable proposal, resource, evaluation and comparison views. Its only write action changes the project name. Questions, requests, authorization and user decisions remain in conversation, not another filesystem workflow or panel control.
 
-Keep one current proposal with a grounded recommendation, alternatives, sources, resource references, finite budget, stopping conditions and next validation. Keep resource preparation facts in the inventory rather than duplicating them in prose. Use coherent human explanations; optional resource observations establish limited facts such as file existence, not usability or scientific feasibility.
+Keep one current proposal with a grounded recommendation, alternatives, sources, resource references, finite budget, stopping conditions and next validation. It records direction, changing only with the goal, requirements, recommended direction or scope; measurements and progress belong to experiment analyses. Keep resource preparation facts in the inventory rather than duplicating them in prose. Use coherent human explanations; optional resource observations establish limited facts such as file existence, not usability or scientific feasibility.
 
 ## Measurement before claims
 
-Calibrate the actual model-to-score path with justified successes, failures and trade-offs. Evaluation follows intended behavior rather than an algorithm's preferred training format. Resolve consequential subjective disagreements with recognizable examples. Strong-model annotations are draft evidence, not independent truth.
+Calibrate the actual model-to-score path with justified successes, failures and trade-offs. Evaluation follows intended behavior rather than an algorithm's preferred training format and calls every candidate through the same model entry point, never containing candidate-specific inference. Resolve consequential subjective disagreements with recognizable examples; when references encode the person's judgment, they review them before freezing. Agent and strong-model annotations are draft evidence, not independent truth.
 
 Separate development from independent final checks at the appropriate source, entity or temporal grouping, pin actual content and enforce exclusions in preparation. Repeatedly inspected examples are exposed. Finish calibration and coverage checks before freezing. Preserve configurations, inputs and final measurements; compare only compatible measurement and inference conditions. An unchanged model can be retested without training again.
 
@@ -24,7 +24,7 @@ Keep process facts, observed quality and interpretation distinct. Missing measur
 
 ## Initiative within a concrete scope
 
-A new study normally has one decision point after the person can review the proposal and resource plan. Explicit delegation covering that scope can supply the decision already. Preparation states sources, estimated transfer and disk use, destinations, data disclosures and costs where relevant; unknowns remain visible. A credential does not authorize unspecified spending.
+A new study normally has one decision point after the person can review the proposal and resource plan, presented as a plan by research role before its resources. Explicit delegation covering that scope can supply the decision already. Reviewing subjective evaluation references is the only other routine pause. Preparation states sources, estimated transfer and disk use, destinations, data disclosures and costs where relevant; unknowns remain visible. A credential does not authorize unspecified spending.
 
 Once covered, continue across skills and bounded rounds without repeated approvals. Ask only for consequential missing judgments or changed access, privacy, scope, time or cost boundaries. Use available conversational capabilities without depending on one application's tool names. End stages with authorized action, a specific decision and recommendation, or completed delivery rather than bare missing-work reports.
 
@@ -32,7 +32,7 @@ The Agent chooses hypotheses and interprets evidence. Deterministic helpers hand
 
 ## Concrete and honest delivery
 
-Verify actual local model files, dependencies and intended inference behavior. Select only verified local experiments as deliveries; models stay experiment-local. Selection does not copy, export, deploy or prove user satisfaction. Export separately when requested.
+Verify actual local model files, dependencies and intended inference behavior through the model's entry point. Select only verified local experiments as deliveries; models stay experiment-local. Selection does not copy, export, deploy or prove user satisfaction. Export separately when requested.
 
 API experiments preserve the provider/model identity, calling configuration, actual outputs, time and available usage/cost. A local description hash cannot establish immutable remote weights. Keep online references visible but distinct from private local delivery. Credentials never belong in conversation, records, snapshots or logs.
 
@@ -44,4 +44,4 @@ Maintain five concise skills: research-workspace, tunetune-init, build-evaluatio
 
 Create research outputs when needed. Preserve conditional writes, immutable evidence, project isolation and path/symlink protections. Keep unrelated code, caches, private inputs and secrets out of snapshots and distribution. Format 3 is explicitly incompatible with old projects; refuse them without automatic migration or overwrite.
 
-The default installation uses the current conversation directory and a prebuilt official kit. Verify file installation and actual application skill discovery separately; never infer visibility from files alone. Explain necessary refresh or reopen actions in ordinary user language, preserving the original request. Test execution and Agent behavior as well as record validity: a valid file does not prove sound research.
+The default installation uses the current conversation directory and a prebuilt official kit. Install skills where the application discovers them, verify the files and continue by reading the installed skills. Give a short refresh or reopen instruction, preserving the original request, only when the skills are reported missing or the application documents that a reload is required. Test execution and Agent behavior as well as record validity: a valid file does not prove sound research.

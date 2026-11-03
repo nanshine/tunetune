@@ -115,6 +115,7 @@ class Tree:
             os.close(fd)
             raise
         self.fd = fd
+        self.root = absolute
 
     def close(self):
         os.close(self.fd)
@@ -231,7 +232,9 @@ def shape(path, data):
                 for experiment, output in row["outputs"].items():
                     identifier(experiment)
                     require(output is not None, "Comparison output must be present")
-            elif not path.startswith("evaluation/"):
+            elif path.startswith("evaluation/"):
+                require(row.get("reference_status", "draft") in ("confirmed", "corrected", "draft"), "Invalid reference_status")
+            else:
                 fields(row, required, ("reference", "scores"))
                 if "scores" in row:
                     numbers(row["scores"])
@@ -455,8 +458,25 @@ def verify_path_hash(tree, path, expected):
         verify_hash(tree, path, expected)
 
 
+def check_invoke(tree, base):
+    """An optional model entry point: argv receives an input and output JSONL path."""
+    try:
+        if not tree.exists(base + "/invoke.json"):
+            return False
+    except NotADirectoryError:
+        return False
+    entry = strict(tree.read(base + "/invoke.json"))
+    fields(entry, ("argv",), ("description",))
+    argument_array(entry["argv"])
+    require(isinstance(entry.get("description", ""), str), "Invalid invoke description")
+    return True
+
+
 def verify_target(tree, target):
     verify_path_hash(tree, target["path"], target["sha256"])
+    with tree.directory(parts(target["path"])[:-1]) as parent:
+        if stat.S_ISDIR(os.stat(parts(target["path"])[-1], dir_fd=parent, follow_symlinks=False).st_mode):
+            check_invoke(tree, target["path"])
     if target["kind"] == "api":
         # The directory manifest fixes the adapter as well as the descriptor, not remote weights.
         verify_manifest(tree, target["path"], target["sha256"])
@@ -677,16 +697,85 @@ def manifest(tree, path):
     require(re.fullmatch(rf"experiments/{ID}/model(?:/.+)?", path), "Manifest destination must be an experiment model directory")
     with tree.locked():
         read_record(tree, "project.json")
-        require(not tree.exists(path + "/manifest.json"), "Manifest already exists")
-        status_path = "/".join(parts(path)[:2]) + "/status.json"
-        require(not tree.exists(status_path) or read_record(tree, status_path)["state"] not in FINAL, "Final models are immutable")
-        for length in range(3, len(parts(path))):
-            require(not tree.exists("/".join(parts(path)[:length]) + "/manifest.json"), "Frozen model package is immutable")
-        names = tree.files(path)
-        require(names, "Empty model directory")
-        data = encoded({"files": [{"path": name[len(path) + 1:], "sha256": digest(tree.read(name))} for name in names]})
-        tree.publish(path + "/manifest.json", data)
+        return write_manifest(tree, path)
+
+
+def write_manifest(tree, path):
+    """Caller holds the lock."""
+    require(not tree.exists(path + "/manifest.json"), "Manifest already exists")
+    status_path = "/".join(parts(path)[:2]) + "/status.json"
+    require(not tree.exists(status_path) or read_record(tree, status_path)["state"] not in FINAL, "Final models are immutable")
+    for length in range(3, len(parts(path))):
+        require(not tree.exists("/".join(parts(path)[:length]) + "/manifest.json"), "Frozen model package is immutable")
+    names = tree.files(path)
+    require(names, "Empty model directory")
+    data = encoded({"files": [{"path": name[len(path) + 1:], "sha256": digest(tree.read(name))} for name in names]})
+    tree.publish(path + "/manifest.json", data)
     return {"path": path, "files": len(names), "manifest_sha256": digest(data)}
+
+
+def finalize(tree, path, kind="local", target=None):
+    """Publish a completed attempt's conventional results and mark it succeeded.
+
+    An experiment publishes its model directory (or `target` inside it). An
+    evaluation run publishes `result/outputs.jsonl` rows `{sample_id,output,scores?}`,
+    `result/metrics.json` and optional `result/usage.json`; inputs and references
+    are copied from the frozen samples. Nothing is published unless every check passes.
+    """
+    require(isinstance(path, str) and re.fullmatch(ATTEMPT, path), "Invalid attempt path")
+    require(kind in ("local", "api"), "Invalid target kind")
+    with tree.locked():
+        read_record(tree, "project.json")
+        config = read_record(tree, path + "/config.json")
+        status = read_record(tree, path + "/status.json") if tree.exists(path + "/status.json") else {}
+        require(status.get("state") == "completed", "Only a completed attempt can be finalized")
+        status = dict(status, state="succeeded", updated_at=datetime.now().astimezone().isoformat())
+        verify_inputs(tree, path, config)
+        if "/evals/" in path:
+            require(target is None and kind == "local", "Evaluation runs have no target")
+            evaluation = "evaluation/" + config["evaluation_version"]
+            samples = {row["sample_id"]: row for row in read_record(tree, evaluation + "/samples.jsonl")}
+            rows = []
+            for line in tree.read(path + "/result/outputs.jsonl").decode("utf-8").splitlines():
+                if line.strip():
+                    row = strict(line)
+                    require(isinstance(row, dict) and row.get("sample_id") in samples, "Unknown output sample_id")
+                    sample = samples[row["sample_id"]]
+                    row = {"sample_id": row["sample_id"], "input": sample["input"],
+                           **({"reference": sample["reference"]} if "reference" in sample else {}),
+                           **{k: v for k, v in row.items() if k != "sample_id"}}
+                    rows.append(row)
+            data = "".join(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n" for row in rows).encode("utf-8")
+            outputs = shape(path + "/outputs.jsonl", data)
+            require({row["sample_id"] for row in outputs} == set(samples), "Outputs must cover every sample")
+            status["metrics"] = strict(tree.read(path + "/result/metrics.json"))
+            if tree.exists(path + "/result/usage.json"):
+                status["usage"] = strict(tree.read(path + "/result/usage.json"))
+            status_data = encoded(status)
+            shape(path + "/status.json", status_data)
+            metrics = {m["id"] for m in read_record(tree, evaluation + "/definition.json")["metrics"]}
+            require(set(status["metrics"]) == metrics, "Successful evaluation requires all declared metrics")
+            require(not tree.exists(path + "/outputs.jsonl"), "Outputs already published; finalize the status explicitly")
+            check_record(tree, path + "/outputs.jsonl", outputs)
+            tree.publish(path + "/outputs.jsonl", data)
+        else:
+            target = target or path + "/model"
+            require(target == path + "/model" or target.startswith(path + "/model/"), "Target must be inside this experiment's model directory")
+            with tree.directory(parts(target)[:-1]) as parent:
+                directory = stat.S_ISDIR(os.stat(parts(target)[-1], dir_fd=parent, follow_symlinks=False).st_mode)
+            if not directory:
+                sha = digest(tree.read(target))
+            elif tree.exists(target + "/manifest.json"):
+                verify_manifest(tree, target)
+                sha = digest(tree.read(target + "/manifest.json"))
+            else:
+                sha = write_manifest(tree, target)["manifest_sha256"]
+            status["target"] = {"kind": kind, "path": target, "sha256": sha}
+            status_data = encoded(status)
+            shape(path + "/status.json", status_data)
+        check_record(tree, path + "/status.json", status)
+        tree.publish(path + "/status.json", status_data, replace=True)
+    return status
 
 
 def validate(tree):
@@ -725,6 +814,13 @@ def validate(tree):
                 read_record(tree, base + "/samples.jsonl")
         except (OSError, ValueError, TypeError) as exc:
             error(base, exc)
+    for ident in docs.get("project.json", {}).get("deliveries", []):
+        try:
+            target = read_record(tree, f"experiments/{ident}/status.json").get("target", {}).get("path")
+            if not target or not check_invoke(tree, target):
+                report["warnings"].append(f"Delivery {ident} has no invoke.json entry point")
+        except (OSError, ValueError, TypeError):
+            pass
     for path, obj in docs.items():
         try:
             check_record(tree, path, obj)
@@ -741,11 +837,14 @@ def validate(tree):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("hash", "validate", "write", "freeze", "manifest"):
+    for name in ("hash", "validate", "write", "freeze", "manifest", "finalize"):
         command = commands.add_parser(name)
         command.add_argument("--project", required=True)
         if name != "validate":
             command.add_argument("--path", required=True)
+        if name == "finalize":
+            command.add_argument("--kind", choices=("local", "api"), default="local")
+            command.add_argument("--target")
         if name == "write":
             command.add_argument("--input", required=True)
             mode = command.add_mutually_exclusive_group(required=True)
@@ -765,6 +864,8 @@ def main():
             result = write(tree, args.path, args.input, args.create, args.expected_sha256)
         elif args.command == "manifest":
             result = manifest(tree, args.path)
+        elif args.command == "finalize":
+            result = finalize(tree, args.path, args.kind, args.target)
         else:
             result = freeze(tree, args.project, args.source, args.path)
         print(json.dumps(result, ensure_ascii=False))
