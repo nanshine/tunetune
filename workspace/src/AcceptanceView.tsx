@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { LoaderCircle, Play, Sparkles, Star } from 'lucide-react';
-import { acceptanceInputs, acceptanceModels, comparisonSamples, deliveryIds, document, experimentNumber, object, outcomeLabels, runState, runStateLabels, text } from './model';
+import { Check, LoaderCircle, Play, Sparkles, Star, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { acceptanceInputs, acceptanceModels, comparisonSamples, currentResponse, array, deliveryIds, document, experimentNumber, object, outcomeLabels, runState, runStateLabels, text } from './model';
 import type { AcceptanceJob, Experiment, JsonObject, ModelPool, Snapshot } from './model';
 import { RecordView, sampleLabel } from './RecordView';
 import { Empty } from './Parts';
+import type { AcceptanceItem } from './useWorkspace';
 
 const fieldLabels: Record<string, string> = { title: '标题', text: '正文', body: '正文', content: '内容', question: '问题', message: '留言' };
 // Only flat text inputs get a form; anything richer falls back to plain text.
@@ -59,10 +60,25 @@ function LoadButton({ item, pool, onLoad, onUnload, onError }: { item: Experimen
   return <button className="load-toggle" disabled={busy} onClick={() => void act()}>{resident ? (loaded.state === 'loading' ? '取消加载' : '卸载') : '加载'}</button>;
 }
 
-export function AcceptanceView({ files, job, pool, onRun, onTry, onLoad, onUnload }: {
+type Judgment = { verdict: AcceptanceItem['verdict']; note?: string };
+const judgmentKey = (sample: string, experiment: string) => `${sample}\u0000${experiment}`;
+
+// The person's verdict on an output they read; outputs judged bad become cases for the next evaluation.
+function Verdict({ judgment, onChange }: { judgment: Judgment | undefined; onChange: (value: Judgment | null) => void }) {
+  return <div className="output-verdict">
+    <div role="group" aria-label="这个输出好不好">
+      <button className={judgment?.verdict === 'good' ? 'active good' : ''} aria-pressed={judgment?.verdict === 'good'} onClick={() => onChange(judgment?.verdict === 'good' ? null : { verdict: 'good' })}><ThumbsUp size={13} />好</button>
+      <button className={judgment?.verdict === 'bad' ? 'active warn' : ''} aria-pressed={judgment?.verdict === 'bad'} onClick={() => onChange(judgment?.verdict === 'bad' ? null : { verdict: 'bad', note: judgment?.note })}><ThumbsDown size={13} />不好</button>
+    </div>
+    {judgment?.verdict === 'bad' && <input aria-label="哪里不好" placeholder="哪里不对？应该是什么样？" value={judgment.note ?? ''} onChange={event => onChange({ verdict: 'bad', note: event.target.value })} />}
+  </div>;
+}
+
+export function AcceptanceView({ files, job, pool, onRun, onTry, onLoad, onUnload, onFeedback }: {
   files: Snapshot['files']; job: AcceptanceJob | null | undefined; pool?: ModelPool | null;
   onRun: (experiments: string[]) => Promise<unknown>; onTry: (experiment: string, input: unknown) => Promise<{ output?: unknown; error?: string }>;
   onLoad?: (experiment: string) => Promise<unknown>; onUnload?: (experiment: string) => Promise<unknown>;
+  onFeedback?: (items: AcceptanceItem[], sha: string) => Promise<unknown>;
 }) {
   const { primary, more } = acceptanceModels(files);
   const ordered = [...primary, ...more];
@@ -71,6 +87,10 @@ export function AcceptanceView({ files, job, pool, onRun, onTry, onLoad, onUnloa
   const [showMore, setShowMore] = useState(() => !primary.length);
   const [index, setIndex] = useState(0);
   const [error, setError] = useState('');
+  const [judgments, setJudgments] = useState<Record<string, Judgment>>({});
+  const [sending, setSending] = useState(false);
+  const shown = files['comparison/outputs.jsonl'];
+  const answered = currentResponse(files, 'acceptance');
   const version = text(document(files, 'project.json').current_evaluation);
   const selected = ordered.filter(item => chosen.includes(item.id));
   const rows = acceptanceInputs(files) ? comparisonSamples(files, '', '', version) : comparisonSamples(files, selected[0]?.id ?? '', selected[1]?.id ?? '', version);
@@ -85,6 +105,26 @@ export function AcceptanceView({ files, job, pool, onRun, onTry, onLoad, onUnloa
     setError('');
     try { await onRun(runnable); } catch (cause) { setError(cause instanceof Error ? cause.message : '无法开始运行'); }
   }
+  function judge(sample: string, experiment: string, value: Judgment | null) {
+    setJudgments(previous => {
+      const next = { ...previous };
+      if (value) next[judgmentKey(sample, experiment)] = value; else delete next[judgmentKey(sample, experiment)];
+      return next;
+    });
+  }
+  async function sendFeedback() {
+    if (!onFeedback || !shown) return;
+    setSending(true); setError('');
+    const items = Object.entries(judgments).map(([key, value]): AcceptanceItem => {
+      const [sample_id, experiment_id] = key.split('\u0000');
+      const note = value.note?.trim();
+      return { sample_id, experiment_id, verdict: value.verdict, ...(note ? { note } : {}) };
+    });
+    try { await onFeedback(items, shown.sha256); setJudgments({}); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '提交失败，请重试。'); }
+    finally { setSending(false); }
+  }
+  const judged = Object.keys(judgments).length;
   if (!ordered.length) return <Empty icon={<Play size={20} />} title="还没有可验收的模型">实验跑出可用的模型后，可以在这里用你自己的内容看它们的输出。</Empty>;
   return <div className="acceptance">
     <div className="acceptance-bar">
@@ -105,7 +145,13 @@ export function AcceptanceView({ files, job, pool, onRun, onTry, onLoad, onUnloa
             <h4><span className="node-number">{experimentNumber(item.id)}</span>{item.title}{onLoad && onUnload && <LoadButton item={item} pool={pool} onLoad={onLoad} onUnload={onUnload} onError={setError} />}</h4>
             <p className={`run-state ${runState(item, job, pool)}`} title={pool?.items[item.id]?.error}>{runStateLabels[runState(item, job, pool)]}{pool?.items[item.id] && pool.items[item.id].state !== 'failed' && ` · 约 ${pool.items[item.id].memory_gb.toFixed(1)} GB`}</p>
             {hasOutput(outputs, item.id) ? <RecordView value={outputs[item.id]} /> : <p className="muted">还没有这个输入的输出{acceptanceInputs(files) && ['runnable', 'loaded'].includes(runState(item, job, pool)) ? '，点上方按钮运行。' : '。'}</p>}
+            {shown && onFeedback && hasOutput(outputs, item.id) && <Verdict judgment={judgments[judgmentKey(text(active.sample_id), item.id)]} onChange={value => judge(text(active.sample_id), item.id, value)} />}
           </section>)}</div>
+          {shown && onFeedback && (judged > 0 || answered) && <div className="feedback-bar" role="status">
+            {judged > 0 ? <><span>已评价 {judged} 个输出。觉得不好的会补进下一版评测，你会在审阅里再看到它们。</span>
+              <button className="primary" disabled={sending} onClick={() => void sendFeedback()}>提交验收意见</button></>
+              : <span><Check size={14} aria-hidden="true" />这批输出的意见已提交（{array(answered!.items).length} 条）。回到对话告诉 Agent。</span>}
+          </div>}
         </>}
         <TryPanel models={selected.length ? selected : ordered} template={inputTemplate(rows)} onTry={onTry} />
       </div>

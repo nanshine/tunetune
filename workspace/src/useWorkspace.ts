@@ -58,7 +58,8 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return value as T;
 }
 export type ReviewItem = { sample_id: string; verdict: 'confirm' | 'correct' | 'question'; reference?: unknown; note?: string };
-export function submitResponse(body: { kind: 'proposal' | 'plan' | 'evaluation_review'; decision: string; target_sha256: string; note?: string; items?: ReviewItem[] }) {
+export type AcceptanceItem = { sample_id: string; experiment_id: string; verdict: 'good' | 'bad'; note?: string };
+export function submitResponse(body: { kind: 'proposal' | 'plan' | 'evaluation_review' | 'acceptance'; decision: string; target_sha256: string; note?: string; items?: ReviewItem[] | AcceptanceItem[] }) {
   return post<{ id: string }>('/api/responses', body);
 }
 export function runAcceptance(experimentIds: string[]) {

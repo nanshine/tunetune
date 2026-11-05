@@ -20,6 +20,7 @@ export function ExperimentDetails({ experiment, experimentsById, results, files,
   const versions = [...new Set(experimentResults.map(result => result.version))];
   const version = versions.includes(selection) ? selection : versions.includes(currentVersion) ? currentVersion : versions[0] ?? '';
   const active = preferredEvaluation(experimentResults, version);
+  const final = preferredEvaluation(experimentResults, version, 'final');
   const outputFile = active ? files[active.path.replace('/config.json', '/outputs.jsonl')] : undefined;
   const parent = experiment.parent ? experimentsById.get(experiment.parent) : undefined;
   const parentResult = parent ? preferredEvaluation(results.filter(result => result.experimentId === parent.id), version) : undefined;
@@ -48,10 +49,13 @@ export function ExperimentDetails({ experiment, experimentsById, results, files,
       <Section title="运行"><p className="status-line"><StateDot state={experiment.state} />{statusLabel(experiment.state)}</p><UsageView usage={experiment.usage} />{experiment.state === 'running' && <p className="muted">文件里记录为运行中，不代表进程现在还在跑。</p>}</Section>
     </>}
     {tab === 'evaluation' && (active ? <>
-      <div className="inline-controls">{versions.length > 1 && <label className="version-select">评测版本<select value={version} onChange={event => setSelection(event.target.value)}>{versions.map(item => <option key={item} value={item}>{item || '未指定'}{item === currentVersion ? '（当前）' : ''}</option>)}</select></label>}<span className="status-line"><StateDot state={active.state} />{statusLabel(active.state)}</span></div>
+      <div className="inline-controls">{versions.length > 1 && <label className="version-select">评测版本<select value={version} onChange={event => setSelection(event.target.value)}>{versions.map(item => <option key={item} value={item}>{item || '未指定'}{item === currentVersion ? '（当前）' : ''}</option>)}</select></label>}<span className="status-line"><StateDot state={active.state} />开发集 · {statusLabel(active.state)}</span></div>
       {active.version !== currentVersion && <p className="notice">这是其他评测版本的结果，不和当前版本的分数放在一起比较。</p>}
       <div className="metric-grid">{Object.entries(active.metrics).map(([key, value]) => <div key={key}><span>{Object.hasOwn(active.metricLabels, key) ? active.metricLabels[key] : key}</span><strong>{format(value)}</strong></div>)}</div>
       {!Object.keys(active.metrics).length && <p className="muted">这次评测还没有指标。</p>}
+      {final && <Section title="最终检查"><p className="status-line"><StateDot state={final.state} />{statusLabel(final.state)}</p>
+        {final.state === 'succeeded' && <div className="metric-grid">{Object.entries(final.metrics).map(([key, value]) => <div key={key}><span>{Object.hasOwn(final.metricLabels, key) ? final.metricLabels[key] : key}</span><strong>{format(value)}</strong></div>)}</div>}
+        <p className="muted">最终检查用的是研究中没有看过的样例，只记录汇总分数，不显示逐条结果。</p></Section>}
       <UsageView usage={active.usage} />
       <SamplesView key={active.path} rows={outputFile ? array(outputFile.content).map(object) : null} outputs metricLabels={active.metricLabels} />
     </> : <p className="muted">还没有评测。跑通不等于效果已经验证。</p>)}

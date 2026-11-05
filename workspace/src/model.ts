@@ -14,7 +14,8 @@ export type Analysis = { outcome: Outcome | 'unknown'; summary: string };
 export type Usage = { requests?: number; input_tokens?: number; output_tokens?: number; cost?: number; currency?: string; latency_seconds?: number };
 export const roleLabels: Record<string, string> = { baseline: '基线', candidate: '候选改进', reference: '质量参照', recommended: '推荐路线', challenge: '挑战路线' };
 export type Experiment = { id: string; title: string; parent: string | null; state: string; modelPath: string; targetKind: 'local' | 'api' | ''; invoke: string[]; serve: boolean; role: string; usage: Usage; method: string; modelName: string; framework: string; hypothesis: string; parameters: JsonObject; analysis: Analysis };
-export type EvaluationRun = { id: string; experimentId: string; version: string; state: string; metrics: Record<string, number>; metricLabels: Record<string, string>; path: string; recordedAt: string; evaluationHash: string; inputFingerprint: string; usage: Usage };
+export type Split = 'development' | 'final';
+export type EvaluationRun = { id: string; experimentId: string; version: string; split: Split; state: string; metrics: Record<string, number>; metricLabels: Record<string, string>; path: string; recordedAt: string; evaluationHash: string; inputFingerprint: string; usage: Usage };
 
 export const outcomeLabels: Record<Outcome | 'unknown', string> = { baseline: '基线', keep: '保留', discard: '舍弃', inconclusive: '暂不确定', invalid: '无效', unknown: '尚无结论' };
 export const resourceStates: Record<ResourceState, string> = { ready: '已就绪', missing: '缺失', changed: '已变化', busy: '使用中', unknown: '未知' };
@@ -123,8 +124,8 @@ export function experimentNumber(id: string): string {
   return match ? `E${match[1]}` : id;
 }
 
-export type ResponseKind = 'proposal' | 'plan' | 'evaluation_review';
-export const responseTargets: Record<ResponseKind, string> = { proposal: 'proposal.json', plan: 'plan.json', evaluation_review: 'evaluation/draft/samples.jsonl' };
+export type ResponseKind = 'proposal' | 'plan' | 'evaluation_review' | 'acceptance';
+export const responseTargets: Record<ResponseKind, string> = { proposal: 'proposal.json', plan: 'plan.json', evaluation_review: 'evaluation/draft/samples.jsonl', acceptance: 'comparison/outputs.jsonl' };
 // The person's latest answer still applies only while the file they answered is unchanged.
 export function currentResponse(files: Snapshot['files'], kind: ResponseKind): JsonObject | null {
   const target = files[responseTargets[kind]];
@@ -165,7 +166,7 @@ export function evaluationRuns(files: Snapshot['files']): EvaluationRun[] {
     const order = [...new Set([...definitions.map(metric => text(metric.id)).filter(Boolean), ...Object.keys(rawMetrics)])];
     const metrics = Object.fromEntries(order.filter(id => Object.hasOwn(rawMetrics, id)).map(id => [id, rawMetrics[id]]));
     const metricLabels = Object.fromEntries(definitions.map(metric => [text(metric.id), text(metric.label, text(metric.id))]));
-    return { id: path.split('/')[3], experimentId: path.split('/')[1], version, state, metrics, metricLabels, path, recordedAt: text(status.completed_at, text(status.updated_at)), evaluationHash: text(config.evaluation_sha256), inputFingerprint: JSON.stringify(array(config.inputs).map(object).map(input => [text(input.path), text(input.sha256)]).sort(([a, b], [c, d]) => a.localeCompare(c) || b.localeCompare(d))), usage: object(status.usage) as Usage };
+    return { id: path.split('/')[3], experimentId: path.split('/')[1], version, split: config.split === 'final' ? 'final' : 'development', state, metrics, metricLabels, path, recordedAt: text(status.completed_at, text(status.updated_at)), evaluationHash: text(config.evaluation_sha256), inputFingerprint: JSON.stringify(array(config.inputs).map(object).map(input => [text(input.path), text(input.sha256)]).sort(([a, b], [c, d]) => a.localeCompare(c) || b.localeCompare(d))), usage: object(status.usage) as Usage };
   });
 }
 export function recentEvaluations(results: EvaluationRun[]): EvaluationRun[] {
@@ -176,9 +177,14 @@ export function recentEvaluations(results: EvaluationRun[]): EvaluationRun[] {
 }
 
 // A canvas always uses one evaluation version. Other versions belong in the detail selector.
-export function preferredEvaluation(results: EvaluationRun[], version: string): EvaluationRun | undefined {
-  const sorted = recentEvaluations(results.filter(result => result.version === version));
+// Development scores guide the research; a final check is shown apart and never ranks the canvas.
+export function preferredEvaluation(results: EvaluationRun[], version: string, split: Split = 'development'): EvaluationRun | undefined {
+  const sorted = recentEvaluations(results.filter(result => result.version === version && result.split === split));
   return sorted.find(result => result.state === 'succeeded') ?? sorted[0];
+}
+export function sampleSplit(row: JsonObject): Split { return row.split === 'final' ? 'final' : 'development'; }
+export function splitCounts(rows: JsonObject[]): Record<Split, number> {
+  return { development: rows.filter(row => sampleSplit(row) === 'development').length, final: rows.filter(row => sampleSplit(row) === 'final').length };
 }
 export function deliveryIds(files: Snapshot['files']): string[] {
   return [...new Set(array(document(files, 'project.json').deliveries).filter((id): id is string => typeof id === 'string'))];

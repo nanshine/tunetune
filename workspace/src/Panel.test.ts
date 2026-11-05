@@ -3,7 +3,7 @@ import type { FunctionComponent } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ResearchFile, Snapshot } from './model';
-import { acceptanceModels, evaluationRuns, experiments, runState } from './model';
+import { acceptanceModels, evaluationRuns, experiments, preferredEvaluation, runState } from './model';
 import { ProposalView, ResourcesView, readableSize } from './ProjectBrief';
 import { PlanView } from './PlanView';
 import { EvaluationView, SamplesView } from './EvaluationView';
@@ -143,5 +143,27 @@ describe('research views', () => {
     const details = render(ExperimentDetails, { experiment: items[1], experimentsById: new Map(items.map(item => [item.id, item])), results, files, currentVersion: 'v1', delivered: true, onOpenAcceptance: vi.fn() });
     for (const value of ['比关键词更稳。', '+0.19 对比 E000', '做了什么', '评测', '怎么用', '交付模型']) expect(details).toContain(value);
     expect(render(SamplesView, { rows: [], outputs: true })).toContain('没有逐例输出');
+  });
+  it('keeps the final check apart from development scores and shows how often it ran', () => {
+    const split = { ...files,
+      'evaluation/v1/samples.jsonl': file([{ sample_id: 's1', input: post, reference: ['产品与商业'] }, { sample_id: 's2', input: post, reference: ['写作'], split: 'final' }]),
+      'experiments/e001-embed/evals/f1/config.json': file({ evaluation_version: 'v1', evaluation_sha256: 'e'.repeat(64), split: 'final' }),
+      'experiments/e001-embed/evals/f1/status.json': file({ state: 'succeeded', metrics: { f1: 0.55 }, completed_at: '2030-01-01T00:00:00Z' }) };
+    const runs = evaluationRuns(split).filter(run => run.experimentId === 'e001-embed');
+    expect(preferredEvaluation(runs, 'v1')?.metrics.f1).toBe(0.81);
+    expect(preferredEvaluation(runs, 'v1', 'final')?.metrics.f1).toBe(0.55);
+    const overview = render(EvaluationView, { files: split, currentVersion: 'v1', selection: '', onSelect: vi.fn(), initialTab: 'overview' });
+    for (const value of ['开发样例 1 条，最终检查 1 条', '已运行 1 次']) expect(overview).toContain(value);
+    const unsplit = { ...files, 'evaluation/v1/definition.json': file({ ...(files['evaluation/v1/definition.json'].content as object), no_final_reason: '只有 12 篇文章' }) };
+    expect(render(EvaluationView, { files: unsplit, currentVersion: 'v1', selection: '', onSelect: vi.fn(), initialTab: 'overview' })).toContain('没有另留最终检查：只有 12 篇文章');
+  });
+  it('lets the person judge each acceptance output and shows when feedback was sent', () => {
+    const props = { files, job: null, onRun: vi.fn(), onTry: vi.fn() };
+    expect(render(AcceptanceView, props)).not.toContain('这个输出好不好');
+    const judging = render(AcceptanceView, { ...props, onFeedback: vi.fn() });
+    for (const value of ['这个输出好不好', '>好<', '不好']) expect(judging).toContain(value);
+    const answered = { ...files, 'responses/r1.json': file({ id: 'r1', kind: 'acceptance', target: { path: 'comparison/outputs.jsonl', sha256: 'a'.repeat(64) }, created_at: '2030-01-01T00:00:00Z', decision: 'submit',
+      items: [{ sample_id: 'p1', experiment_id: 'e001-embed', verdict: 'bad', note: '少了旅行' }] }) };
+    expect(render(AcceptanceView, { ...props, files: answered, onFeedback: vi.fn() })).toContain('这批输出的意见已提交（1 条）');
   });
 });

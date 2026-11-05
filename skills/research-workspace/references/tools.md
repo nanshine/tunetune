@@ -7,12 +7,15 @@ Use Python 3.10+ on POSIX macOS/Linux; no additional packages. Resolve the insta
 ```sh
 python3 "$RECORDS" hash --project "$PROJECT" --path proposal.json
 python3 "$RECORDS" validate --project "$PROJECT"
+python3 "$RECORDS" audit --project "$PROJECT"
 python3 "$RECORDS" next-id --project "$PROJECT" --slug embed-lr
 python3 "$RECORDS" view --project "$PROJECT" --open proposal --attention "proposal:请确认研究提案"
 python3 "$RECORDS" view --project "$PROJECT" --open review --focus e000-keyword --clear
 ```
 
-`hash` returns `{path,sha256}` for actual file bytes. `validate` returns `{valid,errors,warnings,unfinished}`. Validation checks core records, record shapes, references, frozen file sets and byte hashes, model containment, declared metrics and evaluation samples/outputs. Missing or nonfinal attempt statuses are unfinished; `completed` still awaits output verification. Missing installed-tool metadata is a warning; an incompatible schema range is an error.
+`hash` returns `{path,sha256}` for actual file bytes. `validate` returns `{valid,errors,warnings,unfinished}`. Validation checks core records, record shapes, references, frozen file sets and byte hashes, model containment, declared metrics and evaluation samples/outputs. Missing or nonfinal attempt statuses are unfinished; `completed` still awaits output verification. Missing installed-tool metadata is a warning; an incompatible schema range is an error. A delivery without a succeeded final-check measurement on the current evaluation, when it has final samples, is a warning, and so is each `audit` finding for a delivery.
+
+`audit` is read-only and returns `{findings:[{experiment,check,values,count}],final_checks:{version:{attempts,succeeded,experiments}}}`. It searches each experiment's snapshot and the readable text of its model directory, skipping files over 1 MB and non-UTF-8 files such as weights. `final_label` lists reference labels found only in final samples; `unconfirmed_vocabulary` lists reference labels the proposal never names; `final_content` lists verbatim spans of final inputs or long references; `reads_evaluation` lists files that mention evaluation paths or variables. Findings are leads: explain or fix each one before relying on the experiment, and say so in its analysis. Matching is literal, so paraphrased leakage passes unseen.
 
 Exit 0 means no validation errors, not scientific validity or finished research. Errors exit 1; argument errors exit 2. Results are JSON on stdout; operational errors are JSON on stderr. Validation is read-only and can observe partial multi-file publication. It does not prove process liveness, dependency completeness, suitability of resources or user authorization. Explicit external resource locations are descriptive and never fetched.
 
@@ -74,7 +77,7 @@ The immutable config supplies `execution:{argv,cwd,environment,timeout_seconds}`
 
 Preflight verifies the snapshot and ancestry for experiments, or the successful parent model and full evaluation package for evaluation runs. Every declared `inputs:[{path,sha256}]` reference is checked: files use byte hashes; directories require matching, fully verified manifests. Additional inputs are optional only for evaluation runs. External inputs must first become local pinned material. These checks cannot prove that argv uses only declared dependencies; prepare honest configs and retain necessary code/material.
 
-The runner holds the shared lock through execution and status publication. Child commands must not call `records.py write`. The runner creates the attempt's output directory and adds absolute `TUNETUNE_PROJECT`, `TUNETUNE_ATTEMPT` and `TUNETUNE_OUTPUT` to the child environment, overriding same-named config values. An experiment writes its model to `TUNETUNE_OUTPUT` (`<attempt>/model`). An evaluation run also receives `TUNETUNE_TARGET` (the verified model path) and `TUNETUNE_EVALUATION` (the frozen package), and writes `outputs.jsonl` rows `{sample_id,output,scores?}`, `metrics.json` and optional `usage.json` to `TUNETUNE_OUTPUT` (`<attempt>/result`). Evaluation code calls the target's `invoke.json` entry point rather than embedding candidate inference. Do not modify the immutable config or frozen packages from the child.
+The runner holds the shared lock through execution and status publication. Child commands must not call `records.py write`. The runner creates the attempt's output directory and adds absolute `TUNETUNE_PROJECT`, `TUNETUNE_ATTEMPT` and `TUNETUNE_OUTPUT` to the child environment, overriding same-named config values. An experiment writes its model to `TUNETUNE_OUTPUT` (`<attempt>/model`). An evaluation run also receives `TUNETUNE_TARGET` (the verified model path), `TUNETUNE_EVALUATION` (the frozen package) and `TUNETUNE_SAMPLES` (`<attempt>/samples.jsonl`, the samples of the config's `split`, which scoring must read instead of the package's full sample file), and writes `outputs.jsonl` rows `{sample_id,output,scores?}`, `metrics.json` and optional `usage.json` to `TUNETUNE_OUTPUT` (`<attempt>/result`). Evaluation code calls the target's `invoke.json` entry point rather than embedding candidate inference. Do not modify the immutable config or frozen packages from the child.
 
 An existing `run.log`, output file, model files or started/final status blocks execution. Only absent status or `pending` without process/output facts may start. The exclusively created `run.log` permanently reserves the attempt, even empty after a crash. Stdout and stderr share that log; stdin is closed. A descriptor-pinned cwd prevents path replacement from redirecting startup.
 
@@ -115,7 +118,7 @@ The supervisor reserves its process-group identity until cleanup. Completion, ti
 - `finalize(tree,attempt_path,kind="local",target=None) -> status`.
 - `freeze(tree,root,source,path)` and `manifest(tree,path) -> {path,files,manifest_sha256}`.
 - `verify_hash(tree,path,expected)`, `verify_manifest(tree,base,expected=None)`, `verify_path_hash(tree,path,expected)`, `verify_inputs(tree,attempt_path,config)`.
-- `validate(tree) -> {valid,errors,warnings,unfinished}`.
+- `validate(tree) -> {valid,errors,warnings,unfinished}`; `audit(tree) -> {findings,final_checks}`.
 - `next_id(tree,slug=None) -> {id}`; `set_view(tree,open_views,focus,attention,clear)`; `publish_response(...)` is for the panel only.
 - Sibling `run.py`: `execute(tree,attempt_path) -> status`, `compare(tree,experiments,timeout,local_only=False)` and `try_model(tree,experiment,value,timeout)`.
 

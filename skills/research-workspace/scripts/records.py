@@ -19,7 +19,9 @@ SHA = re.compile(r"[a-f0-9]{64}\Z")
 FINAL = ("succeeded", "failed", "cancelled")
 SCHEMA = 4
 VIEWS = ("proposal", "plan", "resources", "evaluation", "review", "acceptance")
-RESPONSE_TARGETS = {"proposal": "proposal.json", "plan": "plan.json", "evaluation_review": "evaluation/draft/samples.jsonl"}
+RESPONSE_TARGETS = {"proposal": "proposal.json", "plan": "plan.json", "evaluation_review": "evaluation/draft/samples.jsonl",
+                    "acceptance": "comparison/outputs.jsonl"}
+SPLITS = ("development", "final")
 ATTEMPT = rf"experiments/{ID}(?:/evals/{ID})?"
 RECORD = re.compile(
     rf"(?:project|proposal|resources|plan)\.json|comparison/(?:inputs|outputs)\.jsonl|responses/{ID}\.json|"
@@ -238,6 +240,8 @@ def shape(path, data):
                     require(output is not None, "Comparison output must be present")
             elif plain:
                 require(row.get("reference_status", "draft") in ("confirmed", "corrected", "draft"), "Invalid reference_status")
+                require(path == "comparison/inputs.jsonl" or row.get("split", "development") in SPLITS,
+                        "split must be development or final")
             else:
                 fields(row, required, ("reference", "scores"))
                 if "scores" in row:
@@ -309,10 +313,16 @@ def shape(path, data):
         require(isinstance(obj.get("note", ""), str) and len(obj.get("note", "")) <= 4000, "Invalid response note")
         require(isinstance(obj.get("items", []), list) and len(obj.get("items", [])) <= 2000, "items must be an array")
         for item in obj.get("items", []):
-            fields(item, ("sample_id", "verdict"), ("reference", "note"))
+            if obj["kind"] == "acceptance":
+                # The person's judgment of one model's output on one acceptance input.
+                fields(item, ("sample_id", "experiment_id", "verdict"), ("note",))
+                identifier(item["experiment_id"])
+                require(item["verdict"] in ("good", "bad"), "Invalid acceptance verdict")
+            else:
+                fields(item, ("sample_id", "verdict"), ("reference", "note"))
+                require(item["verdict"] in ("confirm", "correct", "question"), "Invalid response verdict")
+                require(item["verdict"] != "correct" or "reference" in item, "A correction needs its reference")
             require(isinstance(item["sample_id"], str) and item["sample_id"], "Invalid response sample")
-            require(item["verdict"] in ("confirm", "correct", "question"), "Invalid response verdict")
-            require(item["verdict"] != "correct" or "reference" in item, "A correction needs its reference")
             require(isinstance(item.get("note", ""), str), "Invalid response item note")
     elif path == "plan.json":
         fields(obj, ("rounds",), ("ideas",))
@@ -363,8 +373,10 @@ def shape(path, data):
                 require("index" not in probe or type(probe["index"]) is int and probe["index"] >= 0, "Invalid monitor index")
         require(len(ids) == len(set(ids)), "Duplicate resource ID")
     elif leaf == "definition.json":
-        fields(obj, ("version", "description", "rubric", "metrics", "command"))
+        fields(obj, ("version", "description", "rubric", "metrics", "command"), ("no_final_reason",))
         identifier(obj["version"])
+        require("no_final_reason" not in obj or isinstance(obj["no_final_reason"], str) and obj["no_final_reason"].strip(),
+                "no_final_reason must be nonempty text")
         require(path.split("/")[1] == "draft" or obj["version"] == path.split("/")[1], "Version does not match directory")
         require(isinstance(obj["rubric"], str), "rubric must be text")
         argument_array(obj["command"])
@@ -382,9 +394,10 @@ def shape(path, data):
         require(obj["outcome"] in ("baseline", "keep", "discard", "inconclusive", "invalid"), "Invalid analysis outcome")
     elif leaf == "config.json":
         if evaluation_run:
-            fields(obj, ("id", "evaluation_version", "target_sha256", "evaluation_sha256", "execution"), ("inputs",))
+            fields(obj, ("id", "evaluation_version", "target_sha256", "evaluation_sha256", "execution"), ("inputs", "split"))
             identifier(obj["evaluation_version"])
             require(obj["evaluation_version"] != "draft", "Evaluation must be frozen")
+            require(obj.get("split", "development") in SPLITS, "split must be development or final")
         else:
             fields(obj, ("id", "title", "parent_experiment_id", "hypothesis", "parameters", "inputs", "snapshot_sha256", "execution"),
                    ("method", "model_name", "framework", "role", "data_split"))
@@ -457,6 +470,11 @@ def shape(path, data):
 
 def read_record(tree, path):
     return shape(path, tree.read(path))
+
+
+def split_samples(tree, version, split="development"):
+    """The frozen samples an evaluation run of this split scores; unmarked samples are development."""
+    return [row for row in read_record(tree, f"evaluation/{version}/samples.jsonl") if row.get("split", "development") == split]
 
 
 def check_installed_metadata(tree):
@@ -717,22 +735,27 @@ def check_record(tree, path, obj):
                 require(set(obj.get("metrics", {})) <= metrics, "Unknown metric IDs")
                 if obj["state"] == "succeeded":
                     require("metrics" in obj and set(obj["metrics"]) == metrics, "Successful evaluation requires all declared metrics")
-                    outputs = read_record(tree, base + "/outputs.jsonl")
-                    require(outputs, "Successful evaluation requires outputs")
-                    check_record(tree, base + "/outputs.jsonl", outputs)
-                    samples = read_record(tree, f"evaluation/{config['evaluation_version']}/samples.jsonl")
-                    require({r["sample_id"] for r in outputs} == {r["sample_id"] for r in samples}, "Successful evaluation requires outputs for all samples")
+                    if config.get("split") == "final":
+                        require(not tree.exists(base + "/outputs.jsonl"), "Final-check runs publish only aggregate metrics")
+                    else:
+                        outputs = read_record(tree, base + "/outputs.jsonl")
+                        require(outputs, "Successful evaluation requires outputs")
+                        check_record(tree, base + "/outputs.jsonl", outputs)
+                        samples = split_samples(tree, config["evaluation_version"])
+                        require({r["sample_id"] for r in outputs} == {r["sample_id"] for r in samples}, "Successful evaluation requires outputs for all samples of its split")
             elif obj["state"] == "succeeded":
                 require("target" in obj, "Successful experiment requires a model")
             if obj["state"] == "succeeded":
                 verify_inputs(tree, base, config)
         elif leaf == "outputs.jsonl":
+            require(config.get("split") != "final", "Final-check runs publish only aggregate metrics")
             evaluation = f"evaluation/{config['evaluation_version']}"
             samples = {row["sample_id"]: row for row in read_record(tree, evaluation + "/samples.jsonl")}
             metrics = {m["id"] for m in read_record(tree, evaluation + "/definition.json")["metrics"]}
             for row in obj:
                 sample = samples.get(row["sample_id"])
                 require(sample is not None, "Unknown output sample_id")
+                require(sample.get("split", "development") == "development", "Outputs include final-check samples")
                 require(same_json(row["input"], sample["input"]), "Output input differs from sample")
                 require("reference" not in row or "reference" in sample and same_json(row["reference"], sample["reference"]), "Output reference differs from sample")
                 require(set(row.get("scores", {})) <= metrics, "Unknown score IDs")
@@ -801,8 +824,12 @@ def freeze(tree, root, source, path):
         payload = {name: source_tree.read(name, with_mode=True) for name in names}
         if path.startswith("evaluation/"):
             require("definition.json" in payload and "samples.jsonl" in payload, "Evaluation requires definition.json and samples.jsonl")
-            shape(path + "/definition.json", payload["definition.json"][0])
-            shape(path + "/samples.jsonl", payload["samples.jsonl"][0])
+            definition = shape(path + "/definition.json", payload["definition.json"][0])
+            splits = [row.get("split", "development") for row in shape(path + "/samples.jsonl", payload["samples.jsonl"][0])]
+            # A final check has to be set aside before methods are tuned, or decided against openly.
+            require("development" in splits, "Evaluation requires development samples")
+            require("final" in splits or "no_final_reason" in definition,
+                    'Mark final-check samples with "split": "final", or state definition no_final_reason')
         with tree.locked():
             if tree.exists("project.json"):
                 read_record(tree, "project.json")
@@ -848,7 +875,9 @@ def finalize(tree, path, kind="local", target=None):
     An experiment publishes its model directory (or `target` inside it). An
     evaluation run publishes `result/outputs.jsonl` rows `{sample_id,output,scores?}`,
     `result/metrics.json` and optional `result/usage.json`; inputs and references
-    are copied from the frozen samples. Nothing is published unless every check passes.
+    are copied from the frozen samples. A final-check run publishes only its metrics
+    and removes the per-sample rows once their coverage is checked. Nothing is
+    published unless every check passes.
     """
     require(isinstance(path, str) and re.fullmatch(ATTEMPT, path), "Invalid attempt path")
     require(kind in ("local", "api"), "Invalid target kind")
@@ -862,12 +891,13 @@ def finalize(tree, path, kind="local", target=None):
         if "/evals/" in path:
             require(target is None and kind == "local", "Evaluation runs have no target")
             evaluation = "evaluation/" + config["evaluation_version"]
-            samples = {row["sample_id"]: row for row in read_record(tree, evaluation + "/samples.jsonl")}
+            final = config.get("split") == "final"
+            samples = {row["sample_id"]: row for row in split_samples(tree, config["evaluation_version"], config.get("split", "development"))}
             rows = []
             for line in tree.read(path + "/result/outputs.jsonl").decode("utf-8").splitlines():
                 if line.strip():
                     row = strict(line)
-                    require(isinstance(row, dict) and row.get("sample_id") in samples, "Unknown output sample_id")
+                    require(isinstance(row, dict) and row.get("sample_id") in samples, "Unknown output sample_id for this run's split")
                     sample = samples[row["sample_id"]]
                     row = {"sample_id": row["sample_id"], "input": sample["input"],
                            **({"reference": sample["reference"]} if "reference" in sample else {}),
@@ -875,7 +905,7 @@ def finalize(tree, path, kind="local", target=None):
                     rows.append(row)
             data = "".join(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n" for row in rows).encode("utf-8")
             outputs = shape(path + "/outputs.jsonl", data)
-            require({row["sample_id"] for row in outputs} == set(samples), "Outputs must cover every sample")
+            require({row["sample_id"] for row in outputs} == set(samples), "Outputs must cover every sample of this run's split")
             status["metrics"] = strict(tree.read(path + "/result/metrics.json"))
             if tree.exists(path + "/result/usage.json"):
                 status["usage"] = strict(tree.read(path + "/result/usage.json"))
@@ -884,8 +914,9 @@ def finalize(tree, path, kind="local", target=None):
             metrics = {m["id"] for m in read_record(tree, evaluation + "/definition.json")["metrics"]}
             require(set(status["metrics"]) == metrics, "Successful evaluation requires all declared metrics")
             require(not tree.exists(path + "/outputs.jsonl"), "Outputs already published; finalize the status explicitly")
-            check_record(tree, path + "/outputs.jsonl", outputs)
-            tree.publish(path + "/outputs.jsonl", data)
+            if not final:
+                check_record(tree, path + "/outputs.jsonl", outputs)
+                tree.publish(path + "/outputs.jsonl", data)
         else:
             target = target or path + "/model"
             require(target == path + "/model" or target.startswith(path + "/model/"), "Target must be inside this experiment's model directory")
@@ -905,6 +936,10 @@ def finalize(tree, path, kind="local", target=None):
             shape(path + "/status.json", status_data)
         check_record(tree, path + "/status.json", status)
         tree.publish(path + "/status.json", status_data, replace=True)
+        if "/evals/" in path and config.get("split") == "final":
+            # Per-sample final results would invite tuning against the final check.
+            with tree.directory(parts(path + "/result")) as result:
+                os.unlink("outputs.jsonl", dir_fd=result)
     return status
 
 
@@ -944,13 +979,27 @@ def validate(tree):
                 read_record(tree, base + "/samples.jsonl")
         except (OSError, ValueError, TypeError) as exc:
             error(base, exc)
+    current = docs.get("project.json", {}).get("current_evaluation")
+    measured = {(run["experiment"], run["target_sha256"]) for run in final_runs(docs) if run["version"] == current and run["state"] == "succeeded"}
     for ident in docs.get("project.json", {}).get("deliveries", []):
         try:
-            target = read_record(tree, f"experiments/{ident}/status.json").get("target", {}).get("path")
-            if not target or not check_invoke(tree, target):
+            target = read_record(tree, f"experiments/{ident}/status.json").get("target", {})
+            if not target.get("path") or not check_invoke(tree, target["path"]):
                 report["warnings"].append(f"Delivery {ident} has no invoke.json entry point")
-            elif any(not tree.exists(item["path"]) for item in strict(tree.read(target + "/invoke.json")).get("requires", [])):
+            elif any(not tree.exists(item["path"]) for item in strict(tree.read(target["path"] + "/invoke.json")).get("requires", [])):
                 report["warnings"].append(f"Delivery {ident} requires files that are missing")
+            if current and split_samples(tree, current, "final") and (ident, target.get("sha256")) not in measured:
+                report["warnings"].append(f"Delivery {ident} has no final-check measurement on evaluation {current}")
+        except (OSError, ValueError, TypeError):
+            pass
+    deliveries = set(docs.get("project.json", {}).get("deliveries", []))
+    if deliveries:
+        # Leakage leads surface where a model is chosen, without a separate step to remember.
+        try:
+            for finding in audit(tree)["findings"]:
+                if finding["experiment"] in deliveries:
+                    report["warnings"].append(f"Delivery {finding['experiment']} audit {finding['check']}: "
+                                              + ", ".join(finding["values"][:5]) + (" …" if finding["count"] > 5 else ""))
         except (OSError, ValueError, TypeError):
             pass
     for path, obj in docs.items():
@@ -964,6 +1013,113 @@ def validate(tree):
                 report["unfinished"].append(base)
     report["valid"] = not report["errors"]
     return report
+
+
+def final_runs(docs):
+    """Every final-check attempt among loaded records, whatever its state, so repeated use stays visible."""
+    runs = []
+    for path, config in sorted(docs.items()):
+        if re.fullmatch(rf"experiments/{ID}/evals/{ID}/config\.json", path) and config.get("split") == "final":
+            runs.append({"experiment": path.split("/")[1], "run": path.split("/")[3], "version": config["evaluation_version"],
+                         "target_sha256": config["target_sha256"],
+                         "state": docs.get(path.replace("config.json", "status.json"), {}).get("state", "pending")})
+    return runs
+
+
+def strings(value):
+    if isinstance(value, str):
+        yield value.strip()
+    elif isinstance(value, list):
+        for item in value:
+            yield from strings(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from strings(item)
+
+
+def readable_text(tree, base, limit=1_000_000):
+    """UTF-8 text a method was written in: prompts, code and configuration, not weights or other large files."""
+    if not tree.exists(base):
+        return {}
+    try:
+        names = tree.files(base)
+    except NotADirectoryError:
+        names = [base]
+    found = {}
+    for name in names:
+        if name.endswith("/manifest.json") or byte_size(tree, name) > limit:
+            continue
+        try:
+            found[name] = tree.read(name).decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+    return found
+
+
+def windows(value, size=30):
+    """A few fixed spans of a long text; one verbatim span in a method is enough to show it was copied."""
+    value = " ".join(value.split())
+    if len(value) < size * 2:
+        return []
+    return [value[:size], value[len(value) // 2:len(value) // 2 + size], value[-size:]]
+
+
+def audit(tree):
+    """Read-only leakage checks of methods against evaluation material; findings are leads to explain, not verdicts.
+
+    A method's own files (snapshot, model directory without large files) are searched
+    for labels that only final-check references contain, reference labels the proposal
+    never names, verbatim final-check content and paths into evaluation packages.
+    """
+    docs = {}
+    for prefix in ("evaluation", "experiments"):
+        if tree.exists(prefix):
+            for path in tree.files(prefix):
+                if RECORD.fullmatch(path):
+                    try:
+                        docs[path] = read_record(tree, path)
+                    except (OSError, ValueError, TypeError):
+                        continue
+    proposal = json.dumps(read_record(tree, "proposal.json"), ensure_ascii=False) if tree.exists("proposal.json") else ""
+    labels = {"development": set(), "final": set()}
+    final_texts = []
+    for path, rows in docs.items():
+        if re.fullmatch(rf"evaluation/{ID}/samples\.jsonl", path):
+            for row in rows:
+                split = row.get("split", "development")
+                for value in strings(row.get("reference")):
+                    if 2 <= len(value) <= 40:
+                        labels[split].add(value)
+                    elif split == "final":
+                        final_texts.extend(windows(value))
+                if split == "final":
+                    final_texts.extend(span for value in strings(row["input"]) for span in windows(value))
+    only_final = labels["final"] - labels["development"] - {label for label in labels["final"] if label in proposal}
+    unconfirmed = (labels["development"] | labels["final"]) - {label for label in labels["development"] | labels["final"] if label in proposal}
+    findings = []
+    for path in sorted(docs):
+        if not re.fullmatch(rf"experiments/{ID}/config\.json", path):
+            continue
+        experiment = path.split("/")[1]
+        texts = {name: body for base in ("snapshot", "model") for name, body in readable_text(tree, f"experiments/{experiment}/{base}").items()}
+        corpus = "\n".join(texts.values())
+        def found(values):
+            return sorted(value for value in values if value in corpus)
+        for check, values in (("final_label", found(only_final)), ("unconfirmed_vocabulary", found(unconfirmed)),
+                              ("final_content", found(set(final_texts)))):
+            if values:
+                findings.append({"experiment": experiment, "check": check, "values": values[:20], "count": len(values)})
+        reading = sorted(name for name, body in texts.items() if re.search(r"evaluation/|TUNETUNE_EVALUATION|TUNETUNE_SAMPLES", body))
+        if reading:
+            findings.append({"experiment": experiment, "check": "reads_evaluation", "values": reading[:20], "count": len(reading)})
+    usage = {}
+    for run in final_runs(docs):
+        entry = usage.setdefault(run["version"], {"attempts": 0, "succeeded": 0, "experiments": []})
+        entry["attempts"] += 1
+        entry["succeeded"] += run["state"] == "succeeded"
+        if run["experiment"] not in entry["experiments"]:
+            entry["experiments"].append(run["experiment"])
+    return {"findings": findings, "final_checks": usage}
 
 
 def next_id(tree, slug=None):
@@ -1002,6 +1158,11 @@ def publish_response(tree, kind, decision, target_sha256, note=None, items=None)
         if kind == "evaluation_review":
             known = {row["sample_id"] for row in read_record(tree, target)}
             require(all(item["sample_id"] in known for item in items or []), "Unknown reviewed sample")
+        elif kind == "acceptance":
+            shown = {row["sample_id"]: row["outputs"] for row in read_record(tree, target)}
+            require(items, "Acceptance feedback needs at least one judged output")
+            require(all(item["experiment_id"] in shown.get(item["sample_id"], {}) for item in items), "Judged output was not shown")
+            require(len({(item["sample_id"], item["experiment_id"]) for item in items}) == len(items), "Duplicate judged output")
         tree.publish(path, data)
     return value
 
@@ -1037,7 +1198,7 @@ def set_view(tree, open_views=(), focus=None, attention=(), clear=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("hash", "validate", "write", "freeze", "manifest", "finalize", "next-id", "view"):
+    for name in ("hash", "validate", "audit", "write", "freeze", "manifest", "finalize", "next-id", "view"):
         command = commands.add_parser(name)
         command.add_argument("--project", required=True)
         if name == "next-id":
@@ -1047,7 +1208,7 @@ def main():
             command.add_argument("--focus")
             command.add_argument("--attention", action="append", default=[], help="view:message for the person")
             command.add_argument("--clear", action="store_true", help="drop earlier attention notes")
-        elif name != "validate":
+        elif name not in ("validate", "audit"):
             command.add_argument("--path", required=True)
         if name == "finalize":
             command.add_argument("--kind", choices=("local", "api"), default="local")
@@ -1065,6 +1226,8 @@ def main():
         tree = Tree(args.project)
         if args.command == "validate":
             result = validate(tree)
+        elif args.command == "audit":
+            result = audit(tree)
         elif args.command == "view":
             result = set_view(tree, args.open, args.focus, args.attention, args.clear)
         elif args.command == "next-id":

@@ -15,7 +15,7 @@ import tempfile
 import time
 
 from records import (ATTEMPT, ID, PROCESS, Tree, check_invoke, check_record, digest, encoded, parts, read_record, require,
-                     shape, strict, verify_inputs, verify_model, verify_path_hash, verify_requires)
+                     shape, split_samples, strict, verify_inputs, verify_model, verify_path_hash, verify_requires)
 
 
 # Use fchdir in a fresh interpreter, not preexec_fn or a path that can be
@@ -92,7 +92,7 @@ def execute(tree, path):
         config = shape(config_path, raw)
         execution = config["execution"]
         timeout = execution["timeout_seconds"]
-        for name in ("run.log", "outputs.jsonl", "result"):
+        for name in ("run.log", "outputs.jsonl", "result", "samples.jsonl"):
             require(not tree.exists(path + "/" + name), f"Attempt already has {name}; use a new ID")
         if "/evals/" not in path and tree.exists(path + "/model"):
             require(not tree.files(path + "/model"), "Attempt already has model files; use a new ID")
@@ -106,8 +106,27 @@ def execute(tree, path):
         if "/evals/" in path:
             experiment = path.split("/evals/")[0]
             target = read_record(tree, experiment + "/status.json")["target"]["path"]
+            split = config.get("split", "development")
+            samples = split_samples(tree, config["evaluation_version"], split)
+            require(samples, f"Evaluation {config['evaluation_version']} has no {split} samples")
+            if split == "final":
+                # One final measurement per model and evaluation; repeated looks turn the final check into development.
+                with tree.directory(parts(experiment + "/evals")) as runs:
+                    others = sorted(os.listdir(runs))
+                for other in others:
+                    other_path = f"{experiment}/evals/{other}"
+                    if other_path == path or not tree.exists(other_path + "/status.json"):
+                        continue
+                    other_config = read_record(tree, other_path + "/config.json")
+                    require(not (other_config.get("split") == "final" and other_config["evaluation_version"] == config["evaluation_version"]
+                                 and other_config["target_sha256"] == config["target_sha256"]
+                                 and read_record(tree, other_path + "/status.json")["state"] == "succeeded"),
+                            f"This model already has a final-check measurement: {other_path}")
+            # The scorer reads only this run's split, so development runs never see final-check samples.
+            tree.publish(path + "/samples.jsonl", b"".join(json.dumps(row, ensure_ascii=False, allow_nan=False).encode() + b"\n" for row in samples))
             locations.update(TUNETUNE_TARGET=os.path.join(tree.root, target),
                              TUNETUNE_EVALUATION=os.path.join(tree.root, "evaluation", config["evaluation_version"]),
+                             TUNETUNE_SAMPLES=os.path.join(tree.root, path, "samples.jsonl"),
                              TUNETUNE_OUTPUT=os.path.join(tree.root, path, "result"))
             output = path + "/result"
         else:

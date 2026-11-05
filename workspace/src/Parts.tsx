@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { CheckCircle2, CircleAlert } from 'lucide-react';
-import { currentResponse, text } from './model';
+import { currentResponse, responseTargets, text } from './model';
 import type { ResponseKind, Snapshot } from './model';
 
 export function Section({ title, icon, aside, children }: { title: string; icon?: ReactNode; aside?: ReactNode; children: ReactNode }) {
@@ -27,7 +27,7 @@ export function ResponseBar({ files, kind, waiting, prompt, approve, decisions, 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const answer = currentResponse(files, kind);
-  const target = files[{ proposal: 'proposal.json', plan: 'plan.json', evaluation_review: 'evaluation/draft/samples.jsonl' }[kind]];
+  const target = files[responseTargets[kind]];
   if (answer) {
     const approved = answer.decision === decisions.approve;
     return <div className={`response-bar ${approved ? 'done' : 'noted'}`} role="status"><CheckCircle2 size={16} aria-hidden="true" /><div><strong>{approved ? '你已确认' : '你已请求修改'}</strong><span className="muted"> · {readableTime(answer.created_at)}</span>{text(answer.note) && <p>{text(answer.note)}</p>}<p className="muted">回到对话告诉 Agent 一声，它会按你的回复继续。</p></div></div>;

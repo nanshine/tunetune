@@ -53,7 +53,7 @@ class RecordsTests(unittest.TestCase):
 
     def definition(self, version="v1"):
         return dict(version=version, description="Synthetic checks", rubric="Exact match", metrics=[
-            dict(id="count", label="Fixture count", direction="maximize")], command=["python3", "score.py"])
+            dict(id="count", label="Fixture count", direction="maximize")], command=["python3", "score.py"], no_final_reason="Synthetic fixture")
 
     def package(self, path, files):
         source = self.base / ("package-" + path.replace("/", "-"))
@@ -85,7 +85,7 @@ class RecordsTests(unittest.TestCase):
     def fixture(self):
         evaluation = self.package("evaluation/v1", {
             "definition.json": self.definition(), "score.py": b"# synthetic scorer\n",
-            "samples.jsonl": b'{"sample_id":"one","input":{"text":"test"},"reference":"answer","split":"test"}\n'})
+            "samples.jsonl": b'{"sample_id":"one","input":{"text":"test"},"reference":"answer"}\n'})
         self.experiment()
         model = self.model()
         config = dict(id="r1", evaluation_version="v1", target_sha256=model["target"]["sha256"],

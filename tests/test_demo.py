@@ -120,13 +120,13 @@ class DemoTests(unittest.TestCase):
                                                       "snapshot/train.py", "snapshot/infer.py", "snapshot/parameters.json", "snapshot/manifest.json")}
             versions = ("v1", "v2") if index <= 2 else ("v1",) if index <= 5 else ("v2",)
             for version in versions:
-                expected |= {f"{base}/evals/eval-{version}/{name}" for name in ("config.json", "status.json", "outputs.jsonl", "run.log")}
+                expected |= {f"{base}/evals/eval-{version}/{name}" for name in ("config.json", "status.json", "outputs.jsonl", "run.log", "samples.jsonl")}
         actual = {path for path in self.generated_files if not path.startswith((".agents/", ".workspace/")) and path != "AGENTS.md"}
         self.assertEqual(actual, expected)
-        self.assertEqual(len(expected), 180)
-        self.assertEqual(self.report["files"], {"research": 180, "created": len(self.generated_files.keys() - self.initial_files.keys()),
+        self.assertEqual(len(expected), 192)
+        self.assertEqual(self.report["files"], {"research": 192, "created": len(self.generated_files.keys() - self.initial_files.keys()),
                                               "total": len(self.generated_files)})
-        self.assertEqual(self.report["files"]["created"], 178)
+        self.assertEqual(self.report["files"]["created"], 190)
         self.assertEqual({path for path in self.generated_files if path.startswith(".workspace/runtime/")},
                          {".workspace/runtime/records.lock"})
         self.assertFalse(list(self.project.rglob("__pycache__")))
@@ -172,7 +172,7 @@ class DemoTests(unittest.TestCase):
         for version, count in (("v1", 16), ("v2", 24)):
             self.assertEqual(len(files[f"evaluation/{version}/samples.jsonl"]["content"]), count)
             definition = files[f"evaluation/{version}/definition.json"]["content"]
-            self.assertEqual(set(definition), {"version", "description", "rubric", "metrics", "command"})
+            self.assertEqual(set(definition), {"version", "description", "rubric", "metrics", "command", "no_final_reason"})
 
     def assert_process_facts(self, path):
         status = read_json(path / "status.json")

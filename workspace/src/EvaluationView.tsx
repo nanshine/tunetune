@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ClipboardCheck } from 'lucide-react';
-import { array, collection, currentResponse, document, object, referenceReview, referenceStatus, referenceStatusLabels, text } from './model';
+import { array, collection, currentResponse, document, evaluationRuns, object, referenceReview, referenceStatus, referenceStatusLabels, sampleSplit, splitCounts, text } from './model';
 import type { JsonObject, Snapshot } from './model';
 import { RecordView, sampleLabel } from './RecordView';
 import { Empty, Section } from './Parts';
@@ -28,6 +28,7 @@ export function SamplesView({ rows, outputs = false, metricLabels = {} }: { rows
     <article className="sample-detail">
       <div className="sample-field"><span className="field-label">输入</span><div className="reading"><RecordView value={row.input} /></div></div>
       {outputs && <div className="sample-field"><span className="field-label">模型输出</span>{row.output == null || row.output === '' ? <p className="muted">这个输入没有输出。</p> : <RecordView value={row.output} />}</div>}
+      {!outputs && sampleSplit(row) === 'final' && <p className="badge">最终检查样例</p>}
       {Object.hasOwn(row, 'reference') && <div className="sample-field"><span className="field-label">参考答案{!outputs && referenceStatus(row) && <span className={`badge review-${referenceStatus(row)}`}>{referenceStatusLabels[referenceStatus(row)!]}</span>}</span><RecordView value={row.reference} /></div>}
       {outputs && !!scores.length && <div className="chips" aria-label="逐例评分">{scores.map(([key, value]) => <span className="chip" key={key}>{Object.hasOwn(metricLabels, key) ? metricLabels[key] : key} <strong>{value.toLocaleString()}</strong></span>)}</div>}
       <p className="pager"><button disabled={activeIndex === 0} onClick={() => setIndex(activeIndex - 1)}>上一例</button><span className="muted" role="status">{activeIndex + 1} / {rows.length}</span><button disabled={activeIndex === rows.length - 1} onClick={() => setIndex(activeIndex + 1)}>下一例</button></p>
@@ -39,6 +40,14 @@ export function ReviewSummary({ rows }: { rows: JsonObject[] }) {
   const counts = referenceReview(rows);
   if (!counts.confirmed && !counts.corrected && !counts.draft) return null;
   return <p className="summary-line">参考答案 {(['confirmed', 'corrected', 'draft'] as const).filter(key => counts[key]).map(key => `${referenceStatusLabels[key]} ${counts[key]}`).join('，')}{counts.draft > 0 && <span className="muted">。待审核的答案是草稿，分数只表示与草稿一致的程度。</span>}</p>;
+}
+
+// Which samples guide the work and which are kept for one final check, and how often that check was used.
+export function SplitSummary({ files, version, rows, definition }: { files: Snapshot['files']; version: string; rows: JsonObject[]; definition: JsonObject }) {
+  const counts = splitCounts(rows);
+  const runs = evaluationRuns(files).filter(run => run.version === version && run.split === 'final');
+  if (!counts.final) return text(definition.no_final_reason) ? <p className="notice">没有另留最终检查：{text(definition.no_final_reason)}</p> : null;
+  return <p className="summary-line">开发样例 {counts.development} 条，最终检查 {counts.final} 条<span className="muted">。最终检查{runs.length ? `已运行 ${runs.length} 次，涉及 ${new Set(runs.map(run => run.experimentId)).size} 个模型` : '还没有运行'}；它只在选定模型后用一次。</span></p>;
 }
 
 type Tab = 'overview' | 'samples' | 'review';
@@ -67,6 +76,7 @@ export function EvaluationView({ files, currentVersion, selection, onSelect, ini
       : tab === 'overview' ? <>
         {selectedPath.includes('/draft/') && <p className="notice">这是草稿，还会调整。</p>}
         {!!rows && <ReviewSummary rows={rows} />}
+        {!!rows && !selectedPath.includes('/draft/') && <SplitSummary files={files} version={text(definition.version, selectedPath.split('/')[1])} rows={rows} definition={definition} />}
         {text(definition.description) && <p className="lead-text">{text(definition.description)}</p>}
         <Section title="指标">{metrics.length ? <ul className="metric-defs">{metrics.map((metric, index) => <li key={text(metric.id, String(index))}><strong>{text(metric.label, text(metric.id, '未命名指标'))}</strong><span className="muted">{text(metric.direction) === 'maximize' ? '越高越好' : text(metric.direction) === 'minimize' ? '越低越好' : ''}</span>{text(metric.description) && <p>{text(metric.description)}</p>}</li>)}</ul> : <p className="muted">还没有定义指标。</p>}</Section>
         {definition.rubric != null && definition.rubric !== '' && <Section title="评分规则"><div className="prose"><RecordView value={definition.rubric} /></div></Section>}

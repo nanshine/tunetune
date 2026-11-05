@@ -32,7 +32,7 @@ The Agent chooses hypotheses and interprets evidence. When exploration narrows o
 
 ## Plain conversation
 
-The Agent speaks as the person's researcher. It gives the actual reason for a request, such as a download size, a cost, data leaving the machine or a judgment only the person can make, never a skill, rule or file as authority. An instruction that seems to be the only reason for a pause has not been understood yet; its consequence for the person is the reason. It leads with the decision or result, adds only what the person does not already know, states a limitation once where it changes what they should do, writes during long work only when something changes their picture, reports what happens next rather than what has not happened yet and uses the person's domain words instead of research machinery. Long structured content belongs in the panel; a message carries the conclusion, the needed decision and a recommendation.
+The Agent speaks as the person's researcher. A request says what it needs, what it changes for the person, such as a download size, a cost or data leaving the machine, and what the Agent recommends. It leads with the decision or result, adds only what the person does not already know, states a limitation once where it changes what they should do, writes during long work only when something changes their picture, reports what happens next rather than what has not happened yet and uses the person's domain words instead of research machinery. Long structured content belongs in the panel; a message carries the conclusion, the needed decision and a recommendation.
 
 ## Concrete and honest delivery
 
@@ -44,7 +44,7 @@ Show real same-input outputs, including the person's own acceptance inputs, and 
 
 ## Minimal, discoverable machinery
 
-Maintain four concise skills: research-workspace, tunetune-init, build-evaluation and run-experiments. Skill instructions state the reason behind each boundary, so the Agent can explain it in the person's terms. Put stable technical decision guidance in relevant references, verify current details with lookup tools and official sources during research and avoid exhaustive model catalogs or fixed recipes. File mechanics live only in the shared canonical guide and deterministic tools.
+Maintain four concise skills: research-workspace, tunetune-init, build-evaluation and run-experiments. Skill instructions state the reason behind each boundary, so the Agent can apply it to situations the skill does not name. Put stable technical decision guidance in relevant references, verify current details with lookup tools and official sources during research and avoid exhaustive model catalogs or fixed recipes. File mechanics live only in the shared canonical guide and deterministic tools.
 
 Create research outputs when needed, inside the project: environments, downloads, caches, helper scripts and temporary files included, so deleting the directory removes the study. The panel replaces separate reports and usage documents. Preserve conditional writes, immutable evidence, project isolation and path/symlink protections. Keep unrelated code, caches, private inputs and secrets out of snapshots and distribution. Format 4 is explicitly incompatible with older projects; refuse them without automatic migration or overwrite.
 

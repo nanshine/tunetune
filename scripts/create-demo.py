@@ -556,6 +556,7 @@ class Demo:
             "metrics": [{"id": "accuracy", "label": "准确率", "direction": "maximize"},
                         {"id": "macro_f1", "label": "宏平均F1", "direction": "maximize"}],
             "command": [self.python, "-B", base + "/evaluate.py"],
+            "no_final_reason": "合成演示数据：训练、评测和对比样例来自互不重叠的池，没有另留最终检查。",
         }
         # Calibrate byte-identical code outside the project, leaving only one
         # calibration log in the frozen package and no runtime scratch copies.

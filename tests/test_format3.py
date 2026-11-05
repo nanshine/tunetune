@@ -90,7 +90,8 @@ print('simulated request completed; key was read only from the environment')
         if not self.tree.exists("evaluation/v1/definition.json"):
             package = self.freeze("evaluation/v1", {
                 "definition.json": dict(version="v1", description="Simulated exact match", rubric="Exact text",
-                                        metrics=[dict(id="correct", label="Correct", direction="maximize")], command=["python3", "score.py"]),
+                                        metrics=[dict(id="correct", label="Correct", direction="maximize")], command=["python3", "score.py"],
+                                        no_final_reason="Synthetic fixture"),
                 "samples.jsonl": b'{"sample_id":"one","input":"example"}\n',
                 "score.py": b"# Invocation lives in the pinned adapter.\n"})
             evaluation_hash = package["manifest_sha256"]
@@ -144,6 +145,16 @@ print('simulated request completed; key was read only from the environment')
             records.publish_response(self.tree, "evaluation_review", "submit", draft, items=[dict(sample_id="s1", verdict="correct")])
         records.publish_response(self.tree, "evaluation_review", "submit", draft, items=[dict(sample_id="s1", verdict="correct", reference=["b"])])
         self.assertEqual(records.validate(self.tree)["errors"], [])
+        self.raw("comparison/outputs.jsonl", b'{"sample_id":"a","input":"x","outputs":{"e1":["tag"]}}\n')
+        outputs = self.sha("comparison/outputs.jsonl")
+        for items, message in (([], "at least one"), ([dict(sample_id="a", experiment_id="e2", verdict="bad")], "not shown"),
+                               ([dict(sample_id="a", experiment_id="e1", verdict="confirm")], "acceptance verdict"),
+                               ([dict(sample_id="a", experiment_id="e1", verdict="good")] * 2, "Duplicate")):
+            with self.assertRaisesRegex(ValueError, message):
+                records.publish_response(self.tree, "acceptance", "submit", outputs, items=items)
+        judged = records.publish_response(self.tree, "acceptance", "submit", outputs,
+                                          items=[dict(sample_id="a", experiment_id="e1", verdict="bad", note="Missing the travel tag")])
+        self.assertEqual(records.read_record(self.tree, f"responses/{judged['id']}.json")["target"], {"path": "comparison/outputs.jsonl", "sha256": outputs})
         with self.assertRaisesRegex(ValueError, "Invalid source"):
             self.write("proposal.json", dict(summary="x", examples=[], sources=[dict(title="x", url="javascript:alert(1)")]))
 

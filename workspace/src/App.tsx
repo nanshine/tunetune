@@ -94,7 +94,8 @@ export function App() {
     resources: <ResourcesView resources={document(files, 'resources.json')} observations={snapshot?.observations} />,
     evaluation: <EvaluationView key={evaluationTab} files={files} currentVersion={version} selection={evaluationSelection} onSelect={setEvaluationSelection} initialTab={evaluationTab}
       onReview={(reviewItems, sha) => submitResponse({ kind: 'evaluation_review', decision: 'submit', target_sha256: sha, items: reviewItems })} />,
-    acceptance: <AcceptanceView files={files} job={snapshot?.acceptance} pool={snapshot?.models} onRun={runAcceptance} onTry={tryModel} onLoad={loadModel} onUnload={unloadModel} />,
+    acceptance: <AcceptanceView files={files} job={snapshot?.acceptance} pool={snapshot?.models} onRun={runAcceptance} onTry={tryModel} onLoad={loadModel} onUnload={unloadModel}
+      onFeedback={(feedback, sha) => submitResponse({ kind: 'acceptance', decision: 'submit', target_sha256: sha, items: feedback })} />,
   };
   const empty = !items.length && !planned.length;
 

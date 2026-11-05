@@ -41,7 +41,8 @@ class RunTests(unittest.TestCase):
         source = self.base / "evaluation"
         source.mkdir()
         (source / "definition.json").write_bytes(records.encoded(dict(version="v1", description="Fixture", rubric="Count",
-            metrics=[dict(id="count", label="Count", direction="maximize")], command=[sys.executable, "evaluation/v1/evaluate.py"])))
+            metrics=[dict(id="count", label="Count", direction="maximize")], command=[sys.executable, "evaluation/v1/evaluate.py"],
+            no_final_reason="Synthetic fixture")))
         (source / "samples.jsonl").write_bytes(b'{"sample_id":"one","input":"synthetic"}\n')
         (source / "evaluate.py").write_text("print('evaluated fixture')\n")
         self.evaluation_hash = records.freeze(self.tree, self.root, source, "evaluation/v1")["manifest_sha256"]
@@ -345,6 +346,98 @@ class RunTests(unittest.TestCase):
         self.raw(f"experiments/{ident}/model/predict.py",
                  ("import json,sys\nrows=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]\n" + body).encode())
         records.finalize(self.tree, f"experiments/{ident}")
+
+    LONG = "A synthetic final-check article that the method must never have read while being designed."
+
+    def split_evaluation(self, version="v2", **definition):
+        source = self.base / ("evaluation-" + version)
+        source.mkdir()
+        (source / "definition.json").write_bytes(records.encoded(dict(version=version, description="Fixture", rubric="Count",
+            metrics=[dict(id="count", label="Count", direction="maximize")], command=[sys.executable, "score.py"], **definition)))
+        (source / "samples.jsonl").write_bytes(records.encoded({"sample_id": "one", "input": "synthetic", "reference": ["alpha"]}).replace(b"\n", b"") + b"\n"
+            + records.encoded({"sample_id": "two", "input": self.LONG, "reference": ["omega"], "split": "final"}).replace(b"\n", b"") + b"\n")
+        return records.freeze(self.tree, self.root, source, f"evaluation/{version}")["manifest_sha256"]
+
+    def test_freeze_requires_declared_final_check_or_reason(self):
+        for name, samples in (("unsplit", b'{"sample_id":"one","input":"x"}\n'), ("only-final", b'{"sample_id":"one","input":"x","split":"final"}\n'),
+                              ("unknown", b'{"sample_id":"one","input":"x","split":"test"}\n')):
+            source = self.base / name
+            source.mkdir()
+            (source / "definition.json").write_bytes(records.encoded(dict(version="v9", description="Fixture", rubric="Count",
+                metrics=[], command=[sys.executable, "score.py"])))
+            (source / "samples.jsonl").write_bytes(samples)
+            with self.assertRaisesRegex(ValueError, "final|development"):
+                records.freeze(self.tree, self.root, source, "evaluation/v9")
+            self.assertFalse(self.tree.exists("evaluation/v9"))
+        with self.assertRaisesRegex(ValueError, "no_final_reason"):
+            records.shape("evaluation/v9/definition.json", records.encoded(dict(version="v9", description="", rubric="", metrics=[],
+                                                                                  command=["x"], no_final_reason=" ")))
+        self.split_evaluation()
+
+    def test_runs_see_only_their_split_and_final_publishes_totals_once(self):
+        evaluation_hash = self.split_evaluation()
+        config = self.evaluation()
+        self.raw("tools/score.py", b"import json,os; from pathlib import Path\n"
+                 b"out=Path(os.environ['TUNETUNE_OUTPUT']); rows=[json.loads(l) for l in open(os.environ['TUNETUNE_SAMPLES'])]\n"
+                 b"(out/'outputs.jsonl').write_text(''.join(json.dumps({'sample_id':r['sample_id'],'output':['alpha']})+'\\n' for r in rows))\n"
+                 b"(out/'metrics.json').write_text(json.dumps({'count':len(rows)}))\n")
+        self.raw("tools/peek.py", b"import json,os; from pathlib import Path\n"
+                 b"out=Path(os.environ['TUNETUNE_OUTPUT']); rows=[json.loads(l) for l in open(Path(os.environ['TUNETUNE_EVALUATION'])/'samples.jsonl')]\n"
+                 b"(out/'outputs.jsonl').write_text(''.join(json.dumps({'sample_id':r['sample_id'],'output':['alpha']})+'\\n' for r in rows))\n"
+                 b"(out/'metrics.json').write_text(json.dumps({'count':len(rows)}))\n")
+        def run(ident, script, split=None):
+            path = f"experiments/e1/evals/{ident}"
+            self.publish(path + "/config.json", dict(id=ident, evaluation_version="v2", target_sha256=config["target_sha256"], evaluation_sha256=evaluation_hash,
+                         **({"split": split} if split else {}), execution=dict(argv=[sys.executable, "-B", script], cwd=".", environment={}, timeout_seconds=5)))
+            self.assertEqual(runner.execute(self.tree, path)["state"], "completed", self.tree.read(path + "/run.log"))
+            return path
+        development = run("dev", "tools/score.py")
+        self.assertEqual([json.loads(line)["sample_id"] for line in self.tree.read(development + "/samples.jsonl").splitlines()], ["one"])
+        self.assertEqual(records.finalize(self.tree, development)["metrics"], {"count": 1})
+        self.assertEqual([row["sample_id"] for row in records.read_record(self.tree, development + "/outputs.jsonl")], ["one"])
+        with self.assertRaisesRegex(ValueError, "split"):
+            records.finalize(self.tree, run("peek", "tools/peek.py"))
+        project = records.read_record(self.tree, "project.json")
+        self.publish("project.json", dict(project, current_evaluation="v2", deliveries=["e1"]), create=False)
+        self.assertIn("Delivery e1 has no final-check measurement on evaluation v2", records.validate(self.tree)["warnings"])
+        final = run("final", "tools/score.py", "final")
+        self.assertEqual(records.finalize(self.tree, final)["metrics"], {"count": 1})
+        self.assertFalse(self.tree.exists(final + "/outputs.jsonl"))
+        self.assertFalse(self.tree.exists(final + "/result/outputs.jsonl"))
+        report = records.validate(self.tree)
+        self.assertTrue(report["valid"], report)
+        self.assertFalse([w for w in report["warnings"] if "final-check" in w])
+        with self.assertRaisesRegex(ValueError, "immutable|aggregate"):
+            self.publish(final + "/outputs.jsonl", b'{"sample_id":"two","input":"x","output":"y"}\n')
+        self.publish("experiments/e1/evals/again/config.json", dict(id="again", evaluation_version="v2", split="final", target_sha256=config["target_sha256"],
+                     evaluation_sha256=evaluation_hash, execution=dict(argv=[sys.executable, "-B", "tools/score.py"], cwd=".", environment={}, timeout_seconds=5)))
+        with self.assertRaisesRegex(ValueError, "already has a final-check measurement"):
+            runner.execute(self.tree, "experiments/e1/evals/again")
+        self.assertFalse(self.tree.exists("experiments/e1/evals/again/run.log"))
+        self.assertEqual(records.audit(self.tree)["final_checks"], {"v2": {"attempts": 2, "succeeded": 1, "experiments": ["e1"]}})
+
+    def test_audit_flags_methods_that_contain_evaluation_material(self):
+        self.split_evaluation()
+        self.raw("proposal.json", dict(summary="Tags from the confirmed list: alpha", examples=[]))
+        self.prepare(f"LABELS = ['alpha', 'omega']\nEXAMPLE = {self.LONG[:40]!r}\nopen('evaluation/v2/samples.jsonl')\n", "leaky")
+        self.prepare("LABELS = ['alpha']\n", "clean")
+        self.raw("experiments/clean/model/weights.bin", bytes(range(256)) * 4)
+        findings = {(item["experiment"], item["check"]): item["values"] for item in records.audit(self.tree)["findings"]}
+        self.assertEqual(findings[("leaky", "final_label")], ["omega"])
+        self.assertEqual(findings[("leaky", "unconfirmed_vocabulary")], ["omega"])
+        self.assertTrue(findings[("leaky", "final_content")])
+        self.assertEqual(findings[("leaky", "reads_evaluation")], ["experiments/leaky/snapshot/train.py"])
+        self.assertFalse([key for key in findings if key[0] in ("clean", "e1")])
+        self.raw("experiments/leaky/status.json", dict(state="succeeded", updated_at=STAMP))
+        project = records.read_record(self.tree, "project.json")
+        self.raw("project.json", dict(project, deliveries=["leaky"]))
+        warnings = records.validate(self.tree)["warnings"]
+        self.assertIn("Delivery leaky audit final_label: omega", warnings)
+        self.assertIn("Delivery leaky audit reads_evaluation: experiments/leaky/snapshot/train.py", warnings)
+        self.raw("project.json", project)
+        result = subprocess.run([sys.executable, "-B", str(SCRIPTS / "records.py"), "audit", "--project", str(self.root)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(json.loads(result.stdout)["findings"]), 4)
 
     def test_compare_runs_entry_points_on_acceptance_inputs_and_merges(self):
         self.packaged("upper", "with open(sys.argv[2],'w') as f:\n    [f.write(json.dumps({'sample_id':r['sample_id'],'output':r['input'].upper()})+chr(10)) for r in rows]\n")
