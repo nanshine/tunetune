@@ -6,12 +6,14 @@ export type Observations = { checked_at: string; items: ResourceObservation[] };
 export type ViewName = 'proposal' | 'plan' | 'resources' | 'evaluation' | 'review' | 'acceptance';
 export type ViewState = { revision: number; open: ViewName[]; focus: { experiment?: string }; attention: { view: ViewName; message: string }[] };
 export type AcceptanceJob = { id: string; state: 'running' | 'succeeded' | 'failed'; experiments: string[]; started_at: string; finished_at?: string; failed?: string[]; message?: string };
-export type Snapshot = { files: Record<string, ResearchFile>; revision: string; synced_at: string; error: string | null; observations?: Observations; view?: ViewState | null; acceptance?: AcceptanceJob | null };
+export type LoadedModel = { state: 'loading' | 'loaded' | 'failed'; memory_gb: number; estimated?: boolean; error?: string };
+export type ModelPool = { budget_gb: number; used_gb: number; items: Record<string, LoadedModel> };
+export type Snapshot = { files: Record<string, ResearchFile>; revision: string; synced_at: string; error: string | null; observations?: Observations; view?: ViewState | null; acceptance?: AcceptanceJob | null; models?: ModelPool };
 export type Outcome = 'baseline' | 'keep' | 'discard' | 'inconclusive' | 'invalid';
 export type Analysis = { outcome: Outcome | 'unknown'; summary: string };
 export type Usage = { requests?: number; input_tokens?: number; output_tokens?: number; cost?: number; currency?: string; latency_seconds?: number };
 export const roleLabels: Record<string, string> = { baseline: '基线', candidate: '候选改进', reference: '质量参照', recommended: '推荐路线', challenge: '挑战路线' };
-export type Experiment = { id: string; title: string; parent: string | null; state: string; modelPath: string; targetKind: 'local' | 'api' | ''; invoke: string[]; role: string; usage: Usage; method: string; modelName: string; framework: string; hypothesis: string; parameters: JsonObject; analysis: Analysis };
+export type Experiment = { id: string; title: string; parent: string | null; state: string; modelPath: string; targetKind: 'local' | 'api' | ''; invoke: string[]; serve: boolean; role: string; usage: Usage; method: string; modelName: string; framework: string; hypothesis: string; parameters: JsonObject; analysis: Analysis };
 export type EvaluationRun = { id: string; experimentId: string; version: string; state: string; metrics: Record<string, number>; metricLabels: Record<string, string>; path: string; recordedAt: string; evaluationHash: string; inputFingerprint: string; usage: Usage };
 
 export const outcomeLabels: Record<Outcome | 'unknown', string> = { baseline: '基线', keep: '保留', discard: '舍弃', inconclusive: '暂不确定', invalid: '无效', unknown: '尚无结论' };
@@ -140,11 +142,13 @@ export function experiments(files: Snapshot['files']): Experiment[] {
     const record = document(files, `experiments/${id}/analysis.json`);
     const outcome = text(record.outcome);
     const modelPath = text(object(status.target).path);
-    const argv = array(document(files, `experiments/${id}/model/invoke.json`).argv);
+    const entry = document(files, `experiments/${id}/model/invoke.json`);
+    const argv = array(entry.argv);
     return {
       id, title: text(config.title, id), parent: text(config.parent_experiment_id) || null,
       state: text(status.state, 'pending'), modelPath,
       invoke: modelPath === `experiments/${id}/model` && argv.length && argv.every(item => typeof item === 'string') ? argv as string[] : [],
+      serve: modelPath === `experiments/${id}/model` && array(object(entry.serve).argv).length > 0,
       targetKind: object(status.target).kind === 'local' || object(status.target).kind === 'api' ? object(status.target).kind as 'local' | 'api' : '', role: text(config.role), usage: object(status.usage) as Usage,
       method: text(config.method), modelName: text(config.model_name), framework: text(config.framework), hypothesis: text(config.hypothesis), parameters: object(config.parameters),
       analysis: { outcome: Object.hasOwn(outcomeLabels, outcome) ? outcome as Analysis['outcome'] : 'unknown', summary: text(record.summary) },
@@ -236,6 +240,27 @@ export function layout(items: { id: string; parent: string | null }[]): Map<stri
 
 export function comparableModels(files: Snapshot['files']): Experiment[] {
   return experiments(files).filter(item => item.state === 'succeeded' && item.targetKind && item.modelPath);
+}
+// Acceptance leads with what could be delivered; rejected experiments stay reachable but out of the way.
+const setAside = new Set<Analysis['outcome']>(['discard', 'inconclusive', 'invalid']);
+export function acceptanceModels(files: Snapshot['files']): { primary: Experiment[]; more: Experiment[] } {
+  const delivered = new Set(deliveryIds(files));
+  const ordered = comparableModels(files).sort((a, b) => Number(delivered.has(b.id)) - Number(delivered.has(a.id)) || a.id.localeCompare(b.id));
+  const primary = ordered.filter(item => delivered.has(item.id) || !setAside.has(item.analysis.outcome));
+  return { primary, more: ordered.filter(item => !primary.includes(item)) };
+}
+export type RunState = 'runnable' | 'loading' | 'loaded' | 'load-failed' | 'running' | 'failed' | 'no-entry' | 'api';
+export const runStateLabels: Record<RunState, string> = { runnable: '可运行 · 每次运行时加载', loading: '正在加载…', loaded: '已加载 · 即时回答', 'load-failed': '加载失败', running: '运行中', failed: '上次运行失败', 'no-entry': '缺少调用入口，无法运行', api: '在线参照 · 面板不调用' };
+export function runState(item: Experiment, job: AcceptanceJob | null | undefined, pool?: ModelPool | null): RunState {
+  if (item.targetKind === 'api') return 'api';
+  if (!item.invoke.length) return 'no-entry';
+  const loaded = pool?.items[item.id];
+  if (job?.experiments.includes(item.id)) {
+    if (job.state === 'running') return 'running';
+    if (job.state === 'failed' && job.failed?.includes(item.id)) return 'failed';
+  }
+  if (loaded) return loaded.state === 'failed' ? 'load-failed' : loaded.state;
+  return 'runnable';
 }
 export function compatibleMeasurements(left: EvaluationRun | undefined, right: EvaluationRun | undefined): boolean {
   return !!left && !!right && left.state === 'succeeded' && right.state === 'succeeded' && !!left.evaluationHash && left.evaluationHash === right.evaluationHash && left.version === right.version && left.inputFingerprint === right.inputFingerprint;

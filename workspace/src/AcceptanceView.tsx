@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { LoaderCircle, Play, Sparkles, Star } from 'lucide-react';
-import { acceptanceInputs, comparableModels, comparisonSamples, deliveryIds, document, experimentNumber, object, text } from './model';
-import type { AcceptanceJob, Experiment, JsonObject, Snapshot } from './model';
+import { acceptanceInputs, acceptanceModels, comparisonSamples, deliveryIds, document, experimentNumber, object, outcomeLabels, runState, runStateLabels, text } from './model';
+import type { AcceptanceJob, Experiment, JsonObject, ModelPool, Snapshot } from './model';
 import { RecordView, sampleLabel } from './RecordView';
 import { Empty } from './Parts';
 
@@ -21,7 +21,7 @@ function hasOutput(outputs: Record<string, unknown>, id: string): boolean {
 
 // New input follows the shape of existing inputs, so a model expecting {title, text} gets the same fields.
 function TryPanel({ models, template, onTry }: { models: Experiment[]; template: string[] | null; onTry: (experiment: string, input: unknown) => Promise<{ output?: unknown; error?: string; log_tail?: string }> }) {
-  const local = models.filter(item => item.targetKind === 'local');
+  const local = models.filter(item => item.targetKind === 'local' && item.invoke.length);
   const [model, setModel] = useState(local[0]?.id ?? '');
   const [input, setInput] = useState('');
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -44,14 +44,31 @@ function TryPanel({ models, template, onTry }: { models: Experiment[]; template:
   </section>;
 }
 
-export function AcceptanceView({ files, job, onRun, onTry }: {
-  files: Snapshot['files']; job: AcceptanceJob | null | undefined;
+// Loading keeps a model resident so trials answer at once; the person decides what stays loaded within the budget.
+function LoadButton({ item, pool, onLoad, onUnload, onError }: { item: Experiment; pool: ModelPool | null | undefined; onLoad: (experiment: string) => Promise<unknown>; onUnload: (experiment: string) => Promise<unknown>; onError: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  if (!item.serve || item.targetKind !== 'local') return null;
+  const loaded = pool?.items[item.id];
+  const resident = loaded?.state === 'loaded' || loaded?.state === 'loading';
+  async function act() {
+    setBusy(true); onError('');
+    try { await (resident ? onUnload(item.id) : onLoad(item.id)); }
+    catch (cause) { onError(cause instanceof Error ? cause.message : '操作失败'); }
+    finally { setBusy(false); }
+  }
+  return <button className="load-toggle" disabled={busy} onClick={() => void act()}>{resident ? (loaded.state === 'loading' ? '取消加载' : '卸载') : '加载'}</button>;
+}
+
+export function AcceptanceView({ files, job, pool, onRun, onTry, onLoad, onUnload }: {
+  files: Snapshot['files']; job: AcceptanceJob | null | undefined; pool?: ModelPool | null;
   onRun: (experiments: string[]) => Promise<unknown>; onTry: (experiment: string, input: unknown) => Promise<{ output?: unknown; error?: string }>;
+  onLoad?: (experiment: string) => Promise<unknown>; onUnload?: (experiment: string) => Promise<unknown>;
 }) {
-  const models = comparableModels(files);
+  const { primary, more } = acceptanceModels(files);
+  const ordered = [...primary, ...more];
   const delivered = new Set(deliveryIds(files));
-  const ordered = [...models].sort((a, b) => Number(delivered.has(b.id)) - Number(delivered.has(a.id)) || a.id.localeCompare(b.id));
-  const [chosen, setChosen] = useState<string[]>(() => ordered.slice(0, 3).map(item => item.id));
+  const [chosen, setChosen] = useState<string[]>(() => (primary.length ? primary : more).slice(0, 3).map(item => item.id));
+  const [showMore, setShowMore] = useState(() => !primary.length);
   const [index, setIndex] = useState(0);
   const [error, setError] = useState('');
   const version = text(document(files, 'project.json').current_evaluation);
@@ -60,17 +77,21 @@ export function AcceptanceView({ files, job, onRun, onTry }: {
   const active = rows[Math.min(index, Math.max(0, rows.length - 1))];
   const outputs = object(active?.outputs);
   const running = job?.state === 'running';
-  const runnable = selected.filter(item => item.targetKind === 'local').map(item => item.id);
+  const runnable = selected.filter(item => item.targetKind === 'local' && item.invoke.length).map(item => item.id);
+  const pick = (item: Experiment) => <button key={item.id} aria-pressed={chosen.includes(item.id)} className={chosen.includes(item.id) ? 'active' : ''} onClick={() => setChosen(chosen.includes(item.id) ? chosen.filter(id => id !== item.id) : [...chosen, item.id].slice(-4))}>
+    {delivered.has(item.id) && <Star size={12} aria-label="交付模型" />}<span className="node-number">{experimentNumber(item.id)}</span>{item.title}{item.analysis.outcome !== 'unknown' && !delivered.has(item.id) && <span className="muted">{outcomeLabels[item.analysis.outcome]}</span>}
+  </button>;
   async function run() {
     setError('');
     try { await onRun(runnable); } catch (cause) { setError(cause instanceof Error ? cause.message : '无法开始运行'); }
   }
-  if (!models.length) return <Empty icon={<Play size={20} />} title="还没有可验收的模型">实验跑出可用的模型后，可以在这里用你自己的内容看它们的输出。</Empty>;
+  if (!ordered.length) return <Empty icon={<Play size={20} />} title="还没有可验收的模型">实验跑出可用的模型后，可以在这里用你自己的内容看它们的输出。</Empty>;
   return <div className="acceptance">
     <div className="acceptance-bar">
-      <div className="model-picks" role="group" aria-label="选择要对照的模型">{ordered.map(item => <button key={item.id} aria-pressed={chosen.includes(item.id)} className={chosen.includes(item.id) ? 'active' : ''} onClick={() => setChosen(chosen.includes(item.id) ? chosen.filter(id => id !== item.id) : [...chosen, item.id].slice(-4))}>
-        {delivered.has(item.id) && <Star size={12} aria-label="交付模型" />}<span className="node-number">{experimentNumber(item.id)}</span>{item.title}{item.targetKind === 'api' && <span className="muted">在线参照</span>}
-      </button>)}</div>
+      <div className="model-picks" role="group" aria-label="选择要对照的模型">{primary.map(pick)}
+        {more.length > 0 && <button className="more-toggle" aria-expanded={showMore} onClick={() => setShowMore(!showMore)}>{showMore ? '收起' : `其他实验 ${more.length} 个`}</button>}
+        {showMore && more.map(pick)}</div>
+      {pool && ordered.some(item => item.serve) && <span className="memory-line muted">常驻内存 {pool.used_gb.toFixed(1)} / {pool.budget_gb.toFixed(1)} GB</span>}
       {acceptanceInputs(files) && <button className="primary" disabled={running || !runnable.length} onClick={() => void run()}>{running ? <LoaderCircle size={14} className="spin" /> : <Play size={14} />}{running ? '正在运行' : '用所选模型重新运行'}</button>}
     </div>
     {(job || error) && <p className={`job-line ${job?.state ?? 'failed'}`} role="status">{error || (job!.state === 'running' ? `正在让 ${job!.experiments.map(experimentNumber).join('、')} 处理全部输入…` : job!.state === 'succeeded' ? '运行完成，输出已更新。' : `有模型没跑完${job!.failed?.length ? `（${job!.failed.map(experimentNumber).join('、')}）` : ''}，保留了之前的输出。`)}</p>}
@@ -81,8 +102,9 @@ export function AcceptanceView({ files, job, onRun, onTry }: {
         {active && <>
           <details className="input-preview" open={JSON.stringify(active.input).length < 600}><summary>输入：{sampleLabel(active, index)}</summary><div className="reading"><RecordView value={active.input} /></div></details>
           <div className="outputs" style={{ gridTemplateColumns: `repeat(${Math.max(selected.length, 1)}, minmax(0, 1fr))` }}>{selected.map(item => <section key={item.id} className="output-card">
-            <h4><span className="node-number">{experimentNumber(item.id)}</span>{item.title}</h4>
-            {hasOutput(outputs, item.id) ? <RecordView value={outputs[item.id]} /> : <p className="muted">还没有这个输入的输出{acceptanceInputs(files) && item.targetKind === 'local' ? '，点上方按钮运行。' : '。'}</p>}
+            <h4><span className="node-number">{experimentNumber(item.id)}</span>{item.title}{onLoad && onUnload && <LoadButton item={item} pool={pool} onLoad={onLoad} onUnload={onUnload} onError={setError} />}</h4>
+            <p className={`run-state ${runState(item, job, pool)}`} title={pool?.items[item.id]?.error}>{runStateLabels[runState(item, job, pool)]}{pool?.items[item.id] && pool.items[item.id].state !== 'failed' && ` · 约 ${pool.items[item.id].memory_gb.toFixed(1)} GB`}</p>
+            {hasOutput(outputs, item.id) ? <RecordView value={outputs[item.id]} /> : <p className="muted">还没有这个输入的输出{acceptanceInputs(files) && ['runnable', 'loaded'].includes(runState(item, job, pool)) ? '，点上方按钮运行。' : '。'}</p>}
           </section>)}</div>
         </>}
         <TryPanel models={selected.length ? selected : ordered} template={inputTemplate(rows)} onTry={onTry} />

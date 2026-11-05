@@ -3,7 +3,7 @@ import type { FunctionComponent } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ResearchFile, Snapshot } from './model';
-import { evaluationRuns, experiments } from './model';
+import { acceptanceModels, evaluationRuns, experiments, runState } from './model';
 import { ProposalView, ResourcesView, readableSize } from './ProjectBrief';
 import { PlanView } from './PlanView';
 import { EvaluationView, SamplesView } from './EvaluationView';
@@ -13,7 +13,7 @@ import { ExperimentSummary } from './Lineage';
 import { ExperimentDetails } from './ExperimentDetails';
 
 const workspace = vi.hoisted(() => ({ snapshot: null as Snapshot | null, connectionError: null as string | null, renameProject: vi.fn() }));
-vi.mock('./useWorkspace', () => ({ useWorkspace: () => workspace, submitResponse: vi.fn(), runAcceptance: vi.fn(), tryModel: vi.fn() }));
+vi.mock('./useWorkspace', () => ({ useWorkspace: () => workspace, submitResponse: vi.fn(), runAcceptance: vi.fn(), tryModel: vi.fn(), loadModel: vi.fn(), unloadModel: vi.fn() }));
 const { App } = await import('./App');
 
 const file = (content: unknown, sha = 'a'): ResearchFile => ({ content, sha256: sha.repeat(64) });
@@ -98,8 +98,38 @@ describe('research views', () => {
     const done = { ...files, 'responses/r2.json': file({ kind: 'evaluation_review', target: { path: 'evaluation/draft/samples.jsonl', sha256: 'f'.repeat(64) }, created_at: '2026-11-03T01:00:00Z', decision: 'submit', items: [{ sample_id: 's1', verdict: 'confirm' }] }) };
     expect(render(ReviewView, { files: done, rows: [] })).toContain('审阅已提交');
   });
+  it('leads acceptance with deliverable candidates and says whether each model can run', () => {
+    const extra = { ...files,
+      'experiments/e001-embed/model/invoke.json': file({ argv: ['python3', 'predict.py'] }),
+      'experiments/e002-prompt/config.json': file({ title: '提示词版本' }),
+      'experiments/e002-prompt/status.json': file({ state: 'succeeded', target: { kind: 'local', path: 'experiments/e002-prompt/model', sha256: 'd'.repeat(64) } }),
+      'experiments/e002-prompt/analysis.json': file({ outcome: 'discard', summary: '过度标记。' }),
+      'experiments/e003-api/config.json': file({ title: '在线模型' }),
+      'experiments/e003-api/status.json': file({ state: 'succeeded', target: { kind: 'api', path: 'experiments/e003-api/model', sha256: 'd'.repeat(64) } }) };
+    const groups = acceptanceModels(extra);
+    expect(groups.primary.map(item => item.id)).toEqual(['e001-embed', 'e000-keyword', 'e003-api']);
+    expect(groups.more.map(item => item.id)).toEqual(['e002-prompt']);
+    const byId = new Map(experiments(extra).map(item => [item.id, item]));
+    expect(runState(byId.get('e001-embed')!, null)).toBe('runnable');
+    expect(runState(byId.get('e000-keyword')!, null)).toBe('no-entry');
+    expect(runState(byId.get('e003-api')!, null)).toBe('api');
+    expect(runState(byId.get('e001-embed')!, { id: 'j', state: 'failed', experiments: ['e001-embed'], started_at: '', failed: ['e001-embed'] })).toBe('failed');
+    const html = render(AcceptanceView, { files: extra, job: null, onRun: vi.fn(), onTry: vi.fn() });
+    for (const value of ['其他实验 1 个', '可运行 · 每次运行时加载', '缺少调用入口，无法运行', '在线参照 · 面板不调用']) expect(html).toContain(value);
+    expect(html).not.toContain('提示词版本');
+    const served = { ...extra, 'experiments/e001-embed/model/invoke.json': file({ argv: ['python3', 'predict.py'], serve: { argv: ['python3', 'serve.py'] } }) };
+    const pool = { budget_gb: 8, used_gb: 2.6, items: { 'e001-embed': { state: 'loaded' as const, memory_gb: 2.6 } } };
+    const embed = experiments(served).find(item => item.id === 'e001-embed')!;
+    expect(embed.serve).toBe(true);
+    expect(runState(embed, null, pool)).toBe('loaded');
+    expect(runState(embed, null, { ...pool, items: { 'e001-embed': { state: 'failed', memory_gb: 2.6, error: 'x' } } })).toBe('load-failed');
+    const loaded = render(AcceptanceView, { files: served, job: null, pool, onRun: vi.fn(), onTry: vi.fn(), onLoad: vi.fn(), onUnload: vi.fn() });
+    for (const value of ['已加载 · 即时回答', '约 2.6 GB', '卸载', '常驻内存 2.6 / 8.0 GB']) expect(loaded).toContain(value);
+    expect(render(AcceptanceView, { files: served, job: null, pool: { ...pool, used_gb: 0, items: {} }, onRun: vi.fn(), onTry: vi.fn(), onLoad: vi.fn(), onUnload: vi.fn() })).toContain('>加载<');
+  });
   it('lets the person run models on acceptance inputs and try new content in the same shape', () => {
-    const html = render(AcceptanceView, { files, job: { id: 'j', state: 'running', experiments: ['e001-embed'], started_at: '' }, onRun: vi.fn(), onTry: vi.fn() });
+    const runnable = { ...files, 'experiments/e001-embed/model/invoke.json': file({ argv: ['python3', 'predict.py'] }) };
+    const html = render(AcceptanceView, { files: runnable, job: { id: 'j', state: 'running', experiments: ['e001-embed'], started_at: '' }, onRun: vi.fn(), onTry: vi.fn() });
     for (const value of ['E001', '向量加逻辑回归', '可拼搭的软件', '正在让 E001', '试一段新内容', '标题', '正文', '不会写入研究记录']) expect(html).toContain(value);
     expect(inputTemplate([{ sample_id: 'x', input: post }])).toEqual(['title', 'text']);
     expect(inputTemplate([{ sample_id: 'x', input: '纯文本' }])).toBeNull();

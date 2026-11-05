@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import shutil
 import signal
 import subprocess
 import sys
@@ -381,6 +382,67 @@ class RunTests(unittest.TestCase):
             runner.try_model(self.tree, "../upper", "x", 5)
         with self.assertRaises((ValueError, OSError)):
             runner.try_model(self.tree, "missing", "x", 5)
+
+    def shared(self, ident, requires):
+        self.prepare("import json,os,sys; from pathlib import Path\n"
+                     "(Path(os.environ['TUNETUNE_OUTPUT'])/'invoke.json').write_text(json.dumps("
+                     f"{{'argv':[sys.executable,'-B','experiments/{ident}/model/predict.py'],'requires':{requires!r}}}))\n", ident)
+        runner.execute(self.tree, f"experiments/{ident}")
+        self.raw(f"experiments/{ident}/model/predict.py",
+                 b"import json,sys\nw=open('resources/weights/w.bin').read()\nrows=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]\n"
+                 b"with open(sys.argv[2],'w') as f:\n    [f.write(json.dumps({'sample_id':r['sample_id'],'output':w+r['input']})+chr(10)) for r in rows]\n")
+
+    def test_models_reference_pinned_shared_weights_without_copying(self):
+        self.raw("resources/weights/w.bin", b"W:")
+        self.raw("resources/weights/.cache/meta", b"m")
+        pinned = records.manifest(self.tree, "resources/weights")["manifest_sha256"]
+        with self.assertRaisesRegex(ValueError, "experiment model or resource"):
+            records.manifest(self.tree, "data")
+        for ident in ("prompt-a", "prompt-b"):
+            self.shared(ident, [{"path": "resources/weights", "sha256": pinned}])
+            records.finalize(self.tree, f"experiments/{ident}")
+            self.assertFalse(self.tree.exists(f"experiments/{ident}/model/w.bin"))
+        self.assertEqual(runner.try_model(self.tree, "prompt-a", "post", 5)["output"], "W:post")
+        self.raw("comparison/inputs.jsonl", b'{"sample_id":"a","input":"hi"}\n')
+        self.assertEqual(runner.compare(self.tree, ["prompt-a", "prompt-b"], 5)["experiments"]["prompt-b"]["outputs"], 1)
+        project = records.read_record(self.tree, "project.json")
+        self.publish("project.json", dict(project, deliveries=["prompt-a"]), create=False)
+        self.assertFalse([w for w in records.validate(self.tree)["warnings"] if "prompt-a" in w])
+        self.raw("resources/weights/w.bin", b"changed")
+        with self.assertRaisesRegex(ValueError, "Hash mismatch"):
+            runner.try_model(self.tree, "prompt-a", "post", 5)
+        with self.assertRaisesRegex(ValueError, "Hash mismatch"):
+            runner.compare(self.tree, ["prompt-b"], 5)
+        shutil.rmtree(self.root / "resources/weights")
+        self.assertIn("Delivery prompt-a requires files that are missing", records.validate(self.tree)["warnings"])
+
+    def test_model_entry_reports_serve_and_memory_and_compare_merges_served_rows(self):
+        self.packaged("served", "with open(sys.argv[2],'w') as f:\n    [f.write(json.dumps({'sample_id':r['sample_id'],'output':'cold'})+chr(10)) for r in rows]\n")
+        entry = records.model_entry(self.tree, "served")
+        self.assertEqual((entry["serve"], entry["estimated"]), (None, True))
+        self.assertGreater(entry["memory_gb"], 0)
+        self.raw("comparison/inputs.jsonl", b'{"sample_id":"a","input":"hi"}\n{"sample_id":"b","input":"yo"}\n')
+        self.raw(".workspace/runtime/answers.jsonl", b'{"sample_id":"a","input":"hi","output":"warm"}\n{"sample_id":"b","input":"old","output":"stale"}\n')
+        report = runner.compare(self.tree, ["served"], 5, served={"served": ".workspace/runtime/answers.jsonl"})
+        self.assertEqual(report["experiments"]["served"]["outputs"], 1)
+        self.assertEqual([row["outputs"] for row in records.read_record(self.tree, "comparison/outputs.jsonl")], [{"served": "warm"}, {}])
+        with self.assertRaisesRegex(ValueError, "Served outputs"):
+            runner.compare(self.tree, ["served"], 5, served={"served": "comparison/inputs.jsonl"})
+        self.prepare("import json,os,sys; from pathlib import Path\n"
+                     "(Path(os.environ['TUNETUNE_OUTPUT'])/'invoke.json').write_text(json.dumps({'argv':['python3','p.py'],'serve':{'argv':['python3','s.py'],'memory_gb':-1}}))\n", "badserve")
+        runner.execute(self.tree, "experiments/badserve")
+        with self.assertRaisesRegex(ValueError, "memory_gb"):
+            records.finalize(self.tree, "experiments/badserve")
+
+    def test_invoke_requires_must_point_outside_the_model(self):
+        self.shared("inside", [{"path": "experiments/inside/model/predict.py", "sha256": "0" * 64}])
+        with self.assertRaisesRegex(ValueError, "outside the model"):
+            records.finalize(self.tree, "experiments/inside")
+        self.raw("resources/weights/w.bin", b"W:")
+        self.shared("stale", [{"path": "resources/weights/w.bin", "sha256": "0" * 64}])
+        with self.assertRaisesRegex(ValueError, "Hash mismatch"):
+            records.finalize(self.tree, "experiments/stale")
+        self.assertEqual(records.read_record(self.tree, "experiments/stale/status.json")["state"], "completed")
 
     def test_finalize_refuses_incomplete_results_and_invalid_entry_points(self):
         self.prepare("import os; from pathlib import Path\n"

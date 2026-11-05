@@ -11,12 +11,15 @@ import json
 import math
 import mimetypes
 import os
+import queue
+import signal
 from pathlib import Path
 import re
 import stat
 import subprocess
 import sys
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
@@ -245,8 +248,222 @@ def helper_command(reader, *args):
     return [sys.executable, "-E", "-s", str(reader.helpers / "run.py"), "--project", str(reader.tree.root), *args]
 
 
+def write_runtime(tree, name, data):
+    """Private scratch for the panel's own runs, never research evidence."""
+    with tree.directory([".workspace", "runtime"], create=True) as parent:
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+    return ".workspace/runtime/" + name
+
+
+def remove_runtime(tree, name):
+    try:
+        with tree.directory([".workspace", "runtime"]) as parent:
+            os.unlink(name, dir_fd=parent)
+    except OSError:
+        pass
+
+
+def physical_memory_gb():
+    try:
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1e9
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+class ModelPool:
+    """Resident model processes the person loads from the panel, kept within a memory budget.
+
+    A model with `serve` in its invoke.json can stay loaded, answering one JSONL request
+    per stdin line after printing {"ready":true}. Nothing is evicted silently: when a
+    load or run would exceed the budget, the person is told what to unload. Every
+    process ends with the panel.
+    """
+    LOAD_TIMEOUT = 900
+    ANSWER_TIMEOUT = 180
+
+    def __init__(self, reader, budget_gb=None):
+        self.reader = reader
+        self.lock = threading.Lock()
+        self.models = {}
+        total = physical_memory_gb()
+        self.budget_gb = budget_gb or (round(total / 2, 1) if total else 8.0)
+
+    def entry(self, experiment, verify):
+        if self.reader.records is None:
+            raise RequestError(503, "Research tools are not installed in this project")
+        tree = self.reader.records.Tree(self.reader.tree.root)
+        try:
+            return self.reader.records.model_entry(tree, experiment, verify=verify)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise RequestError(400, str(exc)) from None
+        finally:
+            tree.close()
+
+    def status(self):
+        with self.lock:
+            items = {ident: {key: item[key] for key in ("state", "memory_gb", "estimated", "error") if key in item}
+                     for ident, item in self.models.items()}
+            return {"budget_gb": self.budget_gb, "used_gb": round(self._used(), 2), "items": items}
+
+    def _used(self, exclude=()):
+        return sum(item["memory_gb"] for ident, item in self.models.items()
+                   if item["state"] in ("loading", "loaded") and ident not in exclude)
+
+    def check_room(self, need, experiment):
+        """Caller holds the lock."""
+        used = self._used(exclude=(experiment,))
+        if used + need > self.budget_gb:
+            names = "、".join(ident for ident, item in self.models.items() if item["state"] in ("loading", "loaded") and ident != experiment)
+            raise RequestError(409, "Memory budget exceeded",
+                               notice=f"内存预算 {self.budget_gb:g} GB 不够：这个模型约需 {need:g} GB，已加载的 {names or '无'} 占 {used:g} GB。先卸载一个再试。")
+
+    def is_loaded(self, experiment):
+        with self.lock:
+            return self.models.get(experiment, {}).get("state") == "loaded"
+
+    def load(self, experiment):
+        if not isinstance(experiment, str) or not ID.fullmatch(experiment):
+            raise RequestError(400, "Name one experiment")
+        estimate = self.entry(experiment, verify=False)
+        if not estimate["serve"]:
+            raise RequestError(400, "This model has no serve command", notice="这个模型没有常驻运行方式，每次运行时加载。")
+        with self.lock:
+            current = self.models.get(experiment, {})
+            if current.get("state") in ("loading", "loaded"):
+                return {key: current[key] for key in ("state", "memory_gb", "estimated")}
+            self.check_room(estimate["memory_gb"], experiment)
+            item = {"state": "loading", "memory_gb": estimate["memory_gb"], "estimated": estimate["estimated"]}
+            self.models[experiment] = item
+        threading.Thread(target=self._start, args=(experiment, item), daemon=True).start()
+        return {key: item[key] for key in ("state", "memory_gb", "estimated")}
+
+    def _start(self, experiment, item):
+        try:
+            entry = self.entry(experiment, verify=True)
+            name = f"serve-{experiment}.log"
+            write_runtime(self.reader.tree, name, b"")
+            with self.reader.tree.directory([".workspace", "runtime"]) as parent:
+                log = os.fdopen(os.open(name, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW, dir_fd=parent), "ab")
+            with log:
+                process = subprocess.Popen(entry["serve"], cwd=self.reader.tree.root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                           stderr=log, start_new_session=True, shell=False)
+            answers, ready = queue.Queue(), threading.Event()
+
+            def read():
+                for line in process.stdout:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(row, dict) and row.get("ready") is True:
+                        ready.set()
+                    elif isinstance(row, dict) and "sample_id" in row:
+                        answers.put(row)
+                answers.put(None)
+                ready.set()
+            threading.Thread(target=read, daemon=True).start()
+            with self.lock:
+                if self.models.get(experiment) is not item:
+                    self._kill(process)
+                    return
+                item.update(process=process, answers=answers, ask_lock=threading.Lock())
+            if not ready.wait(self.LOAD_TIMEOUT) or process.poll() is not None:
+                raise RuntimeError(f"The model did not become ready; see .workspace/runtime/{name}")
+            with self.lock:
+                if self.models.get(experiment) is item:
+                    item["state"] = "loaded"
+        except (RequestError, OSError, RuntimeError, ValueError) as exc:
+            with self.lock:
+                if self.models.get(experiment) is item:
+                    self._kill(item.pop("process", None))
+                    item.update(state="failed", error=str(exc)[-500:])
+
+    @staticmethod
+    def _kill(process):
+        if process is not None and process.returncode is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+        if process is not None:
+            for stream in (process.stdin, process.stdout):
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
+
+    def unload(self, experiment):
+        with self.lock:
+            item = self.models.pop(experiment, None)
+            if item:
+                self._kill(item.get("process"))
+        return self.status()
+
+    def ask(self, experiment, rows):
+        """Send rows to a loaded model; a model that stops answering is unloaded."""
+        with self.lock:
+            item = self.models.get(experiment)
+            if not item or item["state"] != "loaded":
+                raise RequestError(409, "Model is not loaded")
+        results = []
+        with item["ask_lock"]:
+            try:
+                while not item["answers"].empty():
+                    item["answers"].get_nowait()
+                for row in rows:
+                    item["process"].stdin.write((json.dumps({"sample_id": row["sample_id"], "input": row["input"]}, ensure_ascii=False) + "\n").encode())
+                    item["process"].stdin.flush()
+                    answer = item["answers"].get(timeout=self.ANSWER_TIMEOUT)
+                    if answer is None or answer.get("sample_id") != row["sample_id"]:
+                        raise RuntimeError("The loaded model stopped answering")
+                    results.append({"sample_id": row["sample_id"], "input": row["input"], "output": answer.get("output")})
+            except (OSError, RuntimeError, queue.Empty) as exc:
+                with self.lock:
+                    if self.models.get(experiment) is item:
+                        self._kill(item.pop("process", None))
+                        item.update(state="failed", error=str(exc) or "The loaded model did not answer in time")
+                raise RequestError(504, "The loaded model did not answer") from None
+        return results
+
+    def close(self):
+        with self.lock:
+            for item in self.models.values():
+                self._kill(item.get("process"))
+            self.models.clear()
+
+
+def check_cold_room(reader, experiments):
+    """A model loaded for one run still has to fit beside the resident ones."""
+    pool = reader.models
+    for ident in experiments:
+        try:
+            need = pool.entry(ident, verify=False)["memory_gb"]
+        except RequestError:
+            continue
+        with pool.lock:
+            pool.check_room(need, ident)
+
+
+def model_load(reader, body):
+    if not isinstance(body, dict) or set(body) != {"experiment"}:
+        raise RequestError(400, "Name one experiment")
+    return reader.models.load(body["experiment"])
+
+
+def model_unload(reader, body):
+    if not isinstance(body, dict) or set(body) != {"experiment"} or not isinstance(body["experiment"], str):
+        raise RequestError(400, "Name one experiment")
+    return reader.models.unload(body["experiment"])
+
+
 def start_acceptance(reader, body):
-    """Run verified local models on the acceptance inputs; the runner merges their outputs."""
+    """Run verified local models on the acceptance inputs; the runner merges their outputs.
+
+    Loaded models answer through their resident process; the others load for this run only.
+    """
     if reader.helpers is None:
         raise RequestError(503, "Research tools are not installed in this project")
     if not isinstance(body, dict) or set(body) != {"experiments"} or not isinstance(body["experiments"], list) \
@@ -255,12 +472,31 @@ def start_acceptance(reader, body):
         raise RequestError(400, "Name one to eight distinct experiments")
     if not reader.running.acquire(blocking=False):
         raise RequestError(409, "Another model run is in progress")
+    try:
+        check_cold_room(reader, [e for e in body["experiments"] if not reader.models.is_loaded(e)])
+    except RequestError:
+        reader.running.release()
+        raise
     job = {"id": uuid.uuid4().hex[:8], "state": "running", "experiments": body["experiments"], "started_at": now()}
     reader.job = job
 
     def work():
+        served = []
         try:
-            result = subprocess.run(helper_command(reader, "--compare", *body["experiments"], "--timeout", "900", "--local-only"),
+            arguments = []
+            loaded = [e for e in body["experiments"] if reader.models.is_loaded(e)]
+            if loaded:
+                rows = [strict_json(line) for line in reader.tree.read("comparison/inputs.jsonl").decode("utf-8").splitlines() if line.strip()]
+                for ident in loaded:
+                    try:
+                        answers = reader.models.ask(ident, rows)
+                    except RequestError:
+                        continue
+                    name = f"served-{job['id']}-{ident}.jsonl"
+                    write_runtime(reader.tree, name, "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in answers).encode())
+                    served.append(name)
+                    arguments += ["--served", f"{ident}=.workspace/runtime/{name}"]
+            result = subprocess.run(helper_command(reader, "--compare", *body["experiments"], "--timeout", "900", "--local-only", *arguments),
                                     capture_output=True, text=True, timeout=900 * len(body["experiments"]) + 60)
             report = {}
             try:
@@ -270,9 +506,11 @@ def start_acceptance(reader, body):
             failed = [k for k, v in report.items() if v.get("returncode") != 0]
             job.update(state="succeeded" if result.returncode == 0 else "failed", finished_at=now(),
                        failed=failed, message=(result.stderr or "")[-1500:])
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
             job.update(state="failed", finished_at=now(), message=str(exc)[-1500:])
         finally:
+            for name in served:
+                remove_runtime(reader.tree, name)
             reader.running.release()
     threading.Thread(target=work, daemon=True).start()
     return job
@@ -284,9 +522,16 @@ def try_model(reader, body):
     if not isinstance(body, dict) or set(body) != {"experiment", "input"} or not isinstance(body["experiment"], str) \
             or not ID.fullmatch(body["experiment"]):
         raise RequestError(400, "Name one experiment and an input")
+    if reader.models.is_loaded(body["experiment"]):
+        if len(json.dumps(body["input"], ensure_ascii=False).encode()) > 256 * 1024:
+            raise RequestError(400, "Input is too large")
+        started = time.monotonic()
+        answer = reader.models.ask(body["experiment"], [{"sample_id": "try", "input": body["input"]}])[0]
+        return {"experiment": body["experiment"], "output": answer["output"], "served": True, "elapsed_seconds": time.monotonic() - started}
     if not reader.running.acquire(blocking=False):
         raise RequestError(409, "Another model run is in progress")
     try:
+        check_cold_room(reader, [body["experiment"]])
         result = subprocess.run(helper_command(reader, "--try", body["experiment"], "--timeout", "180"),
                                 input=json.dumps(body["input"], ensure_ascii=False), capture_output=True, text=True, timeout=240)
     except subprocess.TimeoutExpired:
@@ -336,6 +581,7 @@ class Reader:
         self.helpers = find_helpers(root)
         self.records = load_records(self.helpers)
         self.running = threading.Lock()
+        self.models = ModelPool(self)
 
     def _paths(self):
         trie = {}
@@ -444,7 +690,7 @@ class Reader:
             observations = self.monitor.snapshot(inventory) if not error else copy.deepcopy(self.monitor.report)
             return {"files": copy.deepcopy(self._files), "revision": self._revision,
                     "synced_at": self._synced_at or now(), "error": error, "observations": observations,
-                    "view": self.view(), "acceptance": copy.deepcopy(self.job)}
+                    "view": self.view(), "acceptance": copy.deepcopy(self.job), "models": self.models.status()}
 
     def view(self):
         """Display focus published by the Agent; invalid or missing state is simply ignored."""
@@ -471,8 +717,9 @@ class Reader:
 
 
 class RequestError(Exception):
-    def __init__(self, status, message):
+    def __init__(self, status, message, notice=None):
         self.status = status
+        self.notice = notice  # Shown to the person as is.
         super().__init__(message)
 
 
@@ -618,7 +865,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get_all("Origin", []) != ["http://" + self.headers["Host"]]:
                 raise RequestError(403, "Same Origin required")
             routes = {"/api/project/name": save_project_name, "/api/responses": submit_response,
-                      "/api/acceptance/run": start_acceptance, "/api/try": try_model}
+                      "/api/acceptance/run": start_acceptance, "/api/try": try_model,
+                      "/api/models/load": model_load, "/api/models/unload": model_unload}
             if self.path not in routes:
                 raise RequestError(404, "Not found")
             if self.headers.get_all("Transfer-Encoding"):
@@ -638,7 +886,7 @@ class Handler(BaseHTTPRequestHandler):
             body = strict_json(raw.decode("utf-8"))
             self.reply(200, routes[self.path](self.server.reader, body))
         except RequestError as exc:
-            self.reply(exc.status, {"error": str(exc)})
+            self.reply(exc.status, {"error": str(exc), **({"notice": exc.notice} if exc.notice else {})})
         except (ValueError, RecursionError):
             self.reply(400, {"error": "Invalid JSON body"})
         except (OSError, TimeoutError):
@@ -685,12 +933,15 @@ def main(argv=None):
         tree.publish(runtime, {"project": str(args.project), "pid": os.getpid(), "url": url}, internal=True)
         published = True
         print(url, flush=True)
+        # Resident models run in their own sessions, so end them on termination as well as Ctrl-C.
+        signal.signal(signal.SIGTERM, lambda signum, frame: (_ for _ in ()).throw(KeyboardInterrupt()))
         if args.open:
             threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        server.reader.models.close()
         server.server_close()
         if published:
             try:

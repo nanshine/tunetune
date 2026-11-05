@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -37,6 +38,8 @@ class WorkspaceTests(unittest.TestCase):
 
     def start(self, root):
         server = wb.make_server(root, self.assets)
+        self.servers = getattr(self, "servers", []) + [server]
+        self.addCleanup(server.reader.models.close)
         thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         thread.start()
         def stop():
@@ -70,7 +73,7 @@ class WorkspaceTests(unittest.TestCase):
     def state(self):
         status, value, _ = self.request()
         self.assertEqual(status, 200)
-        self.assertEqual(set(value), {"files", "revision", "synced_at", "error", "observations", "view", "acceptance"})
+        self.assertEqual(set(value), {"files", "revision", "synced_at", "error", "observations", "view", "acceptance", "models"})
         return value
 
 
@@ -123,6 +126,76 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("error", value)
         self.assertEqual(self.request("POST", "/api/acceptance/run", {"experiments": ["../x"]}, origin, port)[0], 400)
+
+    def served_model(self, ident, serve_code, memory_gb=1):
+        model = self.root / f"experiments/{ident}/model"
+        model.mkdir(parents=True)
+        (model / "serve.py").write_text(serve_code)
+        (model / "cold.py").write_text("import json,sys\nrows=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]\n"
+                                       "with open(sys.argv[2],'w') as f:\n    [f.write(json.dumps({'sample_id':r['sample_id'],'output':'cold:'+str(r['input'])})+chr(10)) for r in rows]\n")
+        (model / "invoke.json").write_text(json.dumps({"argv": [sys.executable, "-B", f"experiments/{ident}/model/cold.py"],
+                                                       "serve": {"argv": [sys.executable, "-B", f"experiments/{ident}/model/serve.py"], "memory_gb": memory_gb}}))
+        records = self.server_under_test.reader.records
+        tree = records.Tree(self.root)
+        try:
+            sha = records.manifest(tree, f"experiments/{ident}/model")["manifest_sha256"]
+        finally:
+            tree.close()
+        self.write(f"experiments/{ident}/config.json", {"id": ident, "title": ident, "parent_experiment_id": None, "hypothesis": "h", "parameters": {},
+                   "inputs": [], "snapshot_sha256": "0" * 64, "execution": {"argv": ["true"], "cwd": ".", "environment": {}, "timeout_seconds": 5}})
+        self.write(f"experiments/{ident}/status.json", {"state": "succeeded", "updated_at": "2026-11-05T00:00:00Z",
+                   "target": {"kind": "local", "path": f"experiments/{ident}/model", "sha256": sha}})
+
+    def wait_for(self, port, check, seconds=20):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            state = self.request(port=port)[1]
+            if check(state):
+                return state
+            time.sleep(0.05)
+        self.fail("Timed out waiting for panel state")
+
+    def test_loaded_models_answer_within_a_memory_budget_and_end_with_the_panel(self):
+        port = self.install_helpers()
+        self.server_under_test = self.servers[-1]
+        origin = {"Origin": f"http://127.0.0.1:{port}"}
+        self.write("project.json", {"schema_version": 4, "name": "First", "language": "en", "current_evaluation": None, "deliveries": []})
+        self.write("proposal.json", {"summary": "Tags", "examples": []})
+        self.write("resources.json", {"items": []})
+        echo = ("import json,sys\nprint(json.dumps({'ready':True}),flush=True)\nfor line in sys.stdin:\n"
+                "    r=json.loads(line); print(json.dumps({'sample_id':r['sample_id'],'output':'served:'+str(r['input'])}),flush=True)\n")
+        self.served_model("e1", echo)
+        self.served_model("e2", echo)
+        self.served_model("e3", "import sys\nsys.exit(2)\n", memory_gb=0.1)
+        pool = self.server_under_test.reader.models
+        pool.budget_gb = 1.5
+        self.assertEqual(self.request("POST", "/api/models/load", {"experiment": "e1"}, origin, port)[1]["state"], "loading")
+        self.wait_for(port, lambda s: s["models"]["items"]["e1"]["state"] == "loaded")
+        status, value, _ = self.request("POST", "/api/try", {"experiment": "e1", "input": "post"}, origin, port)
+        self.assertEqual((status, value["output"], value["served"]), (200, "served:post", True))
+        status, value, _ = self.request("POST", "/api/models/load", {"experiment": "e2"}, origin, port)
+        self.assertEqual(status, 409)
+        self.assertIn("先卸载", value["notice"])
+        self.assertEqual(self.request("POST", "/api/try", {"experiment": "e2", "input": "x"}, origin, port)[0], 409)
+        self.request("POST", "/api/models/load", {"experiment": "e3"}, origin, port)
+        failed = self.wait_for(port, lambda s: s["models"]["items"].get("e3", {}).get("state") == "failed")
+        self.assertIn("ready", failed["models"]["items"]["e3"]["error"])
+        self.write("comparison/inputs.jsonl", '{"sample_id":"a","input":"hi"}\n')
+        self.assertEqual(self.request("POST", "/api/acceptance/run", {"experiments": ["e1"]}, origin, port)[0], 200)
+        done = self.wait_for(port, lambda s: (s["acceptance"] or {}).get("state") in ("succeeded", "failed"))
+        self.assertEqual(done["acceptance"]["state"], "succeeded", done["acceptance"])
+        self.assertEqual(done["files"]["comparison/outputs.jsonl"]["content"][0]["outputs"], {"e1": "served:hi"})
+        self.assertFalse([p for p in (self.root / ".workspace/runtime").iterdir() if p.name.startswith("served-")])
+        process = pool.models["e1"]["process"]
+        self.assertEqual(self.request("POST", "/api/models/unload", {"experiment": "e1"}, origin, port)[1]["items"], {"e3": failed["models"]["items"]["e3"]})
+        self.assertIsNotNone(process.poll())
+        self.assertEqual(self.request("POST", "/api/try", {"experiment": "e1", "input": "post"}, origin, port)[1]["output"], "cold:post")
+        self.request("POST", "/api/models/load", {"experiment": "e2"}, origin, port)
+        self.wait_for(port, lambda s: s["models"]["items"]["e2"]["state"] == "loaded")
+        process = pool.models["e2"]["process"]
+        pool.close()
+        self.assertIsNotNone(process.poll())
+        self.assertEqual(self.request("POST", "/api/models/load", {"experiment": "../x"}, origin, port)[0], 400)
 
     def test_live_refresh_deletion_and_independent_return_values(self):
         initial = self.state()

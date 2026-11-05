@@ -15,7 +15,7 @@ import tempfile
 import time
 
 from records import (ATTEMPT, ID, PROCESS, Tree, check_invoke, check_record, digest, encoded, parts, read_record, require,
-                     shape, strict, verify_inputs, verify_model, verify_path_hash)
+                     shape, strict, verify_inputs, verify_model, verify_path_hash, verify_requires)
 
 
 # Use fchdir in a fresh interpreter, not preexec_fn or a path that can be
@@ -225,6 +225,7 @@ def try_model(tree, experiment, value, timeout):
             stream.write(data + b"\n")
         returncode, timed_out, elapsed = run_entry(tree, argv, source, output, log_path, timeout)
         verify_path_hash(tree, target["path"], target["sha256"])
+        verify_requires(tree, target["path"])
         result = {"experiment": experiment, "returncode": returncode, "timed_out": timed_out, "elapsed_seconds": elapsed}
         if returncode == 0 and os.path.exists(output):
             with open(output, "rb") as stream:
@@ -240,12 +241,17 @@ def try_model(tree, experiment, value, timeout):
         shutil.rmtree(scratch, ignore_errors=True)
 
 
-def compare(tree, experiments, timeout, local_only=False):
+def compare(tree, experiments, timeout, local_only=False, served=None):
     """Run verified models' invoke.json entries on comparison/inputs.jsonl and merge comparison/outputs.jsonl.
 
     This is a same-input acceptance view, not a measurement: nothing is scored and
     failed or missing outputs stay missing. Models run without the writer lock.
+    `served` maps an experiment to rows {sample_id,input,output} its resident process
+    already answered under .workspace/runtime/; rows whose input has since changed are dropped.
     """
+    served = served or {}
+    require(set(served) <= set(experiments) and all(re.fullmatch(r"\.workspace/runtime/[A-Za-z0-9_.-]+\.jsonl", p) for p in served.values()),
+            "Served outputs must name compared experiments and runtime files")
     require(experiments and len(set(experiments)) == len(experiments)
             and all(isinstance(e, str) and re.fullmatch(ID, e) for e in experiments), "Name distinct experiment IDs")
     require(isinstance(timeout, (int, float)) and 0 < timeout < float("inf"), "Invalid timeout")
@@ -269,13 +275,23 @@ def compare(tree, experiments, timeout, local_only=False):
         source = os.path.join(scratch, "inputs.jsonl")
         with open(source, "wb") as stream:
             stream.write(raw_inputs)
-        known = {row["sample_id"] for row in inputs}
+        known = {row["sample_id"]: row["input"] for row in inputs}
         for ident, (target, argv) in entries.items():
             output, log_path = os.path.join(scratch, ident + ".jsonl"), os.path.join(scratch, ident + ".log")
-            returncode, timed_out, elapsed = run_entry(tree, argv, source, output, log_path, timeout)
+            if ident in served:
+                answered = [strict(line) for line in tree.read(served[ident]).decode("utf-8").splitlines() if line.strip()]
+                with open(output, "wb") as stream:
+                    stream.write(b"".join((json.dumps({"sample_id": row["sample_id"], "output": row.get("output")}, ensure_ascii=False) + "\n").encode() for row in answered
+                                          if isinstance(row, dict) and row.get("sample_id") in known and row.get("input") == known[row["sample_id"]]))
+                with open(log_path, "wb") as stream:
+                    stream.write(b"Answered by the panel's loaded process.\n")
+                returncode, timed_out, elapsed = 0, False, 0.0
+            else:
+                returncode, timed_out, elapsed = run_entry(tree, argv, source, output, log_path, timeout)
             with open(log_path, "rb") as stream:
                 tree.publish(f"comparison/logs/{ident}.log", stream.read(), replace=tree.exists(f"comparison/logs/{ident}.log"))
             verify_path_hash(tree, target["path"], target["sha256"])
+            verify_requires(tree, target["path"])
             rows = {}
             if returncode == 0 and os.path.exists(output):
                 with open(output, "rb") as stream:
@@ -319,6 +335,8 @@ def main():
     target.add_argument("--try", dest="try_experiment", metavar="EXPERIMENT", help="run one local model on one JSON input read from stdin")
     parser.add_argument("--timeout", type=float, default=600, help="per-model timeout for --compare and --try")
     parser.add_argument("--local-only", action="store_true", help="refuse API models in --compare")
+    parser.add_argument("--served", action="append", default=[], metavar="EXPERIMENT=PATH",
+                        help="use outputs a loaded model already produced for --compare")
     args = parser.parse_args()
     tree = None
     previous = {}
@@ -338,7 +356,9 @@ def main():
             print(json.dumps(result, ensure_ascii=False))
             return 0 if "output" in result else 1
         if args.compare:
-            result = compare(tree, args.compare, args.timeout, args.local_only)
+            served = dict(item.split("=", 1) for item in args.served if "=" in item)
+            require(len(served) == len(args.served), "Use --served EXPERIMENT=PATH")
+            result = compare(tree, args.compare, args.timeout, args.local_only, served)
             print(json.dumps(result, ensure_ascii=False))
             return 0 if all(item["returncode"] == 0 for item in result["experiments"].values()) else 1
         status = execute(tree, args.path)

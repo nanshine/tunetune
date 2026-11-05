@@ -297,6 +297,15 @@ select { height: 28px; }
 .model-picks button { color: var(--ink-2); }
 .model-picks button.active { border-color: var(--cobalt); background: var(--cobalt-soft); color: var(--ink); }
 .model-picks svg { color: var(--apricot); fill: currentColor; }
+.model-picks .more-toggle { border-style: dashed; color: var(--ink-3); }
+.run-state { font-size: 12px; color: var(--ink-2); }
+.run-state.loaded { color: var(--mint); }
+.run-state.loading { color: var(--cobalt); }
+.run-state.load-failed { color: var(--red); }
+.output-card .load-toggle { margin-left: auto; padding: 2px 8px; font-size: 12px; }
+.memory-line { align-self: center; font-size: 12px; }
+.run-state.running { color: var(--cobalt); }
+.run-state.failed, .run-state.no-entry { color: var(--red); }
 .job-line { padding: 6px 10px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-2); }
 .job-line.succeeded { background: var(--mint-soft); color: var(--mint); }
 .job-line.failed { background: var(--red-soft); color: var(--red); }

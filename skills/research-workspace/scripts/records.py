@@ -515,24 +515,52 @@ def verify_path_hash(tree, path, expected):
 
 
 def check_invoke(tree, base):
-    """An optional model entry point: argv receives an input and output JSONL path."""
+    """An optional model entry point: argv receives an input and output JSONL path.
+
+    `requires` pins files or verified directories outside the model, such as shared
+    weights under resources/, so experiments that differ only in prompts or code
+    reference one copy instead of duplicating it.
+    """
     try:
         if not tree.exists(base + "/invoke.json"):
             return False
     except NotADirectoryError:
         return False
     entry = strict(tree.read(base + "/invoke.json"))
-    fields(entry, ("argv",), ("description",))
+    fields(entry, ("argv",), ("description", "requires", "serve"))
     argument_array(entry["argv"])
     require(isinstance(entry.get("description", ""), str), "Invalid invoke description")
+    if "serve" in entry:
+        # A resident process: one JSONL request per stdin line, one answer per stdout line after {"ready":true}.
+        fields(entry["serve"], ("argv",), ("memory_gb",))
+        argument_array(entry["serve"]["argv"])
+        if "memory_gb" in entry["serve"]:
+            require(finite_number(entry["serve"]["memory_gb"]) and entry["serve"]["memory_gb"] > 0, "Invalid serve memory_gb")
+    required = entry.get("requires", [])
+    require(isinstance(required, list), "invoke requires must be an array")
+    for item in required:
+        fields(item, ("path", "sha256"))
+        parts(item["path"])
+        hash_value(item["sha256"])
+        require(item["path"] != base and not item["path"].startswith(base + "/") and not base.startswith(item["path"] + "/"),
+                "invoke requires must point outside the model")
+    require(len({item["path"] for item in required}) == len(required), "Duplicate invoke requires paths")
     return True
+
+
+def verify_requires(tree, base):
+    """Verify the pinned files a model's entry point depends on."""
+    if not check_invoke(tree, base):
+        return
+    for item in strict(tree.read(base + "/invoke.json")).get("requires", []):
+        verify_path_hash(tree, item["path"], item["sha256"])
 
 
 def verify_target(tree, target):
     verify_path_hash(tree, target["path"], target["sha256"])
     with tree.directory(parts(target["path"])[:-1]) as parent:
         if stat.S_ISDIR(os.stat(parts(target["path"])[-1], dir_fd=parent, follow_symlinks=False).st_mode):
-            check_invoke(tree, target["path"])
+            verify_requires(tree, target["path"])
     if target["kind"] == "api":
         # The directory manifest fixes the adapter as well as the descriptor, not remote weights.
         verify_manifest(tree, target["path"], target["sha256"])
@@ -556,6 +584,41 @@ def verify_target(tree, target):
                 for child in value:
                     no_credentials(child)
         no_credentials(descriptor["request"])
+
+
+def byte_size(tree, path):
+    with tree.directory(parts(path)[:-1]) as parent:
+        mode = os.stat(parts(path)[-1], dir_fd=parent, follow_symlinks=False).st_mode
+    if not stat.S_ISDIR(mode):
+        with tree.directory(parts(path)[:-1]) as parent:
+            return os.stat(parts(path)[-1], dir_fd=parent, follow_symlinks=False).st_size
+    total = 0
+    for name in tree.files(path):
+        with tree.directory(parts(name)[:-1]) as parent:
+            total += os.stat(parts(name)[-1], dir_fd=parent, follow_symlinks=False).st_size
+    return total
+
+
+def model_entry(tree, experiment, verify=True):
+    """A local model's entry point, optional resident command and memory need, for running it from the panel.
+
+    Without a declared serve memory_gb, memory is estimated as 1.2 times the bytes
+    of the model and its pinned requires, which is rough and marked as an estimate.
+    """
+    require(isinstance(experiment, str) and re.fullmatch(ID, experiment), "Invalid experiment ID")
+    status = verify_model(tree, "experiments/" + experiment) if verify else read_record(tree, f"experiments/{experiment}/status.json")
+    target = status.get("target")
+    require(status["state"] == "succeeded" and target, "Experiment requires a succeeded model")
+    require(target["kind"] == "local", f"Experiment {experiment} is not a local model")
+    require(check_invoke(tree, target["path"]), f"Experiment {experiment} has no invoke.json entry point")
+    entry = strict(tree.read(target["path"] + "/invoke.json"))
+    serve = entry.get("serve")
+    declared = (serve or {}).get("memory_gb")
+    if declared is None:
+        size = byte_size(tree, target["path"]) + sum(byte_size(tree, item["path"]) for item in entry.get("requires", []))
+        declared = max(0.01, round(size * 1.2 / 1e9, 2))
+    return {"experiment": experiment, "target": target, "argv": entry["argv"], "serve": serve["argv"] if serve else None,
+            "memory_gb": declared, "estimated": not (serve and "memory_gb" in serve)}
 
 
 def verify_model(tree, experiment):
@@ -756,9 +819,10 @@ def freeze(tree, root, source, path):
 
 
 def manifest(tree, path):
-    """Generate one model directory manifest in place, without copying model data."""
+    """Generate one model or resource directory manifest in place, without copying data."""
     parts(path)
-    require(re.fullmatch(rf"experiments/{ID}/model(?:/.+)?", path), "Manifest destination must be an experiment model directory")
+    require(re.fullmatch(rf"experiments/{ID}/model(?:/.+)?|resources/.+", path),
+            "Manifest destination must be an experiment model or resource directory")
     with tree.locked():
         read_record(tree, "project.json")
         return write_manifest(tree, path)
@@ -827,6 +891,8 @@ def finalize(tree, path, kind="local", target=None):
             require(target == path + "/model" or target.startswith(path + "/model/"), "Target must be inside this experiment's model directory")
             with tree.directory(parts(target)[:-1]) as parent:
                 directory = stat.S_ISDIR(os.stat(parts(target)[-1], dir_fd=parent, follow_symlinks=False).st_mode)
+            if directory:
+                verify_requires(tree, target)
             if not directory:
                 sha = digest(tree.read(target))
             elif tree.exists(target + "/manifest.json"):
@@ -883,6 +949,8 @@ def validate(tree):
             target = read_record(tree, f"experiments/{ident}/status.json").get("target", {}).get("path")
             if not target or not check_invoke(tree, target):
                 report["warnings"].append(f"Delivery {ident} has no invoke.json entry point")
+            elif any(not tree.exists(item["path"]) for item in strict(tree.read(target + "/invoke.json")).get("requires", [])):
+                report["warnings"].append(f"Delivery {ident} requires files that are missing")
         except (OSError, ValueError, TypeError):
             pass
     for path, obj in docs.items():

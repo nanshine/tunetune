@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Boxes, ClipboardCheck, FlaskConical, ListChecks, PlayCircle, Target } from 'lucide-react';
-import { runAcceptance, submitResponse, tryModel, useWorkspace } from './useWorkspace';
+import { loadModel, runAcceptance, submitResponse, tryModel, unloadModel, useWorkspace } from './useWorkspace';
 import { deliveredModels, document, evaluationRuns, experimentNumber, experiments, plannedNodes, text } from './model';
 import type { Snapshot, ViewName } from './model';
 import { Lineage } from './Lineage';
@@ -94,7 +94,7 @@ export function App() {
     resources: <ResourcesView resources={document(files, 'resources.json')} observations={snapshot?.observations} />,
     evaluation: <EvaluationView key={evaluationTab} files={files} currentVersion={version} selection={evaluationSelection} onSelect={setEvaluationSelection} initialTab={evaluationTab}
       onReview={(reviewItems, sha) => submitResponse({ kind: 'evaluation_review', decision: 'submit', target_sha256: sha, items: reviewItems })} />,
-    acceptance: <AcceptanceView files={files} job={snapshot?.acceptance} onRun={runAcceptance} onTry={tryModel} />,
+    acceptance: <AcceptanceView files={files} job={snapshot?.acceptance} pool={snapshot?.models} onRun={runAcceptance} onTry={tryModel} onLoad={loadModel} onUnload={unloadModel} />,
   };
   const empty = !items.length && !planned.length;
 

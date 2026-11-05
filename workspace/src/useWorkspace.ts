@@ -53,7 +53,8 @@ const failures: Record<number, string> = { 400: '内容不完整，请检查后�
 async function post<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const value = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(failures[response.status] ?? `请求失败（HTTP ${response.status}）`);
+  // A notice is written for the person; other server errors are technical and get a plain explanation.
+  if (!response.ok) throw new Error(typeof value.notice === 'string' ? value.notice : failures[response.status] ?? `请求失败（HTTP ${response.status}）`);
   return value as T;
 }
 export type ReviewItem = { sample_id: string; verdict: 'confirm' | 'correct' | 'question'; reference?: unknown; note?: string };
@@ -62,6 +63,12 @@ export function submitResponse(body: { kind: 'proposal' | 'plan' | 'evaluation_r
 }
 export function runAcceptance(experimentIds: string[]) {
   return post<{ id: string; state: string }>('/api/acceptance/run', { experiments: experimentIds });
+}
+export function loadModel(experiment: string) {
+  return post<{ state: string }>('/api/models/load', { experiment });
+}
+export function unloadModel(experiment: string) {
+  return post<unknown>('/api/models/unload', { experiment });
 }
 export function tryModel(experiment: string, input: unknown) {
   return post<{ output?: unknown; error?: string; log_tail?: string; elapsed_seconds?: number }>('/api/try', { experiment, input });
