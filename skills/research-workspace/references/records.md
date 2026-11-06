@@ -1,6 +1,6 @@
 # Research files — format 4
 
-The Agent maintains research files; the panel shows them and records the person's responses. Work starts, stops and changes boundaries in conversation. Kit 0.6.0 supports format 4 only: refuse older projects and tools without migration or replacement. This is the single format guide.
+The Agent maintains research files; the panel shows them and records the person's responses. Work starts, stops and changes boundaries in conversation. Tools 0.7.0 support format 4 only: refuse older projects and tools without migration or replacement. This is the single format guide.
 
 ## Current study
 

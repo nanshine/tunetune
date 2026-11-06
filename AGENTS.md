@@ -6,11 +6,11 @@ TuneTune helps beginners build useful private models through file-driven researc
 
 Skills are concise English instructions for general research and judgment, not task-specific recipes or duplicate schemas. Give each boundary its reason so the Agent can apply it to situations the skill does not name. Repeatable mechanics belong in deterministic scripts. Continue across skills and bounded rounds within the user's exact current authorization; ask only for missing consequential decisions or changed access, privacy, scope or cost boundaries. Explain uncertainty and unmet requirements honestly.
 
-- `workspace/src/`: React/TypeScript components, model logic, CSS and colocated Vitest tests. `workspace/workspace.py` serves files; sibling `monitor.py` provides limited optional resource observations.
-- `skills/`: three research workflows plus shared `research-workspace`. Its `references/records.md` is the canonical format-4 guide; `references/tools.md` documents `scripts/records.py`, `scripts/run.py`, `scripts/resources.py` and the read-only `scripts/scout.py`.
-- `templates/workspace/`: only the installed agent guide and minimal project, proposal and resource files. Create research directories when needed; include no sample research data.
-- `scripts/`: packaging, installation and local demo tools. `tests/`: Python integration and safety tests.
-- `design/` and `reference/`: local supporting assets, excluded from distribution. `dist/`: generated kits.
+- `workspace/src/`: React/TypeScript panel source, model logic, CSS and colocated Vitest tests. Its build output goes to `skills/research-workspace/assets/panel/` and is committed.
+- `skills/`: three research workflows plus shared `research-workspace`, the unit every channel distributes. Its `references/records.md` is the canonical format-4 guide; `references/tools.md` documents `scripts/init.py`, `scripts/records.py`, `scripts/run.py`, `scripts/resources.py` and the read-only `scripts/scout.py`. `scripts/workspace.py` serves the panel; sibling `monitor.py` provides limited optional resource observations. `assets/templates/` holds only the installed agent guide and minimal project, proposal and resource files; create research directories when needed and include no sample research data. `manifest.json` pins the files `init.py` copies into a project.
+- `.claude-plugin/`, `.codex-plugin/` and `.agents/plugins/`: plugin manifests over `skills/`. `INSTALL.md`: the Agent's installation path from the README sentence.
+- `scripts/`: manifest and local demo tools. `tests/`: Python integration and safety tests.
+- `design/` and `reference/`: local supporting assets, excluded from distribution.
 
 ## Build, Test and Development
 
@@ -21,10 +21,10 @@ npm --prefix workspace ci
 npm --prefix workspace run build
 npm --prefix workspace test
 python3 -B -m unittest discover -s tests -v
-python3 scripts/build-kit.py
+python3 scripts/build-skills.py
 ```
 
-Packaging refuses existing versioned outputs; use `--output /absolute/fresh-output` for another build. For development, run `python3 workspace/workspace.py --project /absolute/my-research --assets workspace/dist --port 8765` against an installed project, then `npm --prefix workspace run dev -- --port 5173`; Vite proxies `/api` to port 8765.
+Rebuild the panel and rerun `build-skills.py` whenever a distributed script, template or the panel changes; tests fail on a stale manifest. For development, run `python3 skills/research-workspace/scripts/workspace.py --project /absolute/my-research --assets skills/research-workspace/assets/panel --port 8765` against an initialized project, then `npm --prefix workspace run dev -- --port 5173`; Vite proxies `/api` to port 8765.
 
 ## Conventions and Validation
 
@@ -36,4 +36,4 @@ Name frontend tests `*.test.ts` and Python tests `test_*.py`. Add regression cov
 
 Preserve conflict detection, immutable configurations and terminal measurements, verified inputs, path and symlink protections, and project isolation. Update the current proposal and experiment analyses in place through conditional writes. Keep evidence exploration inside run-experiments rounds; the experiment plan is the only round record. Selected models remain experiment-local; comparison contains outputs, and selection implies neither deployment nor user satisfaction.
 
-Keep file mechanics in the canonical shared guide, with no project-root copy. Kit 0.6.0 supports schema 4 only: explicitly refuse incompatible projects and tool versions, without automatic migration or overwriting research. Distribute the four sibling skills, required record and run helpers, service and monitor helper, minimal templates and built assets; exclude secrets, research outputs, frontend source and dependencies.
+Keep file mechanics in the canonical shared guide, with no project-root copy. Tools 0.7.0 support schema 4 only: explicitly refuse incompatible projects and projects pinned to other tool versions, without automatic migration or overwriting research. Distribute only the four sibling skill folders, with the required record and run helpers, service and monitor helper, minimal templates and built panel inside the shared skill; exclude secrets, research outputs, frontend source and dependencies.

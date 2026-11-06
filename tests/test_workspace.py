@@ -15,7 +15,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-SOURCE = Path(__file__).resolve().parents[1] / "workspace" / "workspace.py"
+SOURCE = Path(__file__).resolve().parents[1] / "skills" / "research-workspace" / "scripts" / "workspace.py"
 SPEC = importlib.util.spec_from_file_location("workspace_server", SOURCE)
 wb = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(wb)
@@ -94,8 +94,8 @@ class WorkspaceTests(unittest.TestCase):
         return int(data.split(b" ", 2)[1])
 
     def install_helpers(self):
-        scripts = Path(__file__).resolve().parents[1] / "skills/research-workspace/scripts"
-        target = self.root / ".agents/skills/research-workspace/scripts"
+        scripts = SOURCE.parent
+        target = self.root / ".workspace/app"
         target.mkdir(parents=True)
         for name in ("records.py", "run.py"):
             (target / name).write_bytes((scripts / name).read_bytes())
@@ -291,7 +291,7 @@ class WorkspaceTests(unittest.TestCase):
 
 
     def test_project_name_cooperates_with_canonical_records_lock(self):
-        source = SOURCE.parents[1] / "skills" / "research-workspace" / "scripts" / "records.py"
+        source = SOURCE.with_name("records.py")
         spec = importlib.util.spec_from_file_location("canonical_records", source)
         records = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(records)

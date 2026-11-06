@@ -5,7 +5,7 @@ description: Investigate a new or changed TuneTune goal and recommend a practica
 
 # Turn a need into a research direction
 
-Load [research-workspace](../research-workspace/SKILL.md). For installation follow the repository bootstrap guide and preserve the original request. Read relevant materials and existing work before asking what they already answer.
+Load [research-workspace](../research-workspace/SKILL.md). Initialize the directory as that skill describes if needed, and preserve the original request. Read relevant materials and existing work before asking what they already answer.
 
 ## Understand the need first
 

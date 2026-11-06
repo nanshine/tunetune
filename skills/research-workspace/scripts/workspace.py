@@ -202,18 +202,17 @@ class SafeTree:
 
 
 def find_helpers(root):
-    """Installed research tools, found only at the documented skill locations inside the project."""
-    for host in (".agents", ".claude"):
-        current = Path(root)
-        try:
-            for segment in (host, "skills", "research-workspace", "scripts"):
-                current = current / segment
-                if not stat.S_ISDIR(os.lstat(current).st_mode):
-                    raise OSError("Not a real directory")
-            if all(stat.S_ISREG(os.lstat(current / name).st_mode) for name in ("records.py", "run.py")):
-                return current
-        except OSError:
-            continue
+    """Research tools pinned in the project by initialization, never a newer skill elsewhere."""
+    current = Path(root)
+    try:
+        for segment in (".workspace", "app"):
+            current = current / segment
+            if not stat.S_ISDIR(os.lstat(current).st_mode):
+                raise OSError("Not a real directory")
+        if all(stat.S_ISREG(os.lstat(current / name).st_mode) for name in ("records.py", "run.py")):
+            return current
+    except OSError:
+        pass
     return None
 
 

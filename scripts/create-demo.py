@@ -20,7 +20,7 @@ NOTICE = "合成数据原型 / 微型经典分类器；不是 LLM 微调质量�
 SOURCE = "本地编写的合成英文消息"
 LABELS = ("todo", "expense", "appointment", "other")
 DELIVERIES = ["exp-001", "exp-002", "exp-008"]
-HELPERS = ".agents/skills/research-workspace/scripts"
+HELPERS = ".workspace/app"
 RUBRIC = (
     "按消息的主要意图单标签分类：todo=需要执行的任务（含待支付账单）；"
     "expense=已发生消费、收据或费用通知；appointment=已约定的会面或改期/取消通知；"
@@ -385,7 +385,7 @@ def load_records(project):
         if path.is_symlink():
             raise ValueError(f"Symlinks are not supported: {path}")
     if not helper.is_file():
-        raise ValueError("Install the core kit with the agents host before generating a demo")
+        raise ValueError("Initialize the project with the research-workspace skill before generating a demo")
     spec = importlib.util.spec_from_file_location("tunetune_demo_records", helper)
     module = importlib.util.module_from_spec(spec)
     previous = sys.dont_write_bytecode
@@ -736,7 +736,7 @@ def generate(project):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project", required=True, type=Path, help="Fresh already-installed format-3 project (agents host)")
+    parser.add_argument("--project", required=True, type=Path, help="Fresh project already initialized by the research-workspace skill")
     args = parser.parse_args(argv)
     try:
         result = generate(args.project)

@@ -1,0 +1,26 @@
+{
+  "name": "tunetune",
+  "version": "0.7.0",
+  "description": "Research and build a useful private model on your own computer, with the Agent as researcher and you as reviewer.",
+  "author": {
+    "name": "nanshine",
+    "url": "https://github.com/nanshine"
+  },
+  "homepage": "https://github.com/nanshine/tunetune",
+  "repository": "https://github.com/nanshine/tunetune",
+  "keywords": ["models", "research", "fine-tuning", "evaluation", "local"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "TuneTune",
+    "shortDescription": "Turn an everyday need into a private model you can use",
+    "longDescription": "TuneTune researches methods and models for your need, calibrates an evaluation, measures a baseline, runs bounded experiments on your computer and shows the results in a local panel where you review and try them.",
+    "developerName": "nanshine",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "Help me build a model that sorts my customer messages, starting in this folder.",
+      "Use TuneTune to turn my notes into a private tagging model."
+    ],
+    "websiteURL": "https://github.com/nanshine/tunetune"
+  }
+}

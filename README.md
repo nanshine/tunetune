@@ -6,26 +6,48 @@ Agent 会调查有竞争力的方法，而不止寻找最容易运行的基线�
 
 ## 开始
 
-把下面这句话交给能读取仓库、操作本地文件和运行命令的 Agent，换成自己的需求：
+把下面这句话交给能读取仓库、操作本地文件和运行命令的 Agent（Codex、Claude Code 等），换成自己的需求：
 
 > 用 TuneTune（https://github.com/nanshine/tunetune）帮我做一个能整理客户留言的模型，就在当前文件夹开始。
 
-**Agent：先读 [bootstrap.md](bootstrap.md)，获取兼容的正式发布包，在当前目录安装五个 skills 并直接读取继续，启动研究空间，再使用 `tunetune-init` 延续原始需求。不要自行创建独立子研究目录。**
+**Agent：按 [INSTALL.md](INSTALL.md) 安装四个 skills，初始化当前目录，启动研究空间，再用 `tunetune-init` 延续原始需求。不要自行创建独立子研究目录。**
 
-运行需要 macOS / Linux 和 Python 3.10+。正式发布包包含构建好的面板，普通安装不要求用户克隆源码或准备 Node.js。没有兼容发布包时应说明情况；源码构建仅作为用户明确选择的开发路径，不冒充一句话安装已完成。
+运行需要 macOS / Linux 和 Python 3.10+。skills 自带构建好的面板，不需要克隆源码或准备 Node.js；只有用 `npx` 安装时才需要 Node.js。
 
-Codex 使用当前目录的 `.agents/skills/`，Claude Code 使用 `.claude/skills/`。安装到应用会自动发现的目录后，Agent 直接读取已安装的 skills 继续研究，不需要先让你检查技能列表；只有应用明确需要刷新或你发现 skills 未出现时，Agent 才给出具体操作和续接文字，不让你重新解释需求。其他应用只有经过实际验证后才承诺支持。
+<details>
+<summary>也可以自己先装好 skills</summary>
 
-已有正式解包目录时，由 Agent 执行：
+任意支持 Agent Skills 的应用（一次安装，所有目录可用）：
 
 ```sh
-python3 /absolute/workspace-kit-0.6.0/install-workspace.py --kit /absolute/workspace-kit-0.6.0 --project /absolute/current-directory --host agents
+npx skills add nanshine/tunetune --global --agent codex
+npx skills add nanshine/tunetune --global --agent claude-code
+```
+
+Claude Code 插件：
+
+```text
+/plugin marketplace add nanshine/tunetune
+/plugin install tunetune@tunetune
+```
+
+Codex 插件：
+
+```sh
+codex plugin marketplace add nanshine/tunetune
+codex plugin add tunetune@tunetune
+```
+
+装好后在想做研究的目录里说出需求即可，Agent 会用 skill 自带的初始化工具准备这个目录：
+
+```sh
+python3 <research-workspace skill>/scripts/init.py --project /absolute/current-directory
 python3 /absolute/current-directory/.workspace/app/workspace.py --project /absolute/current-directory --port 0 --open
 ```
 
-Claude Code 使用 `--host claude`。独立研究目录仅在明确选择并处理技能发现范围后使用，不是默认入口。初始研究文件只有 `AGENTS.md`、`project.json`、`proposal.json` 和 `resources.json`，其余目录按需创建。
+</details>
 
-**0.6.0 仅支持研究格式 4，明确拒绝旧格式和不兼容工具，不自动迁移或覆盖已有研究。** 同版重复安装只补齐缺失文件，保留兼容研究和项目指引。
+初始化只补齐缺失文件：研究指引 `AGENTS.md`、`project.json`、`proposal.json`、`resources.json`，以及固定在 `.workspace/app/` 的研究工具和面板。之后更新 skills 不会改动已有研究所用的工具。**0.7.0 仅支持研究格式 4，明确拒绝旧格式和使用其他版本工具的研究，不自动迁移或覆盖已有研究。**
 
 ## 怎样开展研究
 
@@ -46,20 +68,21 @@ npm --prefix workspace ci
 npm --prefix workspace run build
 npm --prefix workspace test
 python3 -B -m unittest discover -s tests -v
-python3 scripts/build-kit.py
+python3 scripts/build-skills.py
 ```
 
-生成 `dist/workspace-kit-0.6.0/` 和同名压缩包。已有版本输出不会覆盖，另一次构建使用 `--output /absolute/fresh-output`。分发包含四个同版 skills、共享指南与必要工具、服务和监测工具、最小模板及构建好的面板，不包含开发测试、研究数据、密钥、前端源码和依赖。发布包须另行附在正式 GitHub Release；构建不等于发布。
+面板构建输出到 `skills/research-workspace/assets/panel/`，与研究工具、模板一起随 skill 分发；`build-skills.py` 把这些文件的哈希写入 `skills/research-workspace/manifest.json`，`--check` 检查它是否最新。构建结果需要提交，因为 `npx skills`、插件和克隆都直接取仓库里的 skills。分发内容是四个 skills 目录，不包含开发测试、研究数据、密钥、前端源码和依赖。
 
-主要目录：`skills/` 为研究工作流及按需技术参考，`workspace/` 为研究空间，`templates/workspace/` 为最小安装模板，`scripts/` 和 `tests/` 为开发工具及测试。稳定原则见 [docs/principles.md](docs/principles.md)。
+主要目录：`skills/` 为研究工作流、按需技术参考、工具、模板和构建好的面板，`workspace/` 为面板源码，`.claude-plugin/`、`.codex-plugin/` 和 `.agents/plugins/` 为插件清单，`scripts/` 和 `tests/` 为开发工具及测试。稳定原则见 [docs/principles.md](docs/principles.md)。
 
 ## 本地演示
 
-在全新、已安装的项目中运行：
+在全新、已初始化的项目中运行：
 
 ```sh
+python3 skills/research-workspace/scripts/init.py --project /absolute/my-research
 python3 scripts/create-demo.py --project /absolute/my-research
 python3 /absolute/my-research/.workspace/app/workspace.py --project /absolute/my-research --port 0 --open
 ```
 
-演示使用合成数据验证真实轻量实验的执行和展示，拒绝覆盖已有研究；它证明流程能够运行，不证明真实业务质量，演示生成器与数据不进入发布包。
+演示使用合成数据验证真实轻量实验的执行和展示，拒绝覆盖已有研究；它证明流程能够运行，不证明真实业务质量，演示生成器与数据不进入分发内容。

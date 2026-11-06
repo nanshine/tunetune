@@ -1,0 +1,20 @@
+{
+  "name": "tunetune",
+  "interface": {
+    "displayName": "TuneTune"
+  },
+  "plugins": [
+    {
+      "name": "tunetune",
+      "source": {
+        "source": "url",
+        "url": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -8,7 +8,7 @@ import threading
 import unittest
 from urllib.parse import quote
 
-SOURCE = Path(__file__).resolve().parents[1] / 'workspace' / 'workspace.py'
+SOURCE = Path(__file__).resolve().parents[1] / "skills" / "research-workspace" / "scripts" / "workspace.py"
 SPEC = importlib.util.spec_from_file_location('media_workspace', SOURCE)
 wb = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(wb)

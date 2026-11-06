@@ -1,6 +1,6 @@
 # Deterministic research tools
 
-Use Python 3.10+ on POSIX macOS/Linux; no additional packages. Resolve the installed shared skill's absolute path. Write your own helper scripts and temporary inputs under `$PROJECT/.workspace/tmp/`, never the system temporary directory, so the study stays removable. `$RECORDS` below is its `scripts/records.py`, `$RUN` is the sibling `scripts/run.py`, `$HELPERS` is their absolute scripts directory, and `$PROJECT` is the absolute research-project directory. Read [records.md](records.md) for format 4. Incompatible project schemas are rejected, not migrated.
+Use Python 3.10+ on POSIX macOS/Linux; no additional packages. Initialize a project once with the installed shared skill's `scripts/init.py --project "$PROJECT"`; it verifies the skill's manifest, adds only missing files, pins these tools under `$PROJECT/.workspace/app/` and refuses a project pinned to other tools. Write your own helper scripts and temporary inputs under `$PROJECT/.workspace/tmp/`, never the system temporary directory, so the study stays removable. `$RECORDS` below is the pinned `$PROJECT/.workspace/app/records.py`, `$RUN` is the sibling `run.py`, `$HELPERS` is that absolute directory, and `$PROJECT` is the absolute research-project directory. Read [records.md](records.md) for format 4. Incompatible project schemas are rejected, not migrated.
 
 ## Inspect and validate
 

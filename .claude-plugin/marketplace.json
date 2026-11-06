@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "tunetune",
+  "owner": {
+    "name": "nanshine",
+    "url": "https://github.com/nanshine"
+  },
+  "description": "Install TuneTune as a Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "tunetune",
+      "source": "./",
+      "description": "Research and build a useful private model on your own computer, with the Agent as researcher and you as reviewer.",
+      "keywords": ["models", "research", "fine-tuning", "evaluation", "local"]
+    }
+  ]
+}

@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Install a verified local workspace kit without replacing existing research."""
+"""Initialize a research project from this installed skill without replacing existing research."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import sys
 import tempfile
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
+APP_SCRIPTS = ("workspace.py", "monitor.py", "records.py", "run.py", "resources.py", "scout.py")
+# Skill installers may reach the skill through a link; payload checks start at its real directory.
+SKILL = Path(os.path.realpath(__file__)).parents[1]
 
 
 def digest(data):
@@ -41,27 +46,21 @@ def safe_path(value):
     return path
 
 
-def no_symlinks(path):
+def no_symlinks(path, root=None):
     for item in (path, *path.parents):
+        if root is not None and item == root:
+            return
         if item.is_symlink():
             raise ValueError(f"Symlinks are not supported: {item}")
 
 
-def record_id(value):
-    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]+", value) is not None
-
-
 def validate_business(name, data):
-    # One canonical schema serves both installation and research writes.
-    import importlib.util
-    roots = (Path(__file__).resolve().parent, Path(__file__).resolve().parents[1])
-    source = next((root / "skills/research-workspace/scripts/records.py" for root in roots
-                   if (root / "skills/research-workspace/scripts/records.py").is_file()), None)
-    if source is None:
+    # One canonical schema serves both initialization and research writes.
+    source = Path(os.path.realpath(__file__)).with_name("records.py")
+    if not source.is_file():
         raise ValueError("Missing canonical record validator")
-    spec = importlib.util.spec_from_file_location("kit_records", source)
+    spec = importlib.util.spec_from_file_location("init_records", source)
     records = importlib.util.module_from_spec(spec)
-    import sys
     previous = sys.dont_write_bytecode
     try:
         sys.dont_write_bytecode = True
@@ -76,20 +75,30 @@ def validate_business(name, data):
     return obj
 
 
-def verify_kit(kit):
-    no_symlinks(kit)
-    if not kit.is_dir():
-        raise ValueError("--kit must be an extracted local kit directory")
-    manifest_path = kit / "manifest.json"
-    no_symlinks(manifest_path)
+def project_path(relative):
+    """Map a skill payload path to its pinned location in the project."""
+    parts = PurePosixPath(relative).parts
+    if parts[0] == "scripts":
+        return ".workspace/app/" + parts[1]
+    if parts[1] == "panel":
+        return ".workspace/app/assets/" + "/".join(parts[2:])
+    return parts[2]
+
+
+def verify_skill(skill=SKILL):
+    skill = Path(os.path.realpath(skill))
+    if not skill.is_dir():
+        raise ValueError("Skill directory is missing")
+    manifest_path = skill / "manifest.json"
+    no_symlinks(manifest_path, skill)
     if not manifest_path.is_file() or not stat.S_ISREG(manifest_path.stat().st_mode):
-        raise ValueError("Kit manifest must be a regular file")
+        raise ValueError("Skill manifest must be a regular file")
     manifest_bytes = manifest_path.read_bytes()
     manifest = json_object(manifest_bytes, "manifest.json")
     if (manifest.get("version") != VERSION or type(manifest.get("schema_min")) is not int
             or type(manifest.get("schema_max")) is not int
             or manifest["schema_min"] != 4 or manifest["schema_max"] != 4):
-        raise ValueError("Unsupported kit version or schema range; kit 0.6.0 requires schema 4 only")
+        raise ValueError(f"Unsupported tool version or schema range; tools {VERSION} require schema 4 only")
     entries = manifest.get("files")
     if not isinstance(entries, list):
         raise ValueError("Manifest files must be a list of {path, sha256}")
@@ -102,51 +111,43 @@ def verify_kit(kit):
         if relative.casefold() in folded:
             raise ValueError(f"Duplicate manifest path: {relative}")
         folded.add(relative.casefold())
-        allowed = (relative in {f"template/{name}" for name in TEMPLATES}
-                   or relative in ("workspace/workspace.py", "workspace/monitor.py", "install-workspace.py")
-                   or relative.startswith("workspace/assets/")
-                   or (relative.startswith("skills/") and len(PurePosixPath(relative).parts) >= 3
-                       and PurePosixPath(relative).parts[1] in ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments")))
+        parts = PurePosixPath(relative).parts
+        allowed = (relative in {f"scripts/{name}" for name in APP_SCRIPTS}
+                   or relative in {f"assets/templates/{name}" for name in TEMPLATES}
+                   or (len(parts) >= 3 and parts[:2] == ("assets", "panel")))
         if not allowed or not isinstance(entry["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
             raise ValueError(f"Unexpected manifest file: {relative}")
-        file = kit / relative
-        no_symlinks(file)
+        file = skill / relative
+        no_symlinks(file, skill)
         if not file.is_file() or not stat.S_ISREG(file.stat().st_mode):
-            raise ValueError(f"Not a regular kit file: {relative}")
+            raise ValueError(f"Not a regular skill file: {relative}")
         data = file.read_bytes()
         if digest(data) != entry["sha256"]:
             raise ValueError(f"Hash mismatch: {relative}")
         payload[relative] = data
-    required = {f"template/{name}" for name in TEMPLATES} | {
-        "workspace/workspace.py", "workspace/monitor.py", "workspace/assets/index.html", "install-workspace.py"}
-    required |= {f"skills/{name}/SKILL.md" for name in ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments")}
-    required |= {"skills/research-workspace/" + path for path in
-                 ("references/records.md", "references/tools.md", "scripts/records.py", "scripts/run.py", "scripts/resources.py", "scripts/scout.py")}
+    required = {f"scripts/{name}" for name in APP_SCRIPTS} | {f"assets/templates/{name}" for name in TEMPLATES}
+    required.add("assets/panel/index.html")
     if not required <= payload.keys():
-        raise ValueError("Kit is missing required files")
-    expected = set(payload) | {"manifest.json"}
-    directories = {str(parent) for name in expected for parent in PurePosixPath(name).parents if str(parent) != "."}
-    for path in kit.rglob("*"):
-        no_symlinks(path)
-        relative = path.relative_to(kit).as_posix()
-        if path.is_dir() and relative in directories:
-            continue
-        if not path.is_file() or relative not in expected:
-            raise ValueError(f"Unexpected kit entry: {relative}")
+        raise ValueError("Skill is missing required files")
+    # Leftovers from another build would be served or copied without a hash, so refuse them.
+    for directory in ("assets/panel", "assets/templates"):
+        for path in (skill / directory).rglob("*"):
+            no_symlinks(path, skill)
+            relative = path.relative_to(skill).as_posix()
+            if not path.is_dir() and relative not in payload:
+                raise ValueError(f"Unexpected skill asset: {relative}")
     for name in TEMPLATES:
         if name.endswith(".json"):
-            validate_business(name, payload[f"template/{name}"])
+            validate_business(name, payload[f"assets/templates/{name}"])
     return manifest, manifest_bytes, payload
 
 
-def install(kit, project, name=None, host="agents"):
-    if host not in ("agents", "claude"):
-        raise ValueError("Unsupported skill host")
-    kit, project = Path(os.path.abspath(kit)), Path(os.path.abspath(project))
-    manifest, manifest_bytes, payload = verify_kit(kit)
+def install(project, name=None, skill=SKILL):
+    skill, project = Path(os.path.realpath(skill)), Path(os.path.abspath(project))
+    manifest, manifest_bytes, payload = verify_skill(skill)
     no_symlinks(project)
-    if project == kit or kit in project.parents or project in kit.parents:
-        raise ValueError("Project and kit directories must not overlap")
+    if project == skill or skill in project.parents or project in skill.parents:
+        raise ValueError("Project and skill directories must not overlap")
     if name is not None and not name.strip():
         raise ValueError("Project name must not be empty")
     if project.exists() and not project.is_dir():
@@ -161,7 +162,7 @@ def install(kit, project, name=None, host="agents"):
             if template.endswith(".json"):
                 validate_business(template, path.read_bytes())
             continue
-        data = payload[f"template/{template}"]
+        data = payload[f"assets/templates/{template}"]
         if template == "project.json" and name is not None:
             obj = json_object(data, template)
             obj["name"] = name
@@ -171,12 +172,8 @@ def install(kit, project, name=None, host="agents"):
     no_symlinks(installed_manifest)
     if installed_manifest.exists():
         if not installed_manifest.is_file() or json_object(installed_manifest.read_bytes(), str(installed_manifest)) != manifest:
-            raise ValueError("Installed workspace differs; upgrades are not supported")
-    app_payload = {".workspace/app/" + key.removeprefix("workspace/"): data
-                   for key, data in payload.items() if key.startswith("workspace/")}
-    skill_root = ".agents/skills" if host == "agents" else ".claude/skills"
-    skill_payload = {skill_root + "/" + key.removeprefix("skills/"): data
-                     for key, data in payload.items() if key.startswith("skills/")}
+            raise ValueError("Project tools differ from this skill; upgrades are not supported")
+    app_payload = {project_path(key): data for key, data in payload.items() if not key.startswith("assets/templates/")}
     app = project / ".workspace/app"
     no_symlinks(app)
     if app.exists():
@@ -190,7 +187,7 @@ def install(kit, project, name=None, host="agents"):
                 continue
             if not path.is_file() or relative not in app_payload or path.read_bytes() != app_payload[relative]:
                 raise ValueError(f"Installed app differs: {relative}; upgrades are not supported")
-    for relative, data in {**app_payload, **skill_payload}.items():
+    for relative, data in app_payload.items():
         path = project / relative
         no_symlinks(path)
         if path.exists():
@@ -236,24 +233,17 @@ def install(kit, project, name=None, host="agents"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--kit", required=True, type=Path)
     parser.add_argument("--project", required=True, type=Path)
     parser.add_argument("--name")
-    parser.add_argument("--host", choices=("agents", "claude"), default="agents")
     args = parser.parse_args()
     try:
-        count = install(args.kit, args.project, args.name, args.host)
+        count = install(args.project, args.name)
     except (OSError, ValueError) as error:
-        parser.exit(1, f"Installation refused: {error}\n")
-    print(f"Installed {count} missing files in {args.project.absolute()}")
-    print("Files installed. Skill discovery still needs to be checked in your coding app.")
-    print("Skills: research-workspace, tunetune-init, build-evaluation, run-experiments")
-    if args.host == "claude":
-        print("Use /reload-skills if needed, then check that these skills can be selected.")
-    else:
-        print("Check the skills list; if missing, reopen a chat in this same directory.")
-    print("Continue: Read the current proposal and my original request, then use tunetune-init to continue.")
-    print("Start from the project: python3 .workspace/app/workspace.py --project . --port 0")
+        parser.exit(1, f"Initialization refused: {error}\n")
+    project = Path(os.path.abspath(args.project))
+    print(f"Added {count} missing files in {project}" if count else f"Project already initialized: {project}")
+    print(f"Research tools: {project / '.workspace/app'}")
+    print(f"Panel: python3 {project / '.workspace/app/workspace.py'} --project {project} --port 0 --open")
 
 
 if __name__ == "__main__":

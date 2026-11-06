@@ -4,7 +4,6 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,29 +27,12 @@ def load(name, path):
 
 demo = load("create_demo", ROOT / "scripts/create-demo.py")
 records = load("demo_test_records", ROOT / "skills/research-workspace/scripts/records.py")
+init = load("demo_test_init", ROOT / "skills/research-workspace/scripts/init.py")
 
 
 def installed_fixture(root):
-    """Source imports mirror an installed kit; only the unused HTML is a stub."""
-    root.mkdir()
-    for name in ("AGENTS.md", "project.json", "proposal.json", "resources.json"):
-        shutil.copyfile(ROOT / "templates/workspace" / name, root / name)
-    sources = {
-        demo.HELPERS + "/records.py": "skills/research-workspace/scripts/records.py",
-        demo.HELPERS + "/run.py": "skills/research-workspace/scripts/run.py",
-        ".agents/skills/research-workspace/references/records.md": "skills/research-workspace/references/records.md",
-        ".workspace/app/workspace.py": "workspace/workspace.py",
-        ".workspace/app/monitor.py": "workspace/monitor.py",
-    }
-    payload = {name: (ROOT / source).read_bytes() for name, source in sources.items()}
-    payload.update({
-        ".workspace/app/assets/index.html": b"<!doctype html><title>Installed-like test fixture only</title>",
-        ".workspace/manifest.json": records.encoded({"schema_min": 4, "schema_max": 4, "version": "test-fixture"}),
-    })
-    for name, content in payload.items():
-        destination = root / name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(content)
+    """A project initialized by the real skill initializer, as an Agent would."""
+    init.install(root)
     return root
 
 
@@ -121,7 +103,7 @@ class DemoTests(unittest.TestCase):
             versions = ("v1", "v2") if index <= 2 else ("v1",) if index <= 5 else ("v2",)
             for version in versions:
                 expected |= {f"{base}/evals/eval-{version}/{name}" for name in ("config.json", "status.json", "outputs.jsonl", "run.log", "samples.jsonl")}
-        actual = {path for path in self.generated_files if not path.startswith((".agents/", ".workspace/")) and path != "AGENTS.md"}
+        actual = {path for path in self.generated_files if not path.startswith(".workspace/") and path != "AGENTS.md"}
         self.assertEqual(actual, expected)
         self.assertEqual(len(expected), 192)
         self.assertEqual(self.report["files"], {"research": 192, "created": len(self.generated_files.keys() - self.initial_files.keys()),
@@ -327,7 +309,7 @@ class DemoSafetyTests(unittest.TestCase):
     def test_missing_installation_existing_research_and_partial_directories_refused(self):
         empty = self.base / "empty"
         empty.mkdir()
-        with self.assertRaisesRegex(ValueError, "Install the core kit"):
+        with self.assertRaisesRegex(ValueError, "Initialize the project"):
             demo.generate(empty)
         self.assertEqual(list(empty.iterdir()), [])
         for directory in ("data", "src", "experiments", "evaluation", "comparison"):

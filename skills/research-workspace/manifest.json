@@ -1,0 +1,59 @@
+{
+  "version": "0.7.0",
+  "schema_min": 4,
+  "schema_max": 4,
+  "files": [
+    {
+      "path": "assets/panel/assets/index-BAWGmzop.js",
+      "sha256": "f4a3bf1e2d5b0ec193b6c0c779849b5aad10627672b9b7697222fcdb7736827d"
+    },
+    {
+      "path": "assets/panel/assets/index-Dv7XbXz-.css",
+      "sha256": "1ad7483c903bb85a68654b86affc20b2c6057f289d38d1950e03154289778c59"
+    },
+    {
+      "path": "assets/panel/index.html",
+      "sha256": "be48386c2c342f5448f94513efb8c25dcd5d915e04cba79eba3343974714e8e0"
+    },
+    {
+      "path": "assets/templates/AGENTS.md",
+      "sha256": "3a2fcbef164a35991488981f1c060558e3bebccdd9ef0ea1e43c88c5e40a3254"
+    },
+    {
+      "path": "assets/templates/project.json",
+      "sha256": "e73fc9e7f09c0fbb7983150cdd7b0d61e41de72f6096cd8ad76336253a00b857"
+    },
+    {
+      "path": "assets/templates/proposal.json",
+      "sha256": "9f7f4233529dfc2caf4fdf0f597204b4c1b8068ddc15adcc50cda1cf32107ca8"
+    },
+    {
+      "path": "assets/templates/resources.json",
+      "sha256": "0343639fac1511a32a4c9a92c7655a6e9f9ad3a600fc6f30b5bdad6806160a97"
+    },
+    {
+      "path": "scripts/monitor.py",
+      "sha256": "b013ededc8a887f35dd64317147c347d837b0f66589a507f374187c8363b0551"
+    },
+    {
+      "path": "scripts/records.py",
+      "sha256": "6bfe8dbcbd33e99a86c034fb1434599b39e30a9518dc731433321db507753250"
+    },
+    {
+      "path": "scripts/resources.py",
+      "sha256": "a17674967b07f6bff9a5e5be095efa776f0b8269dec521014ec4bc121eca8798"
+    },
+    {
+      "path": "scripts/run.py",
+      "sha256": "f31b1ea3ae2392dbfa9aaae3300bb3055b2b2a526a029f1a791b3a7def21f87b"
+    },
+    {
+      "path": "scripts/scout.py",
+      "sha256": "65bc38c050786edc31d5442aa880dcb42d263f4f4da1c9f1ab1a81c6f06cad31"
+    },
+    {
+      "path": "scripts/workspace.py",
+      "sha256": "ea9d7837ba7aadaebbb462c60761b00786870b739f7d9c9584065c9c2679610b"
+    }
+  ]
+}
