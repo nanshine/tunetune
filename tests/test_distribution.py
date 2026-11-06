@@ -31,7 +31,7 @@ def load(name, path):
 
 
 builder = load("build_skills", ROOT / "scripts/build-skills.py")
-installer = load("skill_init", ROOT / "skills/research-workspace/scripts/init.py")
+installer = load("skill_init", ROOT / "plugins/tunetune/skills/research-workspace/scripts/init.py")
 
 
 class DistributionTests(unittest.TestCase):
@@ -40,9 +40,9 @@ class DistributionTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name).resolve()
         self.source = self.base / "source"
-        shutil.copytree(ROOT / "skills", self.source / "skills", symlinks=True,
+        shutil.copytree(ROOT / builder.SKILLS_DIR, self.source / builder.SKILLS_DIR, symlinks=True,
                         ignore=shutil.ignore_patterns("__pycache__"))
-        self.skill = self.source / "skills/research-workspace"
+        self.skill = self.source / builder.SKILLS_DIR / "research-workspace"
         panel = self.skill / "assets/panel"
         shutil.rmtree(panel)
         (panel / "assets").mkdir(parents=True)
@@ -83,15 +83,20 @@ class DistributionTests(unittest.TestCase):
     def test_versions_and_plugin_manifests_agree(self):
         package = json.loads((ROOT / "workspace/package.json").read_text())
         self.assertEqual({builder.VERSION, installer.VERSION, package["version"]}, {"0.7.0"})
+        plugin_root = ROOT / "plugins/tunetune"
         for path in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
             with self.subTest(path=path):
-                plugin = json.loads((ROOT / path).read_text())
+                plugin = json.loads((plugin_root / path).read_text())
                 self.assertEqual((plugin["name"], plugin["version"], plugin["skills"]), ("tunetune", "0.7.0", "./skills/"))
+        # Plugin installers copy the whole plugin root, so it must hold the skills and nothing else.
+        self.assertEqual({path.name for path in plugin_root.iterdir() if path.name != ".DS_Store"}, {".claude-plugin", ".codex-plugin", "skills"})
+        self.assertFalse(any(path.is_symlink() for path in plugin_root.rglob("*")))
         claude = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text())
         codex = json.loads((ROOT / ".agents/plugins/marketplace.json").read_text())
-        self.assertEqual([item["name"] for item in claude["plugins"]], ["tunetune"])
-        self.assertEqual([item["name"] for item in codex["plugins"]], ["tunetune"])
-        self.assertEqual({path.name for path in (ROOT / "skills").iterdir() if (path / "SKILL.md").is_file()}, set(builder.SKILLS))
+        self.assertEqual([(item["name"], item["source"]) for item in claude["plugins"]], [("tunetune", "./plugins/tunetune")])
+        self.assertEqual([(item["name"], item["source"]) for item in codex["plugins"]],
+                         [("tunetune", {"source": "local", "path": "./plugins/tunetune"})])
+        self.assertEqual({path.name for path in (ROOT / builder.SKILLS_DIR).iterdir() if (path / "SKILL.md").is_file()}, set(builder.SKILLS))
 
     def test_builder_requires_shared_tools_before_writing(self):
         before = (self.skill / "manifest.json").read_bytes()
@@ -122,14 +127,14 @@ class DistributionTests(unittest.TestCase):
         external_file = external / "payload.md"
         external_file.write_text("external content")
         cases = (
-            ("skills/tunetune-init", external),
-            ("skills/tunetune-init/SKILL.md", external_file),
-            ("skills/research-workspace/references/records.md", external_file),
-            ("skills/research-workspace/scripts/records.py", external_file),
-            ("skills/research-workspace/assets/panel/leak.js", external_file),
-            ("skills/run-experiments/references/linked.json", external_file),
-            ("skills/build-evaluation/evals/linked.json", external_file),
-            ("skills/tunetune-init/scripts/dangling.py", self.base / "missing-target"),
+            ("plugins/tunetune/skills/tunetune-init", external),
+            ("plugins/tunetune/skills/tunetune-init/SKILL.md", external_file),
+            ("plugins/tunetune/skills/research-workspace/references/records.md", external_file),
+            ("plugins/tunetune/skills/research-workspace/scripts/records.py", external_file),
+            ("plugins/tunetune/skills/research-workspace/assets/panel/leak.js", external_file),
+            ("plugins/tunetune/skills/run-experiments/references/linked.json", external_file),
+            ("plugins/tunetune/skills/build-evaluation/evals/linked.json", external_file),
+            ("plugins/tunetune/skills/tunetune-init/scripts/dangling.py", self.base / "missing-target"),
         )
         before = (self.skill / "manifest.json").read_bytes()
         for relative, target in cases:
@@ -467,7 +472,7 @@ class DistributionTests(unittest.TestCase):
         skills = self.base / "home/.agents/skills"
         skills.mkdir(parents=True)
         for name in builder.SKILLS:
-            shutil.copytree(self.source / "skills" / name, skills / name)
+            shutil.copytree(self.source / builder.SKILLS_DIR / name, skills / name)
         shutil.rmtree(self.source)
         for name in ("init.py", "records.py", "run.py", "scout.py"):
             script = skills / "research-workspace/scripts" / name

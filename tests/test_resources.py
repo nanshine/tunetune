@@ -9,7 +9,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-SCRIPT = Path(__file__).resolve().parents[1] / "skills/research-workspace/scripts/resources.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "plugins/tunetune/skills/research-workspace/scripts/resources.py"
 SPEC = importlib.util.spec_from_file_location("resources_under_test", SCRIPT)
 resources = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(resources)

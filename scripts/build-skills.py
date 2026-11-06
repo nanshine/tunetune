@@ -9,6 +9,7 @@ import tempfile
 
 VERSION = "0.7.0"
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
+SKILLS_DIR = "plugins/tunetune/skills"
 SKILLS = ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments")
 APP_SCRIPTS = ("workspace.py", "monitor.py", "records.py", "run.py", "resources.py", "scout.py")
 SHARED = ("references/records.md", "references/tools.md", "scripts/init.py")
@@ -23,7 +24,7 @@ def checked_file(path):
 
 def collect(source):
     """Return the manifest payload; every skill installer copies these files verbatim."""
-    skills = source / "skills"
+    skills = source / SKILLS_DIR
     for name in SKILLS:
         checked_file(skills / name / "SKILL.md")
         for path in (skills / name).rglob("*"):
@@ -61,7 +62,7 @@ def manifest_bytes(source):
 
 def build(source):
     source = Path(os.path.abspath(source))
-    target = source / "skills/research-workspace/manifest.json"
+    target = source / SKILLS_DIR / "research-workspace/manifest.json"
     data = manifest_bytes(source)
     if target.is_symlink():
         raise ValueError(f"Symlink output is not allowed: {target}")
@@ -72,7 +73,7 @@ def build(source):
 
 
 def check(source):
-    target = Path(os.path.abspath(source)) / "skills/research-workspace/manifest.json"
+    target = Path(os.path.abspath(source)) / SKILLS_DIR / "research-workspace/manifest.json"
     return target.is_file() and not target.is_symlink() and target.read_bytes() == manifest_bytes(source)
 
 

@@ -13,7 +13,7 @@ npx skills add nanshine/tunetune --global --agent codex -y
 npx skills add nanshine/tunetune --global --agent claude-code -y
 ```
 
-Without Node.js, clone into a temporary directory outside the project and copy the four folders under `skills/` into the application's user skill directory, `~/.agents/skills/` for Codex or `~/.claude/skills/` for Claude Code. Accept only ordinary files and directories. Refuse to replace existing skill folders that differ, and tell the person instead: their research may be pinned to those tools.
+Without Node.js, clone into a temporary directory outside the project and copy the four folders under `plugins/tunetune/skills/` into the application's user skill directory, `~/.agents/skills/` for Codex or `~/.claude/skills/` for Claude Code. Accept only ordinary files and directories. Refuse to replace existing skill folders that differ, and tell the person instead: their research may be pinned to those tools.
 
 Plugins work too and need no Node.js: in Claude Code, `/plugin marketplace add nanshine/tunetune` then `/plugin install tunetune@tunetune`; in Codex, `codex plugin marketplace add nanshine/tunetune` then `codex plugin add tunetune@tunetune`. Leave the choice of plugin to the person.
 

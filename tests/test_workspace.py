@@ -15,7 +15,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-SOURCE = Path(__file__).resolve().parents[1] / "skills" / "research-workspace" / "scripts" / "workspace.py"
+SOURCE = Path(__file__).resolve().parents[1] / "plugins" / "tunetune" / "skills" / "research-workspace" / "scripts" / "workspace.py"
 SPEC = importlib.util.spec_from_file_location("workspace_server", SOURCE)
 wb = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(wb)

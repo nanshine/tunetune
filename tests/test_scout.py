@@ -10,7 +10,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-SCRIPT = Path(__file__).resolve().parents[1] / "skills/research-workspace/scripts/scout.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "plugins/tunetune/skills/research-workspace/scripts/scout.py"
 
 
 class Handler(BaseHTTPRequestHandler):

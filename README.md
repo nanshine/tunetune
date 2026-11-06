@@ -71,16 +71,16 @@ python3 -B -m unittest discover -s tests -v
 python3 scripts/build-skills.py
 ```
 
-面板构建输出到 `skills/research-workspace/assets/panel/`，与研究工具、模板一起随 skill 分发；`build-skills.py` 把这些文件的哈希写入 `skills/research-workspace/manifest.json`，`--check` 检查它是否最新。构建结果需要提交，因为 `npx skills`、插件和克隆都直接取仓库里的 skills。分发内容是四个 skills 目录，不包含开发测试、研究数据、密钥、前端源码和依赖。
+面板构建输出到 `plugins/tunetune/skills/research-workspace/assets/panel/`，与研究工具、模板一起随 skill 分发；`build-skills.py` 把这些文件的哈希写入 `plugins/tunetune/skills/research-workspace/manifest.json`，`--check` 检查它是否最新。构建结果需要提交，因为 `npx skills`、插件和克隆都直接取仓库里的 skills。分发内容是四个 skills 目录，不包含开发测试、研究数据、密钥、前端源码和依赖。
 
-主要目录：`skills/` 为研究工作流、按需技术参考、工具、模板和构建好的面板，`workspace/` 为面板源码，`.claude-plugin/`、`.codex-plugin/` 和 `.agents/plugins/` 为插件清单，`scripts/` 和 `tests/` 为开发工具及测试。稳定原则见 [docs/principles.md](docs/principles.md)。
+主要目录：`plugins/tunetune/skills/` 为研究工作流、按需技术参考、工具、模板和构建好的面板，所在的 `plugins/tunetune/` 是只含 skills 和插件清单的插件根目录（插件安装会复制整个根目录），根目录的 `.claude-plugin/` 和 `.agents/plugins/` 是指向它的插件市场；`workspace/` 为面板源码，`scripts/` 和 `tests/` 为开发工具及测试。稳定原则见 [docs/principles.md](docs/principles.md)。
 
 ## 本地演示
 
 在全新、已初始化的项目中运行：
 
 ```sh
-python3 skills/research-workspace/scripts/init.py --project /absolute/my-research
+python3 plugins/tunetune/skills/research-workspace/scripts/init.py --project /absolute/my-research
 python3 scripts/create-demo.py --project /absolute/my-research
 python3 /absolute/my-research/.workspace/app/workspace.py --project /absolute/my-research --port 0 --open
 ```

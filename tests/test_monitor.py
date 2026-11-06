@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-SOURCE = Path(__file__).resolve().parents[1] / "skills/research-workspace/scripts/workspace.py"
+SOURCE = Path(__file__).resolve().parents[1] / "plugins/tunetune/skills/research-workspace/scripts/workspace.py"
 spec = importlib.util.spec_from_file_location("monitor_test_workspace", SOURCE)
 workspace = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(workspace)

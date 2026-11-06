@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "skills/research-workspace/scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / "plugins/tunetune/skills/research-workspace/scripts"
 SPEC = importlib.util.spec_from_file_location("records", SCRIPTS / "records.py")
 records = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(records)

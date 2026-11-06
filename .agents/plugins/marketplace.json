@@ -7,8 +7,8 @@
     {
       "name": "tunetune",
       "source": {
-        "source": "url",
-        "url": "./"
+        "source": "local",
+        "path": "./plugins/tunetune"
       },
       "policy": {
         "installation": "AVAILABLE",

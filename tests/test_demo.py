@@ -26,8 +26,8 @@ def load(name, path):
 
 
 demo = load("create_demo", ROOT / "scripts/create-demo.py")
-records = load("demo_test_records", ROOT / "skills/research-workspace/scripts/records.py")
-init = load("demo_test_init", ROOT / "skills/research-workspace/scripts/init.py")
+records = load("demo_test_records", ROOT / "plugins/tunetune/skills/research-workspace/scripts/records.py")
+init = load("demo_test_init", ROOT / "plugins/tunetune/skills/research-workspace/scripts/init.py")
 
 
 def installed_fixture(root):

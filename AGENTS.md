@@ -6,9 +6,9 @@ TuneTune helps beginners build useful private models through file-driven researc
 
 Skills are concise English instructions for general research and judgment, not task-specific recipes or duplicate schemas. Give each boundary its reason so the Agent can apply it to situations the skill does not name. Repeatable mechanics belong in deterministic scripts. Continue across skills and bounded rounds within the user's exact current authorization; ask only for missing consequential decisions or changed access, privacy, scope or cost boundaries. Explain uncertainty and unmet requirements honestly.
 
-- `workspace/src/`: React/TypeScript panel source, model logic, CSS and colocated Vitest tests. Its build output goes to `skills/research-workspace/assets/panel/` and is committed.
-- `skills/`: three research workflows plus shared `research-workspace`, the unit every channel distributes. Its `references/records.md` is the canonical format-4 guide; `references/tools.md` documents `scripts/init.py`, `scripts/records.py`, `scripts/run.py`, `scripts/resources.py` and the read-only `scripts/scout.py`. `scripts/workspace.py` serves the panel; sibling `monitor.py` provides limited optional resource observations. `assets/templates/` holds only the installed agent guide and minimal project, proposal and resource files; create research directories when needed and include no sample research data. `manifest.json` pins the files `init.py` copies into a project.
-- `.claude-plugin/`, `.codex-plugin/` and `.agents/plugins/`: plugin manifests over `skills/`. `INSTALL.md`: the Agent's installation path from the README sentence.
+- `workspace/src/`: React/TypeScript panel source, model logic, CSS and colocated Vitest tests. Its build output goes to `plugins/tunetune/skills/research-workspace/assets/panel/` and is committed.
+- `plugins/tunetune/skills/`: three research workflows plus shared `research-workspace`, the unit every channel distributes. Its `references/records.md` is the canonical format-4 guide; `references/tools.md` documents `scripts/init.py`, `scripts/records.py`, `scripts/run.py`, `scripts/resources.py` and the read-only `scripts/scout.py`. `scripts/workspace.py` serves the panel; sibling `monitor.py` provides limited optional resource observations. `assets/templates/` holds only the installed agent guide and minimal project, proposal and resource files; create research directories when needed and include no sample research data. `manifest.json` pins the files `init.py` copies into a project.
+- `plugins/tunetune/`: the plugin root, holding only `skills/` and the `.claude-plugin/` and `.codex-plugin/` manifests, because plugin installers copy the whole root. Root `.claude-plugin/` and `.agents/plugins/` hold the marketplaces pointing at it. `INSTALL.md`: the Agent's installation path from the README sentence.
 - `scripts/`: manifest and local demo tools. `tests/`: Python integration and safety tests.
 - `design/` and `reference/`: local supporting assets, excluded from distribution.
 
@@ -24,7 +24,7 @@ python3 -B -m unittest discover -s tests -v
 python3 scripts/build-skills.py
 ```
 
-Rebuild the panel and rerun `build-skills.py` whenever a distributed script, template or the panel changes; tests fail on a stale manifest. For development, run `python3 skills/research-workspace/scripts/workspace.py --project /absolute/my-research --assets skills/research-workspace/assets/panel --port 8765` against an initialized project, then `npm --prefix workspace run dev -- --port 5173`; Vite proxies `/api` to port 8765.
+Rebuild the panel and rerun `build-skills.py` whenever a distributed script, template or the panel changes; tests fail on a stale manifest. For development, run `python3 plugins/tunetune/skills/research-workspace/scripts/workspace.py --project /absolute/my-research --assets plugins/tunetune/skills/research-workspace/assets/panel --port 8765` against an initialized project, then `npm --prefix workspace run dev -- --port 5173`; Vite proxies `/api` to port 8765.
 
 ## Conventions and Validation
 

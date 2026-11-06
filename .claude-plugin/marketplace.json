@@ -9,9 +9,15 @@
   "plugins": [
     {
       "name": "tunetune",
-      "source": "./",
+      "source": "./plugins/tunetune",
       "description": "Research and build a useful private model on your own computer, with the Agent as researcher and you as reviewer.",
-      "keywords": ["models", "research", "fine-tuning", "evaluation", "local"]
+      "keywords": [
+        "models",
+        "research",
+        "fine-tuning",
+        "evaluation",
+        "local"
+      ]
     }
   ]
 }

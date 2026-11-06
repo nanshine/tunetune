@@ -6,7 +6,7 @@ export default defineConfig({
   base: './',
   // Built assets ship inside the shared skill so every skill installer delivers the panel.
   build: {
-    outDir: '../skills/research-workspace/assets/panel',
+    outDir: '../plugins/tunetune/skills/research-workspace/assets/panel',
     emptyOutDir: true,
   },
   server: {
