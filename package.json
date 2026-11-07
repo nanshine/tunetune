@@ -1,0 +1,56 @@
+{
+  "name": "dsh-tunetune",
+  "version": "0.7.0",
+  "description": "TuneTune for DeepSeek Harness: research and build a useful private model on your own computer, with the study panel beside the conversation.",
+  "type": "module",
+  "main": "./dsh/host.js",
+  "exports": {
+    ".": "./dsh/host.js",
+    "./client": "./dsh/client.js",
+    "./cordis.patch.yml": "./dsh/cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./dsh/locale/*.json"
+  },
+  "icon": "./dsh/icon.svg",
+  "files": [
+    "dsh/",
+    "plugins/tunetune/skills/",
+    "README.md",
+    "INSTALL.md",
+    "!**/__pycache__/",
+    "!**/*.py[cod]",
+    "!**/.DS_Store"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "skills",
+    "models",
+    "fine-tuning",
+    "evaluation"
+  ],
+  "author": "nanshine",
+  "homepage": "https://github.com/nanshine/tunetune",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nanshine/tunetune.git"
+  },
+  "bugs": "https://github.com/nanshine/tunetune/issues",
+  "engines": {
+    "node": ">=22.12.0",
+    "dsh": ">=0.2.2-rc.1 <0.3.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./dsh/cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/dsh/*.test.mjs"
+  }
+}

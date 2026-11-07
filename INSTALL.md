@@ -16,6 +16,8 @@ Do not use `--agent '*'` on the person's behalf, since it writes into every supp
 
 Plugins work too and need no Node.js: in Claude Code, `/plugin marketplace add nanshine/tunetune` then `/plugin install tunetune@tunetune`; in Codex, `codex plugin marketplace add nanshine/tunetune` then `codex plugin add tunetune@tunetune`. Leave the choice of plugin to the person.
 
+In DeepSeek Harness, the `dsh-tunetune` plugin brings the skills and shows the panel beside the conversation. Installing plugin code is the person's decision: suggest **Plugins** in the app, or `dsh plugin --profile <profile> add dsh-tunetune` for the profile they run (the desktop app uses `desktop`), and continue once they confirm; restart DeepSeek Harness if TuneTune does not appear. Without the plugin, copy the four folders into `~/.dsh/skills/` as above. See the shared skill's `references/agent-adapters.md` for how it runs the panel.
+
 ## Initialize the current directory
 
 Check Python 3.10+ on macOS/Linux. Read the installed shared skill's `references/agent-adapters.md`, then run its initializer with actual paths:

@@ -56,6 +56,14 @@ codex plugin marketplace add nanshine/tunetune
 codex plugin add tunetune@tunetune
 ```
 
+DeepSeek Harness 插件（在应用的 **Plugins** 页安装，或用命令行装进自己使用的 profile，桌面版是 `desktop`）：
+
+```sh
+dsh plugin --profile desktop add dsh-tunetune
+```
+
+插件自带四个 skills，并把面板放在对话旁：右侧栏指南页的 TuneTune 卡片显示当前对话目录的研究，左侧栏的 TuneTune 列出所有研究。面板由插件按需启动研究目录里固定的那份工具，不需要另开端口。尚未在正式发布的 DeepSeek Harness 中实测。
+
 装好后在想做研究的目录里说出需求即可，Agent 会用 skill 自带的初始化工具准备这个目录：
 
 ```sh
@@ -91,7 +99,7 @@ python3 scripts/build-skills.py
 
 面板构建输出到 `plugins/tunetune/skills/research-workspace/assets/panel/`，与研究工具、模板一起随 skill 分发；`build-skills.py` 把这些文件的哈希写入 `plugins/tunetune/skills/research-workspace/manifest.json`，`--check` 检查它是否最新。构建结果需要提交，因为 `npx skills`、插件和克隆都直接取仓库里的 skills。分发内容是四个 skills 目录，不包含开发测试、研究数据、密钥、前端源码和依赖。
 
-主要目录：`plugins/tunetune/skills/` 为研究工作流、按需技术参考、工具、模板和构建好的面板，所在的 `plugins/tunetune/` 是只含 skills 和插件清单的插件根目录（插件安装会复制整个根目录），根目录的 `.claude-plugin/` 和 `.agents/plugins/` 是指向它的插件市场；`workspace/` 为面板源码，`scripts/` 和 `tests/` 为开发工具及测试。稳定原则见 [docs/principles.md](docs/principles.md)。
+主要目录：`plugins/tunetune/skills/` 为研究工作流、按需技术参考、工具、模板和构建好的面板，所在的 `plugins/tunetune/` 是只含 skills 和插件清单的插件根目录（插件安装会复制整个根目录），根目录的 `.claude-plugin/` 和 `.agents/plugins/` 是指向它的插件市场；`workspace/` 为面板源码，`scripts/` 和 `tests/` 为开发工具及测试。根目录的 `package.json` 和 `dsh/` 是 DeepSeek Harness 插件 `dsh-tunetune`：纯 JS、无依赖、无需构建，直接引用 `plugins/tunetune/skills/`，测试在 `tests/dsh/`（`npm test`，也由 Python 测试调用）；发布时在仓库根运行 `npm publish`，版本与 skills 一致。稳定原则见 [docs/principles.md](docs/principles.md)。
 
 ## 本地演示
 

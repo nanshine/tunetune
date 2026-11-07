@@ -83,7 +83,9 @@ class DistributionTests(unittest.TestCase):
 
     def test_versions_and_plugin_manifests_agree(self):
         package = json.loads((ROOT / "workspace/package.json").read_text())
-        self.assertEqual({builder.VERSION, installer.VERSION, package["version"]}, {"0.7.0"})
+        # The DeepSeek Harness bundle at the repository root ships the same skills.
+        bundle = json.loads((ROOT / "package.json").read_text())
+        self.assertEqual({builder.VERSION, installer.VERSION, package["version"], bundle["version"]}, {"0.7.0"})
         plugin_root = ROOT / "plugins/tunetune"
         for path in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
             with self.subTest(path=path):

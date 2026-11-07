@@ -17,7 +17,7 @@ export function mediaUrl(path: unknown): string | null {
   if (typeof path !== 'string' || !path || /[\\\\\u0000-\u001f?#:%]/.test(path)) return null;
   const parts = path.split('/');
   if (parts.some(part => !part || part.startsWith('.') || /^(?:node_modules|secrets?|credentials)$/i.test(part)) || /\.(?:key|pem|env)$/i.test(path)) return null;
-  return `/api/media?path=${encodeURIComponent(path)}`;
+  return `api/media?path=${encodeURIComponent(path)}`;
 }
 export function LinkedText({ value }: { value: string }) {
   return <>{value.split(/(https?:\/\/[^\s<>]+)/g).map((part, index) => {

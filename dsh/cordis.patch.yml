@@ -1,0 +1,5 @@
+# TuneTune bundle layer: this row loads the package's main entry (dsh/host.js) as the Host half;
+# package.json's dsh.client declaration makes the Web client load ./client as the browser half.
+- insert:
+    - id: tunetune
+      name: 'dsh-tunetune'

@@ -11,7 +11,7 @@ export function useWorkspace() {
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const response = await fetch('/api/state', { signal: controller.signal, cache: 'no-store' });
+        const response = await fetch('api/state', { signal: controller.signal, cache: 'no-store' });
         if (!response.ok) throw new Error(t('读取失败（HTTP {status}）', { status: response.status }));
         const next = parseSnapshot(await response.json());
         if (!controller.signal.aborted) {
@@ -29,7 +29,7 @@ export function useWorkspace() {
     return () => { controller.abort(); clearTimeout(timer); };
   }, []);
   async function renameProject(name: string, expectedSha256: string) {
-    const response = await fetch('/api/project/name', {
+    const response = await fetch('api/project/name', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, expected_sha256: expectedSha256 }),
@@ -61,17 +61,17 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 export type ReviewItem = { sample_id: string; verdict: 'confirm' | 'correct' | 'question'; reference?: unknown; note?: string };
 export type AcceptanceItem = { sample_id: string; experiment_id: string; verdict: 'good' | 'bad'; note?: string };
 export function submitResponse(body: { kind: 'proposal' | 'plan' | 'evaluation_review' | 'acceptance'; decision: string; target_sha256: string; note?: string; items?: ReviewItem[] | AcceptanceItem[] }) {
-  return post<{ id: string }>('/api/responses', body);
+  return post<{ id: string }>('api/responses', body);
 }
 export function runAcceptance(experimentIds: string[]) {
-  return post<{ id: string; state: string }>('/api/acceptance/run', { experiments: experimentIds });
+  return post<{ id: string; state: string }>('api/acceptance/run', { experiments: experimentIds });
 }
 export function loadModel(experiment: string) {
-  return post<{ state: string }>('/api/models/load', { experiment });
+  return post<{ state: string }>('api/models/load', { experiment });
 }
 export function unloadModel(experiment: string) {
-  return post<unknown>('/api/models/unload', { experiment });
+  return post<unknown>('api/models/unload', { experiment });
 }
 export function tryModel(experiment: string, input: unknown) {
-  return post<{ output?: unknown; error?: string; log_tail?: string; elapsed_seconds?: number }>('/api/try', { experiment, input });
+  return post<{ output?: unknown; error?: string; log_tail?: string; elapsed_seconds?: number }>('api/try', { experiment, input });
 }

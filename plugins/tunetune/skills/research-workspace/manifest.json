@@ -2,12 +2,12 @@
   "version": "0.7.0",
   "files": [
     {
-      "path": "assets/panel/assets/index-Bhs_7zLt.css",
-      "sha256": "18da902f2be7d65c9f4e1eb9b2c3495af67fad4a59b38adaa27bdc95adab9ff6"
+      "path": "assets/panel/assets/index-B91UmRNB.js",
+      "sha256": "9377615751f92e3a032edacec0b43258c3e775cc2e9ebf8f32daddf20b3b5ef4"
     },
     {
-      "path": "assets/panel/assets/index-CW3w383R.js",
-      "sha256": "11fbc4a3294feb70768eccbccf6de8b05e1c119b0ddac81b6607797d4adb2067"
+      "path": "assets/panel/assets/index-Bhs_7zLt.css",
+      "sha256": "18da902f2be7d65c9f4e1eb9b2c3495af67fad4a59b38adaa27bdc95adab9ff6"
     },
     {
       "path": "assets/panel/favicon.svg",
@@ -15,7 +15,7 @@
     },
     {
       "path": "assets/panel/index.html",
-      "sha256": "b460c6ce9e5c1e6ed5f7f865d510f8ceca6dc6bef2de82d5e9e03f0b87a824c1"
+      "sha256": "9c80941c82641ff562bbfd6d1fd5d0726474c5e5bbe2fe375fd0cf5d7b6ed994"
     },
     {
       "path": "assets/templates/AGENTS.md",

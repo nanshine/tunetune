@@ -64,7 +64,7 @@ describe('explicit research attachments', () => {
   it.each([['image', '<img'], ['audio', '<audio'], ['video', '<video'], ['file', '<a']])('renders explicit %s references through the confined media endpoint', (type, tag) => {
     const html = renderToStaticMarkup(createElement(RecordView, { value: { type, path: 'data/中文 sample.bin', title: '真实附件' } }));
     expect(html).toContain(tag);
-    expect(html).toContain('/api/media?path=data%2F');
+    expect(html).toContain('api/media?path=data%2F');
     expect(html).toContain('真实附件');
   });
   it('does not interpret arbitrary paths or untrusted HTML as media', () => {

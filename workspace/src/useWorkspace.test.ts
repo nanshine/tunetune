@@ -68,7 +68,7 @@ describe('file channel polling', () => {
     render();
     await vi.advanceTimersByTimeAsync(0);
     await expect(render().renameProject('新名称', 'a'.repeat(64))).rejects.toThrow('项目记录已变更');
-    expect(fetch).toHaveBeenLastCalledWith('/api/project/name', expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: '新名称', expected_sha256: 'a'.repeat(64) }) }));
+    expect(fetch).toHaveBeenLastCalledWith('api/project/name', expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: '新名称', expected_sha256: 'a'.repeat(64) }) }));
     expect(render().snapshot?.files['project.json'].content).toEqual({ name: '研究', deliveries: [] });
   });
 });
