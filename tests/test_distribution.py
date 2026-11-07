@@ -94,7 +94,7 @@ class DistributionTests(unittest.TestCase):
 
     def test_manifest_pins_exactly_the_copied_payload(self):
         manifest, _, payload = installer.verify_skill(self.skill)
-        self.assertEqual(manifest["version"], "0.8.0")
+        self.assertEqual(manifest["version"], "0.8.1")
         self.assertEqual(set(manifest), {"version", "files"})
         self.assertEqual(builder.TEMPLATES, installer.TEMPLATES)
         self.assertEqual(builder.APP_SCRIPTS, installer.APP_SCRIPTS)
@@ -113,12 +113,12 @@ class DistributionTests(unittest.TestCase):
         package = json.loads((ROOT / "workspace/package.json").read_text())
         # The DeepSeek Harness bundle at the repository root ships the same skills.
         bundle = json.loads((ROOT / "package.json").read_text())
-        self.assertEqual({builder.VERSION, installer.VERSION, package["version"], bundle["version"]}, {"0.8.0"})
+        self.assertEqual({builder.VERSION, installer.VERSION, package["version"], bundle["version"]}, {"0.8.1"})
         plugin_root = ROOT / "plugins/tunetune"
         for path in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
             with self.subTest(path=path):
                 plugin = json.loads((plugin_root / path).read_text())
-                self.assertEqual((plugin["name"], plugin["version"], plugin["skills"]), ("tunetune", "0.8.0", "./skills/"))
+                self.assertEqual((plugin["name"], plugin["version"], plugin["skills"]), ("tunetune", "0.8.1", "./skills/"))
         # Plugin installers copy the whole plugin root, so it must hold the skills and nothing else.
         self.assertEqual({path.name for path in plugin_root.iterdir() if path.name != ".DS_Store"}, {".claude-plugin", ".codex-plugin", "skills"})
         self.assertFalse(any(path.is_symlink() for path in plugin_root.rglob("*")))
@@ -503,6 +503,30 @@ class DistributionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Installed app differs"):
             self.install()
         self.assertEqual(before, self.snapshot(self.project))
+
+    def test_bytecode_caches_beside_pinned_tools_do_not_block_a_repeat(self):
+        self.install()
+        cache = self.project / ".workspace/app/__pycache__"
+        cache.mkdir()
+        (cache / "records.cpython-311.pyc").write_bytes(b"cache")
+        self.assertEqual(self.install(), 0)
+
+    def test_staging_stays_inside_the_project(self):
+        # Sandboxed agents can usually write only inside the study, never beside it.
+        self.project.mkdir()
+        self.base.chmod(0o555)
+        try:
+            self.assertGreater(self.install(), 0)
+        finally:
+            self.base.chmod(0o755)
+        self.assertFalse([path for path in self.project.iterdir() if path.name.startswith(".workspace-install-")])
+
+    def test_refusal_names_both_tool_versions(self):
+        self.install()
+        manifest = json.loads((self.project / ".workspace/manifest.json").read_text())
+        (self.project / ".workspace/manifest.json").write_text(json.dumps(dict(manifest, version="0.7.0")))
+        with self.assertRaisesRegex(ValueError, r"pinned to TuneTune tools 0\.7\.0.*upgrades are not supported"):
+            self.install()
 
     def test_app_directory_collision_is_preflighted(self):
         (self.project / ".workspace/app").mkdir(parents=True)

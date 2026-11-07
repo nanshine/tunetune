@@ -53,6 +53,8 @@ PATTERNS = (
 VIEWS = ("proposal", "plan", "resources", "evaluation", "review", "acceptance")
 ID = re.compile(r"[A-Za-z0-9_-]+\Z")
 
+# Bytecode caches beside the pinned tools would make the project differ from its manifest.
+sys.dont_write_bytecode = True
 monitor_spec = importlib.util.spec_from_file_location("workspace_monitor", Path(__file__).with_name("monitor.py"))
 monitor_module = importlib.util.module_from_spec(monitor_spec)
 monitor_spec.loader.exec_module(monitor_module)
@@ -353,8 +355,10 @@ class ModelPool:
             with self.reader.tree.directory([".workspace", "runtime"]) as parent:
                 log = os.fdopen(os.open(name, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW, dir_fd=parent), "ab")
             with log:
+                # A resident model must not write bytecode into its manifest-pinned package.
                 process = subprocess.Popen(entry["serve"], cwd=self.reader.tree.root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                           stderr=log, start_new_session=True, shell=False)
+                                           stderr=log, start_new_session=True, shell=False,
+                                           env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
             answers, ready = queue.Queue(), threading.Event()
 
             def read():

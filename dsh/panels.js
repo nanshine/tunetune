@@ -23,15 +23,17 @@ export class PanelServices {
   }
 
   // Resolve the loopback port of a study's panel service, starting it on first use.
-  async port(study) {
+  // A service opened in a separate browser tab sees no requests here, so it must not idle out.
+  async port(study, { keep = false } = {}) {
     let entry = this.running.get(study.id);
     if (!entry) {
-      entry = { pending: this.start(study), child: null, timer: null };
+      entry = { pending: this.start(study), child: null, timer: null, keep: false };
       this.running.set(study.id, entry);
       entry.pending.catch(() => {
         if (this.running.get(study.id) === entry) this.running.delete(study.id);
       });
     }
+    if (keep) entry.keep = true;
     const port = await entry.pending;
     this.touch(study.id);
     return port;
@@ -41,6 +43,7 @@ export class PanelServices {
     const entry = this.running.get(id);
     if (!entry) return;
     clearTimeout(entry.timer);
+    if (entry.keep) return;
     entry.timer = setTimeout(() => this.stop(id), this.idleMs);
     entry.timer.unref?.();
   }

@@ -1,7 +1,7 @@
 // DeepSeek Harness host half, exercised with a stand-in context and a real initialized study.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +9,7 @@ import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { apply, createRouter, inject } from '../../dsh/host.js';
 import { embeddedPolicy, forward, PanelServices } from '../../dsh/panels.js';
-import { createSkillProvider, SKILLS } from '../../dsh/skills.js';
+import { createSkillProvider, shadowingSkills, SKILLS } from '../../dsh/skills.js';
 import { findPython, inspectStudy, studyId } from '../../dsh/studies.js';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -60,6 +60,29 @@ describe('skills', () => {
   });
 });
 
+describe('skill copies outside the plugin', () => {
+  test('older or edited same-name copies are reported, identical ones are not', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'tunetune-dsh-shadow-')));
+    try {
+      const same = join(base, 'same');
+      const older = join(base, 'older');
+      const unrelated = join(base, 'unrelated');
+      for (const name of SKILLS) cpSync(join(SKILLS_ROOT, name), join(same, name), { recursive: true });
+      for (const name of SKILLS) cpSync(join(SKILLS_ROOT, name), join(older, name), { recursive: true });
+      const manifest = join(older, 'research-workspace', 'manifest.json');
+      writeFileSync(manifest, JSON.stringify({ ...JSON.parse(readFileSync(manifest, 'utf8')), version: '0.7.0' }));
+      mkdirSync(join(unrelated, 'some-other-skill'), { recursive: true });
+      writeFileSync(join(unrelated, 'some-other-skill', 'SKILL.md'), '---\nname: x\n---\n');
+      const found = shadowingSkills(SKILLS_ROOT, [same, older, unrelated, join(base, 'missing')]);
+      assert.deepEqual(found.map((item) => [item.location, item.version, item.skills.length]), [[older, '0.7.0', 4]]);
+      writeFileSync(join(same, 'tunetune-init', 'SKILL.md'), 'edited');
+      assert.deepEqual(shadowingSkills(SKILLS_ROOT, [same]).map((item) => item.skills.length), [4]);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('studies and routes', () => {
   let base;
   let study;
@@ -84,7 +107,7 @@ describe('studies and routes', () => {
       get: () => undefined,
     };
     panels = new PanelServices({ findPython: () => findPython(), idleMs: 60_000 });
-    server = await listen(createRouter(ctx, { panels }));
+    server = await listen(createRouter(ctx, { panels, shadowed: () => [] }));
     port = server.address().port;
   });
 
@@ -98,6 +121,9 @@ describe('studies and routes', () => {
     const found = inspectStudy(study);
     assert.equal(found.id, studyId(study));
     assert.equal(found.name, 'study');
+    assert.equal(found.folder, 'study');
+    assert.equal(found.stage, 'starting');
+    assert.equal(found.summary, null);
     assert.equal(found.embeddable, true);
     assert.equal(inspectStudy(plain), null);
     assert.equal(inspectStudy('relative/path'), null);
@@ -171,6 +197,36 @@ describe('studies and routes', () => {
     const refused = await call(port, 'GET', `/tunetune/p/${studyId(older)}/`);
     assert.equal(refused.status, 409);
     assert.match(JSON.parse(refused.text).command, /workspace\.py/);
+
+    // It can still open in a separate browser tab, started by the plugin and kept running there.
+    const browser = `/tunetune/api/studies/${studyId(older)}/browser`;
+    assert.equal((await call(port, 'POST', browser)).status, 403);
+    assert.equal((await call(port, 'GET', browser)).status, 404);
+    assert.equal((await call(port, 'POST', `/tunetune/api/studies/${'0'.repeat(16)}/browser`, { headers: { origin: `http://127.0.0.1:${port}` } })).status, 404);
+    const opened = await call(port, 'POST', browser, { headers: { origin: `http://127.0.0.1:${port}` } });
+    assert.equal(opened.status, 200, opened.text);
+    const url = new URL(JSON.parse(opened.text).url);
+    assert.equal(url.hostname, '127.0.0.1');
+    assert.equal(panels.running.get(studyId(older)).keep, true);
+    assert.equal(panels.running.get(studyId(older)).timer, null);
+    const page = await call(Number(url.port), 'GET', '/api/state');
+    assert.equal(page.status, 200);
+  });
+
+  test('the list shows where each study stands', async () => {
+    const records = JSON.parse(readFileSync(join(study, 'proposal.json'), 'utf8'));
+    writeFileSync(join(study, 'proposal.json'), JSON.stringify({ ...records, summary: '把客户留言分到五个类别。' }));
+    const project = JSON.parse(readFileSync(join(study, 'project.json'), 'utf8'));
+    try {
+      let shown = JSON.parse((await call(port, 'GET', '/tunetune/api/studies')).text).studies.find((item) => item.id === studyId(study));
+      assert.deepEqual([shown.stage, shown.summary], ['proposal', '把客户留言分到五个类别。']);
+      writeFileSync(join(study, 'project.json'), JSON.stringify({ ...project, deliveries: ['e001-head'] }));
+      shown = JSON.parse((await call(port, 'GET', '/tunetune/api/studies')).text).studies.find((item) => item.id === studyId(study));
+      assert.equal(shown.stage, 'delivered');
+    } finally {
+      writeFileSync(join(study, 'proposal.json'), JSON.stringify(records));
+      writeFileSync(join(study, 'project.json'), JSON.stringify(project, null, 2) + '\n');
+    }
   });
 
   test('studies list their newest conversation first', async () => {

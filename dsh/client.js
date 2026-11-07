@@ -13,19 +13,22 @@ window.__ModuleLoader__.load({
     const h = React.createElement;
     const ID = 'dsh-tunetune';
     const UI = '/tunetune/ui/';
-    const LABEL = { zh: 'TuneTune', en: 'TuneTune' };
+    // Named for what the person does here, like the harness's other workspaces; TuneTune is the maker.
+    const LABEL = { zh: '模型工作台', en: 'Model Studio' };
     const GUIDE = {
-      zh: '在对话旁边查看这个目录的模型研究：方案、评估、实验和验收。',
-      en: 'See this directory’s model research beside the conversation: proposal, evaluation, experiments and acceptance.',
+      zh: '在对话旁查看这个文件夹里的模型研究：方案、评测、实验和验收。',
+      en: 'See this folder’s model research beside the conversation: proposal, evaluation, experiments and acceptance.',
     };
 
-    // A dial with a small tuning mark.
+    // The TuneTune double-pulse symbol (design/brand/tunetune-symbol.svg), cropped square and drawn in currentColor.
     function TuneIcon(props) {
       const s = (props && props.size) || 18;
-      return h('svg', { width: s, height: s, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round' },
-        h('circle', { cx: 12, cy: 12, r: 8 }),
-        h('path', { d: 'M12 12l4-4' }),
-        h('path', { d: 'M12 4v2M20 12h-2M12 20v-2M4 12h2' }));
+      return h('svg', { width: s, height: s, viewBox: '43 6 248 248', fill: 'currentColor', 'aria-hidden': true },
+        h('circle', { cx: 70, cy: 184, r: 18 }),
+        h('path', { d: 'M98 163C131 131 176 102 216 80L223 96C177 113 134 139 98 163Z' }),
+        h('path', { d: 'M96 182C125 164 152 154 178 151L180 166C151 168 123 178 99 192Z' }),
+        h('path', { d: 'M244.03 67.814L270.341 58.237A17 17 0 0 1 281.97 90.186L255.659 99.763A17 17 0 0 1 244.03 67.814Z' }),
+        h('path', { d: 'M201.107 145.608L220.594 141.109A14 14 0 0 1 226.893 168.392L207.406 172.891A14 14 0 0 1 201.107 145.608Z' }));
     }
 
     function apply(ctx) {

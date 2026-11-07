@@ -24,6 +24,8 @@ import time
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+# Bytecode caches beside the pinned tools would make the project differ from its manifest.
+sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location("resource_records", Path(__file__).with_name("records.py"))
 records = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(records)
@@ -67,7 +69,7 @@ def download(url, output, budget, deadline, expected=None, internal=False):
     digest = hashlib.sha256()
     count = 0
     opener = build_opener(ProxyHandler({}) if urlsplit(url).hostname in ("127.0.0.1", "localhost", "::1") else ProxyHandler(), Redirects())
-    with opener.open(Request(url, headers={"User-Agent": "TuneTune/0.8.0"}), timeout=remaining(deadline)) as response:
+    with opener.open(Request(url, headers={"User-Agent": "TuneTune/0.8.1"}), timeout=remaining(deadline)) as response:
         length = response.headers.get("Content-Length")
         if length is not None and int(length) > budget:
             raise ValueError("Resource exceeds --max-bytes")

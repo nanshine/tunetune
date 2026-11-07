@@ -4,13 +4,15 @@
 //   - /tunetune/api/studies         studies found in the working directories of loaded sessions
 //   - /tunetune/api/sessions/<id>   the study in one session's working directory, if any
 //   - /tunetune/p/<study>/…         the study's own pinned panel service, started on demand
+//   - POST /tunetune/api/studies/<study>/browser  the same service for a separate browser tab,
+//                                   the only way to show panels from tools that predate the plugin
 // Every route sits behind DeepSeek Harness's connection checks: the panel shows private research
 // and can load local models, so it must never answer requests the harness itself would refuse.
 import { createReadStream, realpathSync, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { forward, PanelServices } from './panels.js';
-import { createSkillProvider } from './skills.js';
+import { createSkillProvider, shadowingSkills } from './skills.js';
 import { findPython, inspectStudy } from './studies.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -70,7 +72,7 @@ function publicStudy(study) {
   return shown;
 }
 
-export function createRouter(ctx, { panels, findStudy = inspectStudy } = {}) {
+export function createRouter(ctx, { panels, findStudy = inspectStudy, shadowed = () => shadowingSkills(SKILLS_ROOT) } = {}) {
   // Studies stay reachable for the life of the process once a session has shown them.
   const known = new Map();
   const remember = (study) => {
@@ -132,17 +134,28 @@ export function createRouter(ctx, { panels, findStudy = inspectStudy } = {}) {
       }
       return forward(req, res, port, `${match[2]}${url.search}`);
     }
+    if ((match = rest.match(/^\/api\/studies\/([0-9a-f]{16})\/browser$/)) && req.method === 'POST') {
+      const directory = known.get(match[1]);
+      const study = directory ? findStudy(directory) : null;
+      if (!study || study.id !== match[1]) return sendJson(res, 404, { error: 'Study not found' });
+      try {
+        // workspace.py binds 127.0.0.1 and checks Host and Origin itself, as when run from a terminal.
+        return sendJson(res, 200, { url: `http://127.0.0.1:${await panels.port(study, { keep: true })}/` });
+      } catch (error) {
+        return sendJson(res, 503, { error: error.message, code: error.code, detail: error.detail });
+      }
+    }
     if (!reading) return sendJson(res, 404, { error: 'Not found' });
     if (rest === '/' || rest === '/ui') {
       res.writeHead(308, { location: `${BASE}/ui/${url.search}` });
       return res.end();
     }
-    if (rest === '/api/studies') return sendJson(res, 200, { studies: studies() });
+    if (rest === '/api/studies') return sendJson(res, 200, { studies: studies(), shadowed: shadowed() });
     if ((match = rest.match(/^\/api\/sessions\/([^/]+)$/))) {
       let id;
       try { id = decodeURIComponent(match[1]); } catch { return sendJson(res, 400, { error: 'Invalid session' }); }
       const study = studyOfSession(id);
-      return sendJson(res, 200, { session: id, study: publicStudy(study) });
+      return sendJson(res, 200, { session: id, study: publicStudy(study), shadowed: shadowed() });
     }
     if ((match = rest.match(/^\/ui\/(.*)$/))) return serveUi(req, res, match[1] || 'index.html');
     return sendJson(res, 404, { error: 'Not found' });

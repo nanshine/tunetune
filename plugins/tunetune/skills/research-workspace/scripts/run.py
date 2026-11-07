@@ -20,6 +20,8 @@ import subprocess
 import tempfile
 import time
 
+# Bytecode caches beside the pinned tools would make the project differ from its manifest.
+sys.dont_write_bytecode = True
 from records import (ATTEMPT, ID, PROCESS, Tree, check_invoke, check_record, digest, encoded, parts, read_record, require,
                      shape, split_samples, strict, verify_inputs, verify_model, verify_path_hash, verify_requires)
 
@@ -45,6 +47,10 @@ while True:
     signal.pause()
 """
 
+
+# Python would write __pycache__ into model, snapshot and evaluation packages it imports from,
+# changing directories whose manifests pin their exact file set.
+NO_BYTECODE = {"PYTHONDONTWRITEBYTECODE": "1"}
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -166,7 +172,7 @@ def execute(tree, path):
                                 [sys.executable, "-I", "-c", LAUNCHER, str(cwd_fd), json.dumps(sorted(mask)),
                                  str(write_fd), *execution["argv"]],
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                env={**os.environ, **execution["environment"], **locations}, pass_fds=(cwd_fd, write_fd),
+                                env={**os.environ, **NO_BYTECODE, **execution["environment"], **locations}, pass_fds=(cwd_fd, write_fd),
                                 start_new_session=True, shell=False,
                             )
                         finally:
@@ -219,7 +225,8 @@ def run_entry(tree, argv, source, output, log_path, timeout):
     started = time.monotonic()
     with open(log_path, "wb") as log:
         process = subprocess.Popen([*argv, source, output], cwd=tree.root, stdin=subprocess.DEVNULL, stdout=log,
-                                   stderr=subprocess.STDOUT, start_new_session=True, shell=False)
+                                   stderr=subprocess.STDOUT, start_new_session=True, shell=False,
+                                   env={**os.environ, **NO_BYTECODE})
         try:
             returncode, timed_out = process.wait(timeout=timeout), False
         except subprocess.TimeoutExpired:

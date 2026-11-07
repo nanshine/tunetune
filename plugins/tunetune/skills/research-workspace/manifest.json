@@ -1,5 +1,5 @@
 {
-  "version": "0.8.0",
+  "version": "0.8.1",
   "files": [
     {
       "path": "assets/panel/assets/index-B91UmRNB.js",
@@ -39,15 +39,15 @@
     },
     {
       "path": "scripts/records.py",
-      "sha256": "dfe7c5bd5386ad7c7c2505ddb1763053a176de15c83df20358d39d9fdcb8993d"
+      "sha256": "42344f19335013ed176551ea48feb9535c90d3c09235b4453606b7308c1c56db"
     },
     {
       "path": "scripts/resources.py",
-      "sha256": "e7c689d3cd83106825f87c42e279a38c530894e5ffc6da6a6d4bc6be748c26d0"
+      "sha256": "d38c849706350ea8d35c9baf36e3854d76640d008892699f9e7bd9bf22dd389e"
     },
     {
       "path": "scripts/run.py",
-      "sha256": "6344fafcb1d6b01b7ac252747d98de4bcd680bdb421bdf998796f825110b87cb"
+      "sha256": "9ddae2ece8521d73c7fd28ec24dc8cfba77a9775df0b463945f249a864d8fd7e"
     },
     {
       "path": "scripts/scout.py",
@@ -55,7 +55,7 @@
     },
     {
       "path": "scripts/workspace.py",
-      "sha256": "7f71874f7027f20836786a429ac3dec20f56fcfb8e450247e0d1a73b9fb01702"
+      "sha256": "3e157e5d372b9f7fabc4c6a6a6e3969733a24b41fc30b9a15f01bf0779568379"
     }
   ]
 }

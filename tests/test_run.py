@@ -476,6 +476,27 @@ class RunTests(unittest.TestCase):
         with self.assertRaises((ValueError, OSError)):
             runner.try_model(self.tree, "missing", "x", 5)
 
+    def test_model_imports_leave_no_bytecode_in_the_pinned_package(self):
+        # An entry point that imports a sibling module would otherwise write __pycache__ into the model
+        # directory, and the next verification would refuse a package whose file set changed.
+        ident = "imports"
+        self.prepare("import json,os,sys; from pathlib import Path\n"
+                     "out=Path(os.environ['TUNETUNE_OUTPUT'])\n"
+                     "(out/'helper.py').write_text('def shout(text):\\n    return text.upper()\\n')\n"
+                     "(out/'invoke.json').write_text(json.dumps("
+                     f"{{'argv':[sys.executable,'experiments/{ident}/model/predict.py']}}))\n", ident)
+        runner.execute(self.tree, f"experiments/{ident}")
+        self.raw(f"experiments/{ident}/model/predict.py",
+                 b"import json,sys\nsys.path.insert(0,__file__.rsplit('/',1)[0])\nimport helper\n"
+                 b"rows=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]\n"
+                 b"with open(sys.argv[2],'w') as f:\n    [f.write(json.dumps({'sample_id':r['sample_id'],'output':helper.shout(r['input'])})+chr(10)) for r in rows]\n")
+        records.finalize(self.tree, f"experiments/{ident}")
+        with patch.dict(os.environ):
+            os.environ.pop("PYTHONDONTWRITEBYTECODE", None)
+            for _ in range(2):
+                self.assertEqual(runner.try_model(self.tree, ident, "post", 5)["output"], "POST")
+        self.assertFalse(list((self.root / f"experiments/{ident}").rglob("__pycache__")))
+
     def shared(self, ident, requires):
         self.prepare("import json,os,sys; from pathlib import Path\n"
                      "(Path(os.environ['TUNETUNE_OUTPUT'])/'invoke.json').write_text(json.dumps("

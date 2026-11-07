@@ -17,7 +17,7 @@ import re
 import stat
 import tempfile
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
 APP_SCRIPTS = ("workspace.py", "monitor.py", "records.py", "run.py", "resources.py", "scout.py")
 # Skill installers may reach the skill through a link; payload checks start at its real directory.
@@ -212,8 +212,13 @@ def install(project, name=None, skill=SKILL, language=None):
     installed_manifest = project / ".workspace/manifest.json"
     no_symlinks(installed_manifest)
     if installed_manifest.exists():
-        if not installed_manifest.is_file() or json_object(installed_manifest.read_bytes(), str(installed_manifest)) != manifest:
-            raise ValueError("Project tools differ from this skill; upgrades are not supported")
+        pinned = json_object(installed_manifest.read_bytes(), str(installed_manifest)) if installed_manifest.is_file() else {}
+        if pinned != manifest:
+            # Name both versions so the person can choose: keep the study on its own tools, or start elsewhere.
+            version = pinned.get("version") if isinstance(pinned.get("version"), str) else "unknown"
+            raise ValueError(f"This directory holds a study pinned to TuneTune tools {version}, and these skills are "
+                             f"{VERSION}. Continue it with its own tools under .workspace/app, or start the new study in "
+                             "another directory; upgrades are not supported")
     app_payload = {project_path(key): data for key, data in payload.items() if not key.startswith("assets/templates/")}
     app = project / ".workspace/app"
     no_symlinks(app)
@@ -223,6 +228,9 @@ def install(project, name=None, skill=SKILL, language=None):
         allowed_dirs = {str(parent) for key in app_payload for parent in PurePosixPath(key).parents}
         for path in app.rglob("*"):
             no_symlinks(path)
+            # Python writes bytecode caches next to imported tools; they are derived, never evidence.
+            if "__pycache__" in path.relative_to(app).parts:
+                continue
             relative = path.relative_to(project).as_posix()
             if path.is_dir() and relative in allowed_dirs:
                 continue
@@ -246,11 +254,10 @@ def install(project, name=None, skill=SKILL, language=None):
                 raise ValueError(f"File occupies required directory: {parent}")
     if not planned:
         return 0
-    ancestor = project.parent
-    while not ancestor.exists():
-        ancestor = ancestor.parent
+    project.mkdir(parents=True, exist_ok=True)
+    # Stage inside the project: sandboxed agents may write only there, and hard links need one filesystem.
     # Exclusive hard-link publication cannot overwrite files created after preflight.
-    with tempfile.TemporaryDirectory(prefix=".workspace-install-", dir=ancestor) as temporary:
+    with tempfile.TemporaryDirectory(prefix=".workspace-install-", dir=project) as temporary:
         staged = Path(temporary)
         for index, data in enumerate(planned.values()):
             (staged / str(index)).write_bytes(data)

@@ -1,7 +1,9 @@
 // Offer the four TuneTune skills to DeepSeek Harness from the same folders every channel ships.
 // Same-name skills a person installed in ~/.dsh/skills or ~/.agents/skills rank ahead of these.
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { shownPath } from './studies.js';
 
 export const SKILLS = ['research-workspace', 'tunetune-init', 'build-evaluation', 'run-experiments'];
 const RANK = 600;
@@ -44,4 +46,37 @@ export function createSkillProvider(root) {
       return { ...summary, content: skill.body };
     },
   };
+}
+
+function manifestVersion(dir) {
+  try {
+    const value = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
+    return typeof value?.version === 'string' ? value.version : null;
+  } catch {
+    return null;
+  }
+}
+
+function sameFile(left, right) {
+  try {
+    return readFileSync(left).equals(readFileSync(right));
+  } catch {
+    return false;
+  }
+}
+
+// Same-name copies in a user skill directory win over the plugin's, so an older install silently
+// sends new studies to older tools whose panel cannot appear here. Report each such directory.
+export function shadowingSkills(root, directories = [join(homedir(), '.dsh', 'skills'), join(homedir(), '.agents', 'skills')]) {
+  const bundled = manifestVersion(join(root, 'research-workspace'));
+  const found = [];
+  for (const directory of directories) {
+    const names = SKILLS.filter((name) => existsSync(join(directory, name, 'SKILL.md')));
+    if (!names.length) continue;
+    const version = names.includes('research-workspace') ? manifestVersion(join(directory, 'research-workspace')) : null;
+    const differs = (version && version !== bundled)
+      || names.some((name) => !sameFile(join(directory, name, 'SKILL.md'), join(root, name, 'SKILL.md')));
+    if (differs) found.push({ location: shownPath(directory), skills: names, version, bundled });
+  }
+  return found;
 }
