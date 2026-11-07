@@ -6,14 +6,13 @@ Install the four skills, initialize the current conversation directory, open the
 
 Use the user-supplied repository, normally https://github.com/nanshine/tunetune; do not substitute another publisher. Skip this step when `research-workspace`, `tunetune-init`, `build-evaluation` and `run-experiments` are already installed side by side.
 
-With Node.js available, install for the current application, user-wide so later studies in other directories need nothing new:
+With Node.js available, install for the current application only, user-wide so later studies in other directories need nothing new. Use that application's skills CLI identifier, such as `codex`, `claude-code`, `cursor`, `opencode`, `trae`, `trae-cn`, `qoder` or `qoder-cn`:
 
 ```sh
-npx skills add nanshine/tunetune --global --agent codex -y
-npx skills add nanshine/tunetune --global --agent claude-code -y
+npx skills add nanshine/tunetune --global --agent <application> -y
 ```
 
-Without Node.js, clone into a temporary directory outside the project and copy the four folders under `plugins/tunetune/skills/` into the application's user skill directory, `~/.agents/skills/` for Codex or `~/.claude/skills/` for Claude Code. Accept only ordinary files and directories. Refuse to replace existing skill folders that differ, and tell the person instead: their research may be pinned to those tools.
+Do not use `--agent '*'` on the person's behalf, since it writes into every supported application. Without Node.js, or when the skills CLI does not know the application, clone into a temporary directory outside the project and copy the four folders under `plugins/tunetune/skills/` into the application's user skill directory: `~/.claude/skills/` for Claude Code, `~/.agents/skills/` for Codex, `~/.cursor/skills/` for Cursor, `~/.config/opencode/skills/` for OpenCode, `~/.trae/skills/` or `~/.trae-cn/skills/` for Trae, `~/.qoder/skills/` or `~/.qoder-cn/skills/` for Qoder. For any other application, use the user skill directory its documentation names, and say that TuneTune has not been tested there. Accept only ordinary files and directories. Refuse to replace existing skill folders that differ, and tell the person instead: their research may be pinned to those tools.
 
 Plugins work too and need no Node.js: in Claude Code, `/plugin marketplace add nanshine/tunetune` then `/plugin install tunetune@tunetune`; in Codex, `codex plugin marketplace add nanshine/tunetune` then `codex plugin add tunetune@tunetune`. Leave the choice of plugin to the person.
 

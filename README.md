@@ -17,12 +17,30 @@ Agent 会调查有竞争力的方法，而不止寻找最容易运行的基线�
 <details>
 <summary>也可以自己先装好 skills</summary>
 
-任意支持 Agent Skills 的应用（一次安装，所有目录可用）：
+任意支持 Agent Skills 的应用（一次安装，所有目录可用），把 `--agent` 换成自己的应用：
 
 ```sh
 npx skills add nanshine/tunetune --global --agent codex
 npx skills add nanshine/tunetune --global --agent claude-code
+npx skills add nanshine/tunetune --global --agent cursor
+npx skills add nanshine/tunetune --global --agent opencode
+npx skills add nanshine/tunetune --global --agent trae      # Trae 国内版用 trae-cn
+npx skills add nanshine/tunetune --global --agent qoder     # Qoder 国内版用 qoder-cn
 ```
+
+`--agent '*'` 会装到 skills CLI 支持的所有应用；之后用 `npx skills update` 更新。没有 Node.js，或应用不在 skills CLI 支持列表中时，把 `plugins/tunetune/skills/` 下的四个文件夹原样复制到该应用的用户 skills 目录：
+
+| 应用 | 用户 skills 目录 |
+|---|---|
+| Claude Code | `~/.claude/skills/` |
+| Codex | `~/.agents/skills/` |
+| Cursor | `~/.cursor/skills/` |
+| OpenCode | `~/.config/opencode/skills/` |
+| Trae / Trae CN | `~/.trae/skills/` / `~/.trae-cn/skills/` |
+| Qoder / Qoder CN | `~/.qoder/skills/` / `~/.qoder-cn/skills/` |
+| 其他应用 | 查阅其 skills 文档；不少应用也读取 `~/.agents/skills/` |
+
+除 Claude Code 和 Codex 外，其他应用尚未逐一实测。
 
 Claude Code 插件：
 
