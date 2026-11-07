@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="390" viewBox="0 0 1100 390" xml:lang="en" role="img" aria-labelledby="title desc">
+  <title id="title">TuneTune research workflow</title>
+  <desc id="desc">You set the goal, review the proposal and subjective references, and try the results. The Agent investigates, establishes evaluation and a baseline, then repeats hypothesis, experiment, and analysis before delivery.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 8 4 0 8" fill="none" stroke="#587087" stroke-width="1.5"/></marker>
+  </defs>
+  <rect width="1100" height="390" rx="20" fill="#f5f8fc"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" text-anchor="middle">
+    <rect x="36" y="28" width="1028" height="68" rx="14" fill="#e4edff"/>
+    <text x="66" y="125" font-size="18" font-weight="700" fill="#2453a6">YOU</text>
+    <g font-size="15" fill="#2453a6">
+      <text x="105" y="69">Set the goal</text><text x="513" y="69">Review direction</text>
+      <text x="755" y="59">Review references</text><text x="755" y="80" font-size="12">when subjective</text>
+      <text x="982" y="69">Try the results</text>
+    </g>
+    <g fill="none" stroke="#8fa8cc" stroke-width="1.5" stroke-dasharray="4 5">
+      <path d="M105 96V148"/><path d="M513 96V148"/><path d="M755 96V148"/><path d="M982 96V148"/>
+    </g>
+    <g fill="#fff" stroke="#cbd7e5" stroke-width="1.5">
+      <rect x="36" y="148" width="138" height="76" rx="12"/>
+      <rect x="210" y="148" width="170" height="76" rx="12"/>
+      <rect x="416" y="148" width="194" height="76" rx="12"/>
+      <rect x="646" y="148" width="218" height="76" rx="12" fill="#e4edff" stroke="#83a6e5"/>
+      <rect x="900" y="148" width="164" height="76" rx="12"/>
+    </g>
+    <g font-size="16" font-weight="600" fill="#20344b">
+      <text x="105" y="192">Your request</text>
+      <text x="295" y="180">Research</text><text x="295" y="202">&amp; clarify</text>
+      <text x="513" y="180">Proposal</text><text x="513" y="202">&amp; resource budget</text>
+      <text x="755" y="180">Evaluation</text><text x="755" y="202">&amp; baseline</text>
+      <text x="982" y="180">Delivery</text><text x="982" y="202">&amp; acceptance</text>
+    </g>
+    <g fill="none" stroke="#587087" stroke-width="1.6" marker-end="url(#arrow)">
+      <path d="M174 186H202"/><path d="M380 186H408"/><path d="M610 186H638"/>
+      <path d="M755 224V267H589"/><path d="M864 300H982V232"/>
+    </g>
+    <rect x="210" y="267" width="654" height="66" rx="12" fill="#fff" stroke="#83a6e5" stroke-width="1.5"/>
+    <g font-size="16" fill="#20344b" font-weight="600">
+      <text x="316" y="307">Hypothesize</text><text x="537" y="307">Experiment</text><text x="755" y="307">Analyze</text>
+    </g>
+    <g fill="none" stroke="#587087" stroke-width="1.6" marker-end="url(#arrow)">
+      <path d="M395 300H456"/><path d="M610 300H681"/>
+      <path d="M755 333V359H316V341"/>
+    </g>
+    <text x="537" y="380" font-size="12" fill="#587087">Repeat within the agreed scope and budget</text>
+  </g>
+</svg>
