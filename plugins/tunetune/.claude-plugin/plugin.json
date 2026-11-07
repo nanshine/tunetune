@@ -1,7 +1,7 @@
 {
   "name": "tunetune",
   "description": "Research and build a useful private model on your own computer, with the Agent as researcher and you as reviewer.",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "author": {
     "name": "nanshine",
     "url": "https://github.com/nanshine"

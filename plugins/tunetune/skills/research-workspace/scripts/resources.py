@@ -69,7 +69,7 @@ def download(url, output, budget, deadline, expected=None, internal=False):
     digest = hashlib.sha256()
     count = 0
     opener = build_opener(ProxyHandler({}) if urlsplit(url).hostname in ("127.0.0.1", "localhost", "::1") else ProxyHandler(), Redirects())
-    with opener.open(Request(url, headers={"User-Agent": "TuneTune/0.8.1"}), timeout=remaining(deadline)) as response:
+    with opener.open(Request(url, headers={"User-Agent": "TuneTune/0.8.2"}), timeout=remaining(deadline)) as response:
         length = response.headers.get("Content-Length")
         if length is not None and int(length) > budget:
             raise ValueError("Resource exceeds --max-bytes")
