@@ -8,6 +8,7 @@
   },
   "homepage": "https://github.com/nanshine/tunetune",
   "repository": "https://github.com/nanshine/tunetune",
+  "license": "Apache-2.0",
   "keywords": ["models", "research", "fine-tuning", "evaluation", "local"],
   "skills": "./skills/",
   "interface": {

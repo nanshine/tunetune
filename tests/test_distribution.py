@@ -32,6 +32,34 @@ def load(name, path):
 
 builder = load("build_skills", ROOT / "scripts/build-skills.py")
 installer = load("skill_init", ROOT / "plugins/tunetune/skills/research-workspace/scripts/init.py")
+release = load("check_release", ROOT / "scripts/check-release.py")
+
+
+class ReleaseTests(unittest.TestCase):
+    def test_repository_is_releasable_under_its_own_version(self):
+        self.assertEqual(release.problems(), [])
+        self.assertEqual(release.problems("v" + release.versions()["package.json"]), [])
+
+    def test_a_tag_that_differs_from_shipped_versions_is_refused(self):
+        issues = release.problems("v999.0.0")
+        self.assertTrue(any(issue.startswith("package.json: version") for issue in issues))
+        self.assertTrue(any("init.py" in issue for issue in issues))
+        self.assertEqual(release.problems(release.versions()["package.json"]),
+                         [f"Release tags look like v{release.versions()['package.json']}, not {release.versions()['package.json']}"])
+
+    def test_every_distributed_unit_carries_the_license(self):
+        license_text = (ROOT / "LICENSE").read_bytes()
+        self.assertIn(b"Apache License", license_text)
+        bundle = json.loads((ROOT / "package.json").read_text())
+        self.assertEqual(bundle["license"], "Apache-2.0")
+        for name in builder.SKILLS:
+            with self.subTest(skill=name):
+                # npx skills and manual copies take one skill folder at a time.
+                self.assertEqual((ROOT / builder.SKILLS_DIR / name / "LICENSE.txt").read_bytes(), license_text)
+        packed = subprocess.run(["npm", "pack", "--dry-run", "--json"], cwd=ROOT, capture_output=True, text=True)
+        if packed.returncode == 0:
+            files = {entry["path"] for entry in json.loads(packed.stdout)[0]["files"]}
+            self.assertLessEqual({"LICENSE", "NOTICE", "plugins/tunetune/skills/run-experiments/LICENSE.txt"}, files)
 
 
 class DistributionTests(unittest.TestCase):

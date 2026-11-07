@@ -1,0 +1,80 @@
+name: Release
+
+# Pushing a tag such as v0.8.0 runs the full CI, checks that every shipped version equals the tag,
+# publishes dsh-tunetune to npm and creates the GitHub release with the npm tarball attached.
+# Skills and the Claude Code / Codex plugins are read straight from the repository, so they need no upload.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # npm trusted publishing and provenance
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Trusted publishing needs npm 11.5.1 or later
+        run: npm install --global npm@11.6.2
+
+      - name: Versions and licenses match the tag
+        id: meta
+        run: |
+          version=$(python3 scripts/check-release.py --tag "$GITHUB_REF_NAME" --print-version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in
+            *-*) echo "dist_tag=next" >> "$GITHUB_OUTPUT"; echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "dist_tag=latest" >> "$GITHUB_OUTPUT"; echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Pack
+        run: npm pack
+
+      - name: Publish to npm
+        env:
+          # Empty once npm trusted publishing is configured; only needed for the very first publish.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          DIST_TAG: ${{ steps.meta.outputs.dist_tag }}
+        run: |
+          # Re-running a release must not fail because this version is already on npm.
+          if npm view "dsh-tunetune@$VERSION" version >/dev/null 2>&1; then
+            echo "dsh-tunetune@$VERSION is already published; skipping."
+          else
+            npm publish "dsh-tunetune-$VERSION.tgz" --access public --provenance --tag "$DIST_TAG"
+          fi
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "dsh-tunetune-$VERSION.tgz" --clobber
+          else
+            flags=()
+            if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+            gh release create "$GITHUB_REF_NAME" "dsh-tunetune-$VERSION.tgz" \
+              --verify-tag --generate-notes --title "TuneTune $VERSION" "${flags[@]}"
+          fi

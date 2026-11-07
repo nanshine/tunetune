@@ -42,7 +42,7 @@ class BundleTests(unittest.TestCase):
         skills = {path.relative_to(ROOT).as_posix() for path in SKILLS.rglob("*")
                   if path.is_file() and path.name != ".DS_Store" and "__pycache__" not in path.parts}
         bundle = {path.relative_to(ROOT).as_posix() for path in (ROOT / "dsh").rglob("*") if path.is_file() and path.name != ".DS_Store"}
-        self.assertEqual(packed, skills | bundle | {"package.json", "README.md", "INSTALL.md"})
+        self.assertEqual(packed, skills | bundle | {"package.json", "README.md", "INSTALL.md", "LICENSE", "NOTICE"})
 
     @unittest.skipUnless(NODE, "Node.js is not installed")
     def test_node_host_suite(self):

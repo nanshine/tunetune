@@ -1,6 +1,7 @@
 ---
 name: build-evaluation
 description: Design, calibrate or change executable TuneTune evaluations, representative samples, data separation and the measured baseline before comparing models.
+license: Apache-2.0 (complete terms in LICENSE.txt)
 ---
 
 # Make useful behavior measurable

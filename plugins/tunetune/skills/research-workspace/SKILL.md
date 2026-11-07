@@ -1,6 +1,7 @@
 ---
 name: research-workspace
 description: Coordinate or resume file-driven TuneTune model research, maintain evidence and route work to proposal, evaluation or experiment rounds.
+license: Apache-2.0 (complete terms in LICENSE.txt)
 ---
 
 # Continue from evidence

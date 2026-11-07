@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.10', '3.13']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.12'
+          cache: npm
+          cache-dependency-path: workspace/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install panel dependencies
+        run: npm --prefix workspace ci
+      - name: Build the panel
+        run: npm --prefix workspace run build
+      - name: Committed panel matches the source
+        # npx skills, plugins and clones ship the committed build, so it must be current.
+        run: |
+          git add --intent-to-add --all plugins/tunetune/skills/research-workspace/assets/panel
+          git diff --exit-code --stat -- plugins/tunetune/skills/research-workspace/assets/panel
+      - name: Release metadata agrees
+        run: python3 scripts/check-release.py
+      - name: Frontend tests
+        run: npm --prefix workspace test
+      - name: Python and DeepSeek Harness host tests
+        run: python3 -B -m unittest discover -s tests -v
+      - name: npm package contents
+        run: npm pack --dry-run

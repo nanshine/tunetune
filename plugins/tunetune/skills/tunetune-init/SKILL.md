@@ -1,6 +1,7 @@
 ---
 name: tunetune-init
 description: Investigate a new or changed TuneTune goal and recommend a practical research proposal, alternatives and resource ceilings before evaluation or experiments.
+license: Apache-2.0 (complete terms in LICENSE.txt)
 ---
 
 # Turn a need into a research direction

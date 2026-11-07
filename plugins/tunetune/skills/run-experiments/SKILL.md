@@ -1,6 +1,7 @@
 ---
 name: run-experiments
 description: Review TuneTune evidence, plan and run bounded experiment rounds, diagnose results, retest existing systems and deliver verified local models.
+license: Apache-2.0 (complete terms in LICENSE.txt)
 ---
 
 # Improve through rounds of informative experiments

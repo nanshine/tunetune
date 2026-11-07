@@ -17,6 +17,8 @@
     "plugins/tunetune/skills/",
     "README.md",
     "INSTALL.md",
+    "LICENSE",
+    "NOTICE",
     "!**/__pycache__/",
     "!**/*.py[cod]",
     "!**/.DS_Store"
@@ -31,6 +33,7 @@
     "evaluation"
   ],
   "author": "nanshine",
+  "license": "Apache-2.0",
   "homepage": "https://github.com/nanshine/tunetune",
   "repository": {
     "type": "git",
