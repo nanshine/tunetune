@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """Execute one prepared config; never infer scientific success."""
+import sys
+
+# These tools rely on POSIX descriptor-relative opens, locks and process groups to protect
+# research files; native Windows has none of them, so refuse clearly instead of failing on import.
+if sys.platform == "win32":
+    sys.exit("TuneTune tools need macOS or Linux. On Windows, run them inside WSL2 with the study "
+             "in the Linux home directory, not under /mnt; INSTALL.md describes the setup.")
 import argparse
 from datetime import datetime, timezone
 import json
@@ -10,7 +17,6 @@ import shutil
 import signal
 import stat
 import subprocess
-import sys
 import tempfile
 import time
 
