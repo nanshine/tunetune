@@ -1,12 +1,14 @@
 // Offer the four TuneTune skills to DeepSeek Harness from the same folders every channel ships.
-// Same-name skills a person installed in ~/.dsh/skills or ~/.agents/skills rank ahead of these.
+// ~/.agents/skills is shared by every agent, so a copy there was usually installed for another one and
+// must not replace this plugin's. Rank 450 sits between ~/.dsh/skills (400) and ~/.agents/skills (500):
+// copies placed for DeepSeek Harness itself, in ~/.dsh/skills or a project's skill folders, still win.
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { shownPath } from './studies.js';
 
 export const SKILLS = ['research-workspace', 'tunetune-init', 'build-evaluation', 'run-experiments'];
-const RANK = 600;
+export const RANK = 450;
 const INVOCATION = { modelInvocable: true, userInvocable: true };
 
 export function readSkill(root, name) {
@@ -65,9 +67,9 @@ function sameFile(left, right) {
   }
 }
 
-// Same-name copies in a user skill directory win over the plugin's, so an older install silently
+// Same-name copies in ~/.dsh/skills still win over the plugin's, so an older install silently
 // sends new studies to older tools whose panel cannot appear here. Report each such directory.
-export function shadowingSkills(root, directories = [join(homedir(), '.dsh', 'skills'), join(homedir(), '.agents', 'skills')]) {
+export function shadowingSkills(root, directories = [join(homedir(), '.dsh', 'skills')]) {
   const bundled = manifestVersion(join(root, 'research-workspace'));
   const found = [];
   for (const directory of directories) {

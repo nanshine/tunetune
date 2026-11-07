@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 import tempfile
 
-VERSION = "0.8.1"
+# The release version lives in package.json; scripts/set-version.py writes the shipped copies.
+VERSION = json.loads((Path(__file__).resolve().parents[1] / "package.json").read_text(encoding="utf-8"))["version"]
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
 SKILLS_DIR = "plugins/tunetune/skills"
 SKILLS = ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments")

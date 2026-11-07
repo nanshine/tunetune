@@ -49,7 +49,8 @@ describe('skills', () => {
     assert.deepEqual(listed.map((skill) => skill.name).sort(), [...SKILLS].sort());
     for (const skill of listed) {
       assert.equal(skill.source, 'bundled');
-      assert.equal(skill.rank, 600);
+      // Ahead of the shared ~/.agents/skills (500), behind DeepSeek Harness's own ~/.dsh/skills (400).
+      assert.ok(skill.rank > 400 && skill.rank < 500);
       assert.equal(skill.resourceBase.path, join(SKILLS_ROOT, skill.name));
       assert.ok(skill.description.length > 20);
     }
@@ -77,6 +78,17 @@ describe('skill copies outside the plugin', () => {
       assert.deepEqual(found.map((item) => [item.location, item.version, item.skills.length]), [[older, '0.7.0', 4]]);
       writeFileSync(join(same, 'tunetune-init', 'SKILL.md'), 'edited');
       assert.deepEqual(shadowingSkills(SKILLS_ROOT, [same]).map((item) => item.skills.length), [4]);
+      // The plugin outranks the shared ~/.agents/skills, so only ~/.dsh/skills is checked by default.
+      const home = process.env.HOME;
+      try {
+        process.env.HOME = base;
+        cpSync(older, join(base, '.agents', 'skills'), { recursive: true });
+        assert.deepEqual(shadowingSkills(SKILLS_ROOT), []);
+        cpSync(older, join(base, '.dsh', 'skills'), { recursive: true });
+        assert.deepEqual(shadowingSkills(SKILLS_ROOT).map((item) => item.version), ['0.7.0']);
+      } finally {
+        process.env.HOME = home;
+      }
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

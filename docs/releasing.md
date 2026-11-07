@@ -11,7 +11,7 @@ A release is one version number shared by every channel. Skills (`npx skills`), 
 
 ## Each release
 
-1. Bump the version everywhere it lives. `python3 scripts/check-release.py --tag v<new>` lists each place that still differs: both `package.json` files and `workspace/package-lock.json`, both plugin manifests, `VERSION` in `scripts/build-skills.py`, `init.py` and `records.py`, and the `resources.py` User-Agent; also update the pinned versions in `tests/test_distribution.py`, which the test suite will flag. A new tool version means existing studies stay pinned to the old one, as described in `AGENTS.md`.
+1. Set the version with `python3 scripts/set-version.py <new>`. The root `package.json` is the source: the script writes the copies each channel needs (both plugin manifests, `VERSION` in `init.py` and `records.py`, and the `resources.py` User-Agent) and rebuilds the skill manifest; `build-skills.py` and the tests read `package.json` directly, and the private panel package in `workspace/` carries no release version. The tools keep their own copy because they are copied alone into every study. A new tool version means existing studies stay pinned to the old one, as described in `AGENTS.md`.
 2. Rebuild and test from the repository root:
 
    ```sh

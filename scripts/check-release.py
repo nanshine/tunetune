@@ -34,20 +34,15 @@ def python_version(relative):
 
 
 def versions():
-    """Every place a release number lives; each must be bumped together."""
-    lock = read_json("workspace/package-lock.json")
+    """Every shipped copy of the release number; scripts/set-version.py writes them from package.json."""
     found = {
         "package.json": read_json("package.json")["version"],
-        "workspace/package.json": read_json("workspace/package.json")["version"],
-        "workspace/package-lock.json": lock["version"],
-        "workspace/package-lock.json (root package)": lock["packages"][""]["version"],
         "plugins/tunetune/.claude-plugin/plugin.json": read_json("plugins/tunetune/.claude-plugin/plugin.json")["version"],
         "plugins/tunetune/.codex-plugin/plugin.json": read_json("plugins/tunetune/.codex-plugin/plugin.json")["version"],
         "plugins/tunetune/skills/research-workspace/manifest.json": read_json(
             "plugins/tunetune/skills/research-workspace/manifest.json")["version"],
     }
-    for relative in ("scripts/build-skills.py",
-                     "plugins/tunetune/skills/research-workspace/scripts/init.py",
+    for relative in ("plugins/tunetune/skills/research-workspace/scripts/init.py",
                      "plugins/tunetune/skills/research-workspace/scripts/records.py"):
         found[relative] = python_version(relative)
     agent = re.search(r'TuneTune/([0-9][^"\s]*)', (SKILLS_DIR / "research-workspace/scripts/resources.py").read_text(encoding="utf-8"))

@@ -33,12 +33,28 @@ def load(name, path):
 builder = load("build_skills", ROOT / "scripts/build-skills.py")
 installer = load("skill_init", ROOT / "plugins/tunetune/skills/research-workspace/scripts/init.py")
 release = load("check_release", ROOT / "scripts/check-release.py")
+RELEASE = json.loads((ROOT / "package.json").read_text())["version"]
 
 
 class ReleaseTests(unittest.TestCase):
     def test_repository_is_releasable_under_its_own_version(self):
         self.assertEqual(release.problems(), [])
         self.assertEqual(release.problems("v" + release.versions()["package.json"]), [])
+
+    def test_one_command_sets_every_shipped_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            copy = Path(temporary)
+            for name in ("package.json", "LICENSE"):
+                shutil.copyfile(ROOT / name, copy / name)
+            for name in ("scripts", "plugins"):
+                shutil.copytree(ROOT / name, copy / name, ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"))
+            subprocess.run([sys.executable, "-B", str(copy / "scripts/set-version.py"), "v9.9.9-rc.1"],
+                           check=True, capture_output=True)
+            checked = subprocess.run([sys.executable, "-B", str(copy / "scripts/check-release.py"), "--tag", "v9.9.9-rc.1"],
+                                     capture_output=True, text=True)
+            self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+            refused = subprocess.run([sys.executable, "-B", str(copy / "scripts/set-version.py"), "nine"], capture_output=True)
+            self.assertNotEqual(refused.returncode, 0)
 
     def test_a_tag_that_differs_from_shipped_versions_is_refused(self):
         issues = release.problems("v999.0.0")
@@ -94,7 +110,7 @@ class DistributionTests(unittest.TestCase):
 
     def test_manifest_pins_exactly_the_copied_payload(self):
         manifest, _, payload = installer.verify_skill(self.skill)
-        self.assertEqual(manifest["version"], "0.8.1")
+        self.assertEqual(manifest["version"], RELEASE)
         self.assertEqual(set(manifest), {"version", "files"})
         self.assertEqual(builder.TEMPLATES, installer.TEMPLATES)
         self.assertEqual(builder.APP_SCRIPTS, installer.APP_SCRIPTS)
@@ -110,15 +126,14 @@ class DistributionTests(unittest.TestCase):
         self.assertTrue(builder.check(ROOT), "Rebuild the panel and run scripts/build-skills.py")
 
     def test_versions_and_plugin_manifests_agree(self):
-        package = json.loads((ROOT / "workspace/package.json").read_text())
-        # The DeepSeek Harness bundle at the repository root ships the same skills.
-        bundle = json.loads((ROOT / "package.json").read_text())
-        self.assertEqual({builder.VERSION, installer.VERSION, package["version"], bundle["version"]}, {"0.8.1"})
+        # package.json is the single source; the private panel package carries no release version.
+        self.assertEqual({builder.VERSION, installer.VERSION}, {RELEASE})
+        self.assertNotIn("version", json.loads((ROOT / "workspace/package.json").read_text()))
         plugin_root = ROOT / "plugins/tunetune"
         for path in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
             with self.subTest(path=path):
                 plugin = json.loads((plugin_root / path).read_text())
-                self.assertEqual((plugin["name"], plugin["version"], plugin["skills"]), ("tunetune", "0.8.1", "./skills/"))
+                self.assertEqual((plugin["name"], plugin["version"], plugin["skills"]), ("tunetune", RELEASE, "./skills/"))
         # Plugin installers copy the whole plugin root, so it must hold the skills and nothing else.
         self.assertEqual({path.name for path in plugin_root.iterdir() if path.name != ".DS_Store"}, {".claude-plugin", ".codex-plugin", "skills"})
         self.assertFalse(any(path.is_symlink() for path in plugin_root.rglob("*")))

@@ -14,7 +14,7 @@ window.__ModuleLoader__.load({
     const ID = 'dsh-tunetune';
     const UI = '/tunetune/ui/';
     // Named for what the person does here, like the harness's other workspaces; TuneTune is the maker.
-    const LABEL = { zh: '模型工作台', en: 'Model Studio' };
+    const LABEL = { zh: '模型研究室', en: 'Model Lab' };
     const GUIDE = {
       zh: '在对话旁查看这个文件夹里的模型研究：方案、评测、实验和验收。',
       en: 'See this folder’s model research beside the conversation: proposal, evaluation, experiments and acceptance.',
