@@ -94,7 +94,7 @@ class DistributionTests(unittest.TestCase):
 
     def test_manifest_pins_exactly_the_copied_payload(self):
         manifest, _, payload = installer.verify_skill(self.skill)
-        self.assertEqual(manifest["version"], "0.7.1")
+        self.assertEqual(manifest["version"], "0.8.0")
         self.assertEqual(set(manifest), {"version", "files"})
         self.assertEqual(builder.TEMPLATES, installer.TEMPLATES)
         self.assertEqual(builder.APP_SCRIPTS, installer.APP_SCRIPTS)
@@ -113,12 +113,12 @@ class DistributionTests(unittest.TestCase):
         package = json.loads((ROOT / "workspace/package.json").read_text())
         # The DeepSeek Harness bundle at the repository root ships the same skills.
         bundle = json.loads((ROOT / "package.json").read_text())
-        self.assertEqual({builder.VERSION, installer.VERSION, package["version"], bundle["version"]}, {"0.7.1"})
+        self.assertEqual({builder.VERSION, installer.VERSION, package["version"], bundle["version"]}, {"0.8.0"})
         plugin_root = ROOT / "plugins/tunetune"
         for path in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
             with self.subTest(path=path):
                 plugin = json.loads((plugin_root / path).read_text())
-                self.assertEqual((plugin["name"], plugin["version"], plugin["skills"]), ("tunetune", "0.7.1", "./skills/"))
+                self.assertEqual((plugin["name"], plugin["version"], plugin["skills"]), ("tunetune", "0.8.0", "./skills/"))
         # Plugin installers copy the whole plugin root, so it must hold the skills and nothing else.
         self.assertEqual({path.name for path in plugin_root.iterdir() if path.name != ".DS_Store"}, {".claude-plugin", ".codex-plugin", "skills"})
         self.assertFalse(any(path.is_symlink() for path in plugin_root.rglob("*")))
