@@ -49,6 +49,14 @@ class WorkspaceTests(unittest.TestCase):
         self.addCleanup(stop)
         return server
 
+    def test_startup_never_waits_on_reverse_dns(self):
+        # HTTPServer resolves its address with getfqdn, which stalls for seconds on some networks.
+        with patch.object(socket, "getfqdn", side_effect=AssertionError("reverse DNS lookup")):
+            server = self.start(self.root)
+        self.assertEqual((server.server_name, server.server_port), server.server_address[:2])
+        status, _, _ = self.request(port=server.server_address[1])
+        self.assertEqual(status, 200)
+
     def write(self, name, content, root=None):
         path = (root or self.root) / name
         path.parent.mkdir(parents=True, exist_ok=True)

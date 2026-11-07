@@ -784,7 +784,7 @@ finally:
                                    f"sys.exit({exit_code})\n")
                         self.prepare(payload, ident)
                         with os.fdopen(os.open(fifo, os.O_RDONLY | os.O_NONBLOCK), "rb", buffering=0) as probe:
-                            result = subprocess.run([sys.executable, "-B", "-c", harness, str(SCRIPTS), stage, str(sig),
+                            result = subprocess.run([sys.executable, "-B", "-c", harness, str(SCRIPTS), stage, str(int(sig)),
                                                      "--project", str(self.root), "--path", path],
                                                     capture_output=True, text=True, timeout=10)
                             self.assertEqual(result.returncode, 1, result.stderr)

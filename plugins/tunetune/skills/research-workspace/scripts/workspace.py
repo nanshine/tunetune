@@ -13,6 +13,7 @@ import mimetypes
 import os
 import queue
 import signal
+import socketserver
 from pathlib import Path
 import re
 import stat
@@ -885,8 +886,15 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
 
+class LoopbackServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer would resolve 127.0.0.1 through reverse DNS, which can stall startup for many seconds.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def make_server(root: Path, assets: Path, port: int = 0) -> HTTPServer:
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = LoopbackServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     server.reader = Reader(root)
     server.assets = SafeTree(assets)
