@@ -112,6 +112,11 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(result["state"], "busy")
             self.assertEqual(result["size"], "显存 4.0 / 24.0 GB")
             self.assertEqual(probe.call_args.args[0][0], "/usr/bin/nvidia-smi")
+        wsl = "/usr/lib/wsl/lib/nvidia-smi"
+        with patch.object(monitor.os.path, "isfile", side_effect=lambda path: path == wsl), \
+                patch.object(monitor, "command", return_value="0, NVIDIA Test, 24576, 4096, 25\n") as probe:
+            monitor.gpu_probe()
+            self.assertEqual(probe.call_args.args[0][0], wsl)
         for output in ("bad", "0, Test, nan, 4, 2", "0, Test, 8, 9, 2"):
             with patch.object(monitor.os.path, "isfile", return_value=True), patch.object(monitor, "command", return_value=output):
                 with self.assertRaises(ValueError):

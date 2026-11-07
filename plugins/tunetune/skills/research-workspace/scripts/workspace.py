@@ -1,6 +1,14 @@
 """Local, file-backed research workspace. Writes only project-name metadata; no research execution."""
 from __future__ import annotations
 
+import sys
+
+# These tools rely on POSIX descriptor-relative opens, locks and process groups to protect
+# research files; native Windows has none of them, so refuse clearly instead of failing on import.
+if sys.platform == "win32":
+    sys.exit("TuneTune tools need macOS or Linux. On Windows, run them inside WSL2 with the study "
+             "in the Linux home directory, not under /mnt; INSTALL.md describes the setup.")
+
 import argparse
 import webbrowser
 import copy
@@ -18,7 +26,6 @@ from pathlib import Path
 import re
 import stat
 import subprocess
-import sys
 import threading
 import time
 from contextlib import contextmanager

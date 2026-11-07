@@ -20,7 +20,7 @@ In DeepSeek Harness, the `dsh-tunetune` plugin brings the skills and shows the p
 
 ## Initialize the current directory
 
-Check Python 3.10+ on macOS/Linux. Read the installed shared skill's `references/agent-adapters.md`, then run its initializer with actual paths:
+Check Python 3.10+ on macOS/Linux. On native Windows, follow "Windows through WSL2" in the shared skill's `references/agent-adapters.md`: it sets up WSL2 with as little from the person as possible and places the study in the Linux home directory instead of the current Windows folder. Read the installed shared skill's `references/agent-adapters.md`, then run its initializer with actual paths:
 
 ```sh
 python3 <research-workspace skill>/scripts/init.py --project <current-directory>

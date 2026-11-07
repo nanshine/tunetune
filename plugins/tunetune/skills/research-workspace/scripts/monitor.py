@@ -60,7 +60,9 @@ def memory_probe():
 
 
 def gpu_probe():
-    binary = next((path for path in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/opt/nvidia/bin/nvidia-smi") if os.path.isfile(path)), None)
+    # WSL2 exposes the Windows NVIDIA driver's tool under /usr/lib/wsl/lib.
+    binary = next((path for path in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/opt/nvidia/bin/nvidia-smi",
+                                       "/usr/lib/wsl/lib/nvidia-smi") if os.path.isfile(path)), None)
     if binary is None:
         raise ValueError("NVIDIA probe unavailable")
     output = command([binary, "--query-gpu=index,name,memory.total,memory.used,utilization.gpu", "--format=csv,noheader,nounits"])

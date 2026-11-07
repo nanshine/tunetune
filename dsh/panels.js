@@ -13,8 +13,9 @@ const FORWARD_REQUEST = ['accept', 'content-type', 'content-length'];
 const FORWARD_RESPONSE = ['content-type', 'content-length', 'cache-control', 'x-content-type-options', 'referrer-policy'];
 
 export class PanelServices {
-  constructor({ findPython, idleMs = 15 * 60_000, spawnProcess = spawn, log = () => {} }) {
+  constructor({ findPython, idleMs = 15 * 60_000, spawnProcess = spawn, log = () => {}, platform = process.platform }) {
     this.findPython = findPython;
+    this.platform = platform;
     this.idleMs = idleMs;
     this.spawnProcess = spawnProcess;
     this.log = log;
@@ -45,6 +46,8 @@ export class PanelServices {
   }
 
   async start(study) {
+    // The pinned tools refuse native Windows; studies there live inside WSL2 instead.
+    if (this.platform === 'win32') throw Object.assign(new Error('TuneTune needs WSL2 on Windows'), { code: 'windows-host' });
     const python = await this.findPython();
     if (!python) throw Object.assign(new Error('Python 3.10 or newer was not found'), { code: 'python-missing' });
     const entry = this.running.get(study.id);

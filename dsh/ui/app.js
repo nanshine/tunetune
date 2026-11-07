@@ -24,6 +24,7 @@ const TEXT = {
     oldBody: '它的工具固定在初始化时的版本，那一版面板不能嵌入 DeepSeek Harness。在终端运行下面的命令，用浏览器打开它：',
     failTitle: '研究面板没有启动',
     pythonBody: '需要 Python 3.10 或更新版本。安装后重新打开这个标签；也可以设置环境变量 TUNETUNE_PYTHON 指向 python3。',
+    windowsBody: '在 Windows 上，TuneTune 需要在 WSL2 里运行。请在 WSL2 中运行 DeepSeek Harness 并打开研究目录，或者让 Agent 帮你配置 WSL2。',
     failBody: '下面是面板服务的输出：',
     retry: '重试',
   },
@@ -43,6 +44,7 @@ const TEXT = {
     oldBody: 'Its tools stay at the version that initialized it, and that panel cannot be embedded in DeepSeek Harness. Run this in a terminal to open it in a browser:',
     failTitle: 'The research panel did not start',
     pythonBody: 'Python 3.10 or newer is required. Install it and reopen this tab, or set TUNETUNE_PYTHON to a python3 executable.',
+    windowsBody: 'On Windows, TuneTune runs inside WSL2. Run DeepSeek Harness inside WSL2 and open the study there, or ask the Agent to set up WSL2.',
     failBody: 'Output from the panel service:',
     retry: 'Retry',
   },
@@ -102,8 +104,9 @@ async function openStudy(study, header) {
   if (current?.study !== study) return;
   if (!probe.ok) {
     const retry = el('button', { class: 'primary', onclick: () => openStudy(study, header) }, t('retry'));
-    const detail = probe.value.code === 'python-missing' ? null : el('pre', {}, probe.value.detail || probe.value.error || `HTTP ${probe.status}`);
-    show(header, notice(t('failTitle'), probe.value.code === 'python-missing' ? t('pythonBody') : t('failBody'), detail, retry));
+    const known = { 'python-missing': 'pythonBody', 'windows-host': 'windowsBody' }[probe.value.code];
+    const detail = known ? null : el('pre', {}, probe.value.detail || probe.value.error || `HTTP ${probe.status}`);
+    show(header, notice(t('failTitle'), t(known || 'failBody'), detail, retry));
     return;
   }
   show(header, el('iframe', { class: 'frame', src: base, title: study.name || t('unnamed') }));

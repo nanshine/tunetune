@@ -35,15 +35,15 @@
     },
     {
       "path": "scripts/monitor.py",
-      "sha256": "b013ededc8a887f35dd64317147c347d837b0f66589a507f374187c8363b0551"
+      "sha256": "37b5335dd098f43941e1bd10d28f6682458b86a856c27e84d7e7c4baa9d212d7"
     },
     {
       "path": "scripts/records.py",
-      "sha256": "9d026e10ea9d7f67768ef184c983791732b8690829cc2bc0c2ba5cf1846ddf7a"
+      "sha256": "ba49f3870e0e8731cd8820e4af09963fb672fe24924bfc6b4cba837232aab8fd"
     },
     {
       "path": "scripts/resources.py",
-      "sha256": "bc07bc73bd90bf511c5f50e534ff88fbe5fa0310f3a23c3b07c33e065eae2add"
+      "sha256": "8ce619b145f5df4f95ae2376831aa9a94719e3dc390eea8c48d7b91395221ff3"
     },
     {
       "path": "scripts/run.py",
@@ -55,7 +55,7 @@
     },
     {
       "path": "scripts/workspace.py",
-      "sha256": "d92981db5bcc7567de12d58e0aed8698a7751a7dbc43cff9a9b700f3870b536f"
+      "sha256": "7f71874f7027f20836786a429ac3dec20f56fcfb8e450247e0d1a73b9fb01702"
     }
   ]
 }

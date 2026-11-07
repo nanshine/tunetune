@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """Initialize a research project from this installed skill without replacing existing research."""
+import sys
+
+# These tools rely on POSIX descriptor-relative opens, locks and process groups to protect
+# research files; native Windows has none of them, so refuse clearly instead of failing on import.
+if sys.platform == "win32":
+    sys.exit("TuneTune tools need macOS or Linux. On Windows, run them inside WSL2 with the study "
+             "in the Linux home directory, not under /mnt; INSTALL.md describes the setup.")
 import argparse
 import hashlib
 import importlib.util
@@ -8,7 +15,6 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
-import sys
 import tempfile
 
 VERSION = "0.7.1"
@@ -52,6 +58,32 @@ def no_symlinks(path, root=None):
             return
         if item.is_symlink():
             raise ValueError(f"Symlinks are not supported: {item}")
+
+
+def windows_drive(project, mounts="/proc/self/mounts", release="/proc/sys/kernel/osrelease"):
+    """Return the mount point when WSL serves the project from a Windows drive, else None."""
+    try:
+        if "microsoft" not in Path(release).read_text().lower():
+            return None
+        table = Path(mounts).read_text()
+    except OSError:
+        return None
+    target, best = os.path.realpath(project), None
+    for line in table.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        point = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), fields[1])
+        inside = target == point or target.startswith(point.rstrip("/") + "/")
+        if inside and (best is None or len(point) > len(best[0])):
+            best = (point, fields[2], fields[3])
+    # WSL serves Windows drives through drvfs, a 9p or virtiofs share whose links,
+    # permissions and locks differ from Linux and would weaken record protection.
+    if best is None:
+        return None
+    point, kind, options = best
+    shared = kind in ("9p", "virtiofs") and ("drvfs" in options or point.startswith("/mnt/"))
+    return point if kind == "drvfs" or shared else None
 
 
 def validate_business(name, data):
@@ -144,6 +176,10 @@ def install(project, name=None, skill=SKILL, language=None):
     skill, project = Path(os.path.realpath(skill)), Path(os.path.abspath(project))
     manifest, manifest_bytes, payload = verify_skill(skill)
     no_symlinks(project)
+    drive = windows_drive(project)
+    if drive:
+        raise ValueError(f"Project is on a Windows drive mounted at {drive}; create it under the WSL "
+                         "Linux home directory, such as ~/tunetune/<name>, and copy input data there")
     if project == skill or skill in project.parents or project in skill.parents:
         raise ValueError("Project and skill directories must not overlap")
     if name is not None and not name.strip():

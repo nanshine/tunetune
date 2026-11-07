@@ -236,6 +236,14 @@ describe('panel processes', () => {
     assert.equal(panels.running.size, 0);
   });
 
+  test('a native Windows host is told to use WSL2 and nothing is started', async () => {
+    let spawned = false;
+    const panels = new PanelServices({ findPython: async () => 'python3', spawnProcess: () => { spawned = true; }, platform: 'win32' });
+    await assert.rejects(panels.port({ id: 'b'.repeat(16), directory: 'C:\\study', path: 'C:\\study' }), { code: 'windows-host' });
+    assert.equal(spawned, false);
+    assert.equal(panels.running.size, 0);
+  });
+
   test('idle services stop and stopping ends the process', async () => {
     const base = realpathSync(mkdtempSync(join(tmpdir(), 'tunetune-dsh-idle-')));
     try {
