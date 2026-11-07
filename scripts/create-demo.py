@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a local synthetic classical-classifier demo in a fresh format-4 project.
+"""Create a local synthetic classical-classifier demo in a fresh project.
 
 No dependencies, network access, installation, or model downloads. Existing research
 is refused, including partial prior demo runs. Invoke only after installing a kit:
@@ -411,8 +411,8 @@ class Demo:
             self.records.shape(path, data)
             self.initial[path] = self.records.digest(data)
         manifest = self.read_json(".workspace/manifest.json")
-        if not manifest.get("schema_min", 0) == 4 == manifest.get("schema_max", 0):
-            raise ValueError("Installed kit does not support schema 4")
+        if manifest.get("version") != self.records.VERSION:
+            raise ValueError("Installed kit is pinned to other tools")
         for path in ("AGENTS.md", ".workspace/app/workspace.py", ".workspace/app/monitor.py",
                      ".workspace/app/assets/index.html", HELPERS + "/run.py"):
             if not self.tree.read(path):

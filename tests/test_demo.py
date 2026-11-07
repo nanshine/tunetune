@@ -67,7 +67,7 @@ class DemoTests(unittest.TestCase):
         cls.report = json.loads(result.stdout)
         cls.generated_files = file_bytes(cls.project)
 
-    def test_complete_schema_and_exact_file_layout(self):
+    def test_complete_records_and_exact_file_layout(self):
         self.assertEqual(self.report["experiments"], 10)
         self.assertEqual(self.report["evaluation_runs"], 12)
         self.assertEqual(self.report["evaluation_versions"], ["v1", "v2"])
@@ -80,8 +80,7 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(report["warnings"], [])
         self.assertEqual(report["unfinished"], [])
         project = read_json(self.project / "project.json")
-        self.assertEqual(set(project), {"schema_version", "name", "language", "current_evaluation", "deliveries"})
-        self.assertEqual(project["schema_version"], 4)
+        self.assertEqual(set(project), {"name", "language", "current_evaluation", "deliveries"})
         self.assertEqual(project["current_evaluation"], "v2")
         self.assertEqual(project["deliveries"], demo.DELIVERIES)
         proposal = read_json(self.project / "proposal.json")
@@ -329,7 +328,7 @@ class DemoSafetyTests(unittest.TestCase):
             ("resources.json", {"items": [{"id": "real", "title": "Real data", "type": "dataset", "status": "unknown"}]}),
             ("project.json", {"deliveries": ["existing-model"]}),
             ("project.json", {"schema_version": 1}),
-            (".workspace/manifest.json", {"schema_min": 1, "schema_max": 1}),
+            (".workspace/manifest.json", {"version": "0.6.0"}),
         ]
         for index, (name, changes) in enumerate(cases):
             root = installed_fixture(self.base / f"existing-{index}")

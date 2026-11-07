@@ -24,7 +24,7 @@ class MediaTests(unittest.TestCase):
         self.root.mkdir()
         self.assets.mkdir()
         (self.assets / 'index.html').write_text('<title>Research</title>')
-        self.write('project.json', {'schema_version': 4, 'name': 'Media', 'deliveries': []})
+        self.write('project.json', {'name': 'Media', 'deliveries': []})
         self.server = wb.make_server(self.root, self.assets)
         self.thread = threading.Thread(target=self.server.serve_forever,
                                        kwargs={'poll_interval': 0.01}, daemon=True)

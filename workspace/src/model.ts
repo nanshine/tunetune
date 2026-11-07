@@ -1,3 +1,4 @@
+import { labels, t } from './i18n';
 export type JsonObject = Record<string, unknown>;
 export type ResearchFile = { content: unknown; sha256: string };
 export type ResourceState = 'ready' | 'missing' | 'changed' | 'busy' | 'unknown';
@@ -12,15 +13,15 @@ export type Snapshot = { files: Record<string, ResearchFile>; revision: string; 
 export type Outcome = 'baseline' | 'keep' | 'discard' | 'inconclusive' | 'invalid';
 export type Analysis = { outcome: Outcome | 'unknown'; summary: string };
 export type Usage = { requests?: number; input_tokens?: number; output_tokens?: number; cost?: number; currency?: string; latency_seconds?: number };
-export const roleLabels: Record<string, string> = { baseline: '基线', candidate: '候选改进', reference: '质量参照', recommended: '推荐路线', challenge: '挑战路线' };
+export const roleLabels: Record<string, string> = labels({ baseline: '基线', candidate: '候选改进', reference: '质量参照', recommended: '推荐路线', challenge: '挑战路线' });
 export type Experiment = { id: string; title: string; parent: string | null; state: string; modelPath: string; targetKind: 'local' | 'api' | ''; invoke: string[]; serve: boolean; role: string; usage: Usage; method: string; modelName: string; framework: string; hypothesis: string; parameters: JsonObject; analysis: Analysis };
 export type Split = 'development' | 'final';
 export type EvaluationRun = { id: string; experimentId: string; version: string; split: Split; state: string; metrics: Record<string, number>; metricLabels: Record<string, string>; path: string; recordedAt: string; evaluationHash: string; inputFingerprint: string; usage: Usage };
 
-export const outcomeLabels: Record<Outcome | 'unknown', string> = { baseline: '基线', keep: '保留', discard: '舍弃', inconclusive: '暂不确定', invalid: '无效', unknown: '尚无结论' };
-export const resourceStates: Record<ResourceState, string> = { ready: '已就绪', missing: '缺失', changed: '已变化', busy: '使用中', unknown: '未知' };
+export const outcomeLabels: Record<Outcome | 'unknown', string> = labels({ baseline: '基线', keep: '保留', discard: '舍弃', inconclusive: '暂不确定', invalid: '无效', unknown: '尚无结论' });
+export const resourceStates: Record<ResourceState, string> = labels({ ready: '已就绪', missing: '缺失', changed: '已变化', busy: '使用中', unknown: '未知' });
 export type ReferenceStatus = 'confirmed' | 'corrected' | 'draft';
-export const referenceStatusLabels: Record<ReferenceStatus, string> = { confirmed: '已确认', corrected: '已修正', draft: '待审核' };
+export const referenceStatusLabels: Record<ReferenceStatus, string> = labels({ confirmed: '已确认', corrected: '已修正', draft: '待审核' });
 // Unmarked references are drafts: only the person's review makes them their judgment.
 export function referenceStatus(row: JsonObject): ReferenceStatus | null {
   if (!Object.hasOwn(row, 'reference')) return null;
@@ -35,7 +36,7 @@ export function referenceReview(rows: JsonObject[]): Record<ReferenceStatus, num
   }
   return counts;
 }
-export const stateLabels: Record<string, string> = { pending: '待运行', running: '记录为运行中', completed: '待核验', succeeded: '成功', failed: '失败', cancelled: '已取消', unknown: '尚无记录' };
+export const stateLabels: Record<string, string> = labels({ pending: '待运行', running: '记录为运行中', completed: '待核验', succeeded: '成功', failed: '失败', cancelled: '已取消', unknown: '尚无记录' });
 
 export function object(value: unknown): JsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {};
@@ -50,41 +51,40 @@ export function statusLabel(state: string): string { return Object.hasOwn(stateL
 
 export function parseSnapshot(value: unknown): Snapshot {
   const data = object(value);
-  if (!data.files || typeof data.files !== 'object' || Array.isArray(data.files) || typeof data.revision !== 'string' || typeof data.synced_at !== 'string' || (data.error !== null && typeof data.error !== 'string')) throw new Error('文件通道返回了无效格式');
+  if (!data.files || typeof data.files !== 'object' || Array.isArray(data.files) || typeof data.revision !== 'string' || typeof data.synced_at !== 'string' || (data.error !== null && typeof data.error !== 'string')) throw new Error(t('文件通道返回了无效格式'));
   for (const [path, raw] of Object.entries(data.files)) {
     const file = object(raw);
-    if (!/^[a-f0-9]{64}$/.test(text(file.sha256)) || !('content' in file)) throw new Error(`${path}：缺少内容或版本标识`);
-    if (path.endsWith('.json') && (file.content === null || typeof file.content !== 'object' || Array.isArray(file.content))) throw new Error(`${path}：需要 JSON 对象`);
-    if (path.endsWith('.jsonl') && (!Array.isArray(file.content) || file.content.some(row => row === null || typeof row !== 'object' || Array.isArray(row)))) throw new Error(`${path}：需要逐行 JSON 对象`);
+    if (!/^[a-f0-9]{64}$/.test(text(file.sha256)) || !('content' in file)) throw new Error(t('{path}：缺少内容或版本标识', { path }));
+    if (path.endsWith('.json') && (file.content === null || typeof file.content !== 'object' || Array.isArray(file.content))) throw new Error(t('{path}：需要 JSON 对象', { path }));
+    if (path.endsWith('.jsonl') && (!Array.isArray(file.content) || file.content.some(row => row === null || typeof row !== 'object' || Array.isArray(row)))) throw new Error(t('{path}：需要逐行 JSON 对象', { path }));
     if (/^experiments\/[^/]+\/(?:evals\/[^/]+\/)?status\.json$/.test(path)) {
       const state = text(object(file.content).state);
-      if (!Object.hasOwn(stateLabels, state) || state === 'unknown') throw new Error(`${path}：无效执行状态`);
+      if (!Object.hasOwn(stateLabels, state) || state === 'unknown') throw new Error(t('{path}：无效执行状态', { path }));
       const status = object(file.content);
       if (status.target !== undefined) {
         const target = object(status.target);
-        if (!['local', 'api'].includes(text(target.kind)) || !text(target.path) || !/^[a-f0-9]{64}$/.test(text(target.sha256))) throw new Error(`${path}：模型记录不完整`);
+        if (!['local', 'api'].includes(text(target.kind)) || !text(target.path) || !/^[a-f0-9]{64}$/.test(text(target.sha256))) throw new Error(t('{path}：模型记录不完整', { path }));
       }
       if (status.usage !== undefined) {
         const usage = object(status.usage);
-        if (!status.usage || typeof status.usage !== 'object' || Array.isArray(status.usage) || Object.entries(usage).some(([key, value]) => key === 'currency' ? typeof value !== 'string' : !['requests', 'input_tokens', 'output_tokens', 'cost', 'latency_seconds'].includes(key) || typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error(`${path}：运行用量记录无效`);
+        if (!status.usage || typeof status.usage !== 'object' || Array.isArray(status.usage) || Object.entries(usage).some(([key, value]) => key === 'currency' ? typeof value !== 'string' : !['requests', 'input_tokens', 'output_tokens', 'cost', 'latency_seconds'].includes(key) || typeof value !== 'number' || !Number.isFinite(value) || value < 0)) throw new Error(t('{path}：运行用量记录无效', { path }));
       }
     }
   }
   const files = data.files as Snapshot['files'];
-  if (Object.keys(files).length && document(files, 'project.json').schema_version !== 4) throw new Error('这个研究目录使用旧版文件格式，当前工作台只能打开格式 4 的研究');
   for (const [path, key] of [['resources.json', 'items'], ['proposal.json', 'examples'], ['project.json', 'deliveries']]) {
-    if (files[path] && !Array.isArray(document(files, path)[key])) throw new Error(`${path}：${key} 必须是列表`);
+    if (files[path] && !Array.isArray(document(files, path)[key])) throw new Error(t('{path}：{key} 必须是列表', { path, key }));
   }
   if (data.observations !== undefined) {
     const observations = object(data.observations);
-    if (typeof observations.checked_at !== 'string' || !Array.isArray(observations.items)) throw new Error('资源监测返回了无效格式');
+    if (typeof observations.checked_at !== 'string' || !Array.isArray(observations.items)) throw new Error(t('资源监测返回了无效格式'));
     const ids = new Set<string>();
     for (const raw of observations.items) {
       const item = object(raw);
       if (!text(item.id) || ids.has(text(item.id)) || !Object.hasOwn(resourceStates, text(item.state))
         || (item.detail !== undefined && typeof item.detail !== 'string')
         || (item.modified_at !== undefined && typeof item.modified_at !== 'string')
-        || (item.size !== undefined && typeof item.size !== 'string' && !(typeof item.size === 'number' && Number.isFinite(item.size) && item.size >= 0))) throw new Error('资源监测条目格式无效');
+        || (item.size !== undefined && typeof item.size !== 'string' && !(typeof item.size === 'number' && Number.isFinite(item.size) && item.size >= 0))) throw new Error(t('资源监测条目格式无效'));
       ids.add(text(item.id));
     }
   }
@@ -94,7 +94,7 @@ export function parseSnapshot(value: unknown): Snapshot {
 export type PlanState = 'planned' | 'running' | 'done' | 'dropped';
 export type PlanItem = { id: string; title: string; question: string; expected: string; state: PlanState; intervention: string; parent: string | null; comparator: string; cost: string; note: string; resourceIds: string[] };
 export type PlanRound = { round: number; goal: string; budget: string; conclusion: string; items: PlanItem[] };
-export const planStateLabels: Record<PlanState, string> = { planned: '计划中', running: '进行中', done: '已完成', dropped: '已放弃' };
+export const planStateLabels: Record<PlanState, string> = labels({ planned: '计划中', running: '进行中', done: '已完成', dropped: '已放弃' });
 export function plan(files: Snapshot['files']): { rounds: PlanRound[]; ideas: { title: string; reason: string }[] } {
   const raw = document(files, 'plan.json');
   const rounds = array(raw.rounds).map(object).map((round, index) => ({
@@ -256,7 +256,7 @@ export function acceptanceModels(files: Snapshot['files']): { primary: Experimen
   return { primary, more: ordered.filter(item => !primary.includes(item)) };
 }
 export type RunState = 'runnable' | 'loading' | 'loaded' | 'load-failed' | 'running' | 'failed' | 'no-entry' | 'api';
-export const runStateLabels: Record<RunState, string> = { runnable: '可运行 · 每次运行时加载', loading: '正在加载…', loaded: '已加载 · 即时回答', 'load-failed': '加载失败', running: '运行中', failed: '上次运行失败', 'no-entry': '缺少调用入口，无法运行', api: '在线参照 · 面板不调用' };
+export const runStateLabels: Record<RunState, string> = labels({ runnable: '可运行 · 每次运行时加载', loading: '正在加载…', loaded: '已加载 · 即时回答', 'load-failed': '加载失败', running: '运行中', failed: '上次运行失败', 'no-entry': '缺少调用入口，无法运行', api: '在线参照 · 面板不调用' });
 export function runState(item: Experiment, job: AcceptanceJob | null | undefined, pool?: ModelPool | null): RunState {
   if (item.targetKind === 'api') return 'api';
   if (!item.invoke.length) return 'no-entry';

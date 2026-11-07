@@ -4,6 +4,7 @@ import type { Node, NodeProps } from '@xyflow/react';
 import { Maximize2, Minus, Plus, Star } from 'lucide-react';
 import { compatibleMeasurements, experimentNumber, layout, NODE_HEIGHT, NODE_WIDTH, outcomeLabels, preferredEvaluation, statusLabel } from './model';
 import type { Analysis, EvaluationRun, Experiment, PlanItem } from './model';
+import { t } from './i18n';
 
 type ExperimentData = { kind: 'experiment'; experiment: Experiment; evaluation?: EvaluationRun; delivered: boolean; comparisonWarning?: boolean };
 type PlannedData = { kind: 'planned'; item: PlanItem };
@@ -20,19 +21,19 @@ export function StateDot({ state }: { state: string }) {
 export function ExperimentSummary({ experiment, evaluation, delivered, comparisonWarning }: Omit<ExperimentData, 'kind'>) {
   const measured = evaluation?.state === 'succeeded' ? Object.entries(evaluation.metrics)[0] : undefined;
   return <>
-    <div className="node-top"><span className="node-number">{experimentNumber(experiment.id)}</span><StateDot state={experiment.state} />{delivered && <span className="node-delivered" title="已选为交付模型"><Star size={12} aria-hidden="true" />交付</span>}</div>
+    <div className="node-top"><span className="node-number">{experimentNumber(experiment.id)}</span><StateDot state={experiment.state} />{delivered && <span className="node-delivered" title={t('已选为交付模型')}><Star size={12} aria-hidden="true" />{t('交付')}</span>}</div>
     <h3 className="node-title">{experiment.title}</h3>
     <div className="node-bottom">
-      {measured ? <span className={`node-metric ${comparisonWarning ? 'incompatible' : ''}`} title={comparisonWarning ? '评测内容或输入不同，分数不宜直接比较' : undefined}><span>{Object.hasOwn(evaluation!.metricLabels, measured[0]) ? evaluation!.metricLabels[measured[0]] : measured[0]}</span><strong>{measured[1].toLocaleString(undefined, { maximumFractionDigits: 3 })}</strong></span> : <span className="node-metric empty">尚无同版本评测</span>}
+      {measured ? <span className={`node-metric ${comparisonWarning ? 'incompatible' : ''}`} title={comparisonWarning ? t('评测内容或输入不同，分数不宜直接比较') : undefined}><span>{Object.hasOwn(evaluation!.metricLabels, measured[0]) ? evaluation!.metricLabels[measured[0]] : measured[0]}</span><strong>{measured[1].toLocaleString(undefined, { maximumFractionDigits: 3 })}</strong></span> : <span className="node-metric empty">{t('尚无同版本评测')}</span>}
       {experiment.analysis.outcome !== 'unknown' && <OutcomeBadge analysis={experiment.analysis} />}
     </div>
   </>;
 }
 
 function CanvasCard({ data, selected }: NodeProps<CanvasNode>) {
-  if (data.kind === 'planned') return <article className="experiment-node planned" aria-label={`计划中的实验 ${data.item.title}`}>
+  if (data.kind === 'planned') return <article className="experiment-node planned" aria-label={t('计划中的实验 {title}', { title: data.item.title })}>
     <Handle type="target" position={Position.Left} />
-    <div className="node-top"><span className="node-number">{experimentNumber(data.item.id)}</span><span className="badge">计划中</span></div>
+    <div className="node-top"><span className="node-number">{experimentNumber(data.item.id)}</span><span className="badge">{t('计划中')}</span></div>
     <h3 className="node-title">{data.item.title}</h3>
     <p className="node-question">{data.item.question}</p>
     <Handle type="source" position={Position.Right} />
@@ -48,7 +49,7 @@ const nodeTypes = { experiment: CanvasCard };
 function CanvasControls() {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const { zoom } = useViewport();
-  return <div className="canvas-controls" aria-label="画布缩放"><button className="icon-button" aria-label="缩小画布" onClick={() => zoomOut({ duration: 0 })}><Minus size={15} /></button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button className="icon-button" aria-label="放大画布" onClick={() => zoomIn({ duration: 0 })}><Plus size={15} /></button><span className="control-divider" /><button className="ghost-button" onClick={() => fitView({ padding: 0.25, duration: 200 })}><Maximize2 size={14} />全图</button></div>;
+  return <div className="canvas-controls" aria-label={t('画布缩放')}><button className="icon-button" aria-label={t('缩小画布')} onClick={() => zoomOut({ duration: 0 })}><Minus size={15} /></button><span className="zoom-value">{Math.round(zoom * 100)}%</span><button className="icon-button" aria-label={t('放大画布')} onClick={() => zoomIn({ duration: 0 })}><Plus size={15} /></button><span className="control-divider" /><button className="ghost-button" onClick={() => fitView({ padding: 0.25, duration: 200 })}><Maximize2 size={14} />{t('全图')}</button></div>;
 }
 
 function FocusNode({ id, positions }: { id: string | null; positions: Map<string, { x: number; y: number }> }) {
@@ -78,7 +79,7 @@ export function Lineage({ items, planned = [], results, currentVersion, selected
   const edges = [...items.map(item => ({ id: item.id, parent: item.parent, planned: false })), ...planned.map(item => ({ id: item.id, parent: item.parent, planned: true }))]
     .filter(item => item.parent && ids.has(item.parent))
     .map(item => ({ id: `${item.parent}-${item.id}`, source: item.parent!, target: item.id, type: 'default', className: item.planned ? 'planned-edge' : '' }));
-  return <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => { if (items.some(item => item.id === node.id)) onSelect(node.id); }} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null} minZoom={0.25} maxZoom={1.5} fitView fitViewOptions={{ padding: 0.3, maxZoom: 1 }} ariaLabelConfig={{ 'node.a11yDescription.default': '实验节点，按 Enter 查看详情。', 'node.a11yDescription.keyboardDisabled': '实验节点，点击查看详情。', 'edge.a11yDescription.default': '方法派生关系，不代表指标比较对象。' }} proOptions={{ hideAttribution: false }}>
+  return <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodeClick={(_, node) => { if (items.some(item => item.id === node.id)) onSelect(node.id); }} nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false} deleteKeyCode={null} minZoom={0.25} maxZoom={1.5} fitView fitViewOptions={{ padding: 0.3, maxZoom: 1 }} ariaLabelConfig={{ 'node.a11yDescription.default': t('实验节点，按 Enter 查看详情。'), 'node.a11yDescription.keyboardDisabled': t('实验节点，点击查看详情。'), 'edge.a11yDescription.default': t('方法派生关系，不代表指标比较对象。') }} proOptions={{ hideAttribution: false }}>
     <Background gap={20} size={1.2} color="#d3d9e3" />
     <CanvasControls />
     <FocusNode id={focus} positions={positions} />

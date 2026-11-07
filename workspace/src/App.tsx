@@ -11,11 +11,14 @@ import { EvaluationView } from './EvaluationView';
 import { ExperimentDetails } from './ExperimentDetails';
 import { PlanView } from './PlanView';
 import { FloatingWindow } from './FloatingWindow';
+import { BrandMark } from './BrandMark';
 import type { WindowPlacement } from './FloatingWindow';
+import { resolveLanguage, setLanguage, t } from './i18n';
 
 type Panel = 'proposal' | 'plan' | 'resources' | 'evaluation' | 'acceptance';
 type WindowId = Panel | 'experiment';
 const emptyFiles: Snapshot['files'] = {};
+// Labels stay in source form here and are translated when rendered.
 const panels: { id: Panel; label: string; title: string; icon: ReactNode }[] = [
   { id: 'proposal', label: '提案', title: '研究提案', icon: <Target size={18} /> },
   { id: 'plan', label: '方案', title: '实验方案', icon: <ListChecks size={18} /> },
@@ -44,6 +47,7 @@ export function App() {
   const error = connectionError || snapshot?.error;
   const ready = !!files['project.json'];
   const version = text(project.current_evaluation);
+  setLanguage(resolveLanguage(project.language, navigator.language));
   const projectName = text(project.name, 'TuneTune');
   const attention = snapshot?.view?.attention ?? [];
   const waiting = (view: ViewName) => attention.find(note => note.view === view)?.message ?? null;
@@ -100,29 +104,29 @@ export function App() {
   const empty = !items.length && !planned.length;
 
   return <div className="app">
-    <a className="skip-link" href="#canvas">跳到实验画布</a>
-    <main id="canvas" className="canvas" tabIndex={-1} aria-label="实验画布">
+    <a className="skip-link" href="#canvas">{t('跳到实验画布')}</a>
+    <main id="canvas" className="canvas" tabIndex={-1} aria-label={t('实验画布')}>
       <Lineage items={items} planned={planned} results={results} currentVersion={version} selected={selected} focus={focus ? focus.id : null} deliveries={deliveries} onSelect={selectExperiment} />
-      {empty && <div className="canvas-empty"><FlaskConical size={20} aria-hidden="true" /><p>{ready ? '实验会出现在这里' : '等待研究文件'}</p><span>{ready ? '每个实验是一个节点，连线表示它基于哪个实验。' : '让 Agent 建立研究目录后，这里会自动更新。'}</span></div>}
+      {empty && <div className="canvas-empty"><FlaskConical size={20} aria-hidden="true" /><p>{ready ? t('实验会出现在这里') : t('等待研究文件')}</p><span>{ready ? t('每个实验是一个节点，连线表示它基于哪个实验。') : t('让 Agent 建立研究目录后，这里会自动更新。')}</span></div>}
     </main>
     <header className="project-pill">
-      <span className="brand" aria-hidden="true" />
+      <BrandMark size={15} />
       <ProjectName name={projectName} digest={files['project.json']?.sha256} disabled={!ready || !!error} onSave={renameProject} />
-      {version && <span className="pill-meta" title="当前评测版本">评测 {version}</span>}
+      {version && <span className="pill-meta" title={t('当前评测版本')}>{t('评测')} {version}</span>}
     </header>
-    <div className={`connection ${error ? 'warning' : ''}`} role="status" title={error ?? undefined}><span className="connection-dot" aria-hidden="true" />{connectionError ? '连接中断' : snapshot?.error ? '同步待恢复' : snapshot ? '本地已连接' : '正在连接'}</div>
-    {error && <div className="sync-banner" role="alert">{error}。{ready ? '保留上次的内容，正在自动重试。' : '请检查研究目录，正在自动重试。'}</div>}
-    <nav className="tiles" aria-label="研究资料">{panels.map(panel => {
+    <div className={`connection ${error ? 'warning' : ''}`} role="status" title={error ?? undefined}><span className="connection-dot" aria-hidden="true" />{connectionError ? t('连接中断') : snapshot?.error ? t('同步待恢复') : snapshot ? t('本地已连接') : t('正在连接')}</div>
+    {error && <div className="sync-banner" role="alert">{ready ? t('{error}。保留上次的内容，正在自动重试。', { error }) : t('{error}。请检查研究目录，正在自动重试。', { error })}</div>}
+    <nav className="tiles" aria-label={t('研究资料')}>{panels.map(panel => {
       const note = attention.find(item => item.view === panel.id || (panel.id === 'evaluation' && item.view === 'review'));
       return <button key={panel.id} className={`tile ${windows[panel.id] ? 'active' : ''}`} aria-pressed={!!windows[panel.id]} onClick={() => toggle(panel.id)} title={note?.message}>
-        {panel.icon}<span>{panel.label}</span>{note && <span className="attention-dot" aria-label={`待处理：${note.message}`} />}
+        {panel.icon}<span>{t(panel.label)}</span>{note && <span className="attention-dot" aria-label={t('待处理：{message}', { message: note.message })} />}
       </button>;
     })}</nav>
-    {panels.filter(panel => windows[panel.id]).map(panel => <FloatingWindow key={panel.id} id={panel.id} title={panel.title} icon={panel.icon} placement={windows[panel.id]!}
+    {panels.filter(panel => windows[panel.id]).map(panel => <FloatingWindow key={panel.id} id={panel.id} title={t(panel.title)} icon={panel.icon} placement={windows[panel.id]!}
       onClose={() => close(panel.id)} onToggleMaximized={() => update(panel.id, { maximized: !windows[panel.id]!.maximized })} onFocus={() => update(panel.id, { z: ++top.current })} onMove={position => update(panel.id, { position })}>
       {content[panel.id]}
     </FloatingWindow>)}
-    {windows.experiment && experiment && <FloatingWindow key={experiment.id} id="experiment" title={`实验 ${experimentNumber(experiment.id)}`} icon={<FlaskConical size={18} />} placement={windows.experiment}
+    {windows.experiment && experiment && <FloatingWindow key={experiment.id} id="experiment" title={t('实验 {number}', { number: experimentNumber(experiment.id) })} icon={<FlaskConical size={18} />} placement={windows.experiment}
       onClose={() => close('experiment')} onToggleMaximized={() => update('experiment', { maximized: !windows.experiment!.maximized })} onFocus={() => update('experiment', { z: ++top.current })} onMove={position => update('experiment', { position })}>
       <ExperimentDetails experiment={experiment} experimentsById={new Map(items.map(item => [item.id, item]))} results={results} files={files} currentVersion={version} delivered={deliveries.has(experiment.id)} onOpenAcceptance={() => open('acceptance')} />
     </FloatingWindow>}
@@ -153,20 +157,20 @@ function ProjectName({ name, digest, disabled, onSave }: { name: string; digest?
     if (!draft || inFlight.current) return;
     const next = draft.name.trim();
     if (!next || next === name) { close(restoreFocus); return; }
-    if ([...next].length > 120 || /[\u0000-\u001f\u007f-\u009f]/.test(next)) { setError('名称最多 120 个字符，不能包含控制字符。'); return; }
+    if ([...next].length > 120 || /[\u0000-\u001f\u007f-\u009f]/.test(next)) { setError(t('名称最多 120 个字符，不能包含控制字符。')); return; }
     inFlight.current = true;
     setSaving(true);
     setError('');
     try { await onSave(next, draft.digest); close(restoreFocus); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '名称保存失败，请重试。'); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : t('名称保存失败，请重试。')); }
     finally { inFlight.current = false; setSaving(false); }
   }
   return <div className="project-name">
-    {draft ? <input ref={input} id="project-name" className="project-name-input" aria-label="项目名称" value={draft.name} readOnly={saving} autoComplete="off" spellCheck={false} aria-busy={saving} aria-invalid={!!error} aria-describedby="project-name-status" onChange={event => { setDraft({ ...draft, name: event.target.value }); setError(''); }} onBlur={() => void save(false)} onKeyDown={event => {
+    {draft ? <input ref={input} id="project-name" className="project-name-input" aria-label={t('项目名称')} value={draft.name} readOnly={saving} autoComplete="off" spellCheck={false} aria-busy={saving} aria-invalid={!!error} aria-describedby="project-name-status" onChange={event => { setDraft({ ...draft, name: event.target.value }); setError(''); }} onBlur={() => void save(false)} onKeyDown={event => {
       if (event.nativeEvent.isComposing) return;
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (!inFlight.current) close(true); }
       if (event.key === 'Enter') { event.preventDefault(); void save(true); }
-    }} /> : <button ref={trigger} className="project-name-trigger" disabled={disabled} aria-label={`编辑项目名称：${name}`} onClick={() => { if (digest) setDraft({ name, digest }); }}>{name}</button>}
-    <span id="project-name-status" className={error ? 'project-name-error' : 'sr-only'} role="status">{error || (saving ? '正在保存名称' : '点击外部或按 Enter 保存，Esc 取消')}</span>
+    }} /> : <button ref={trigger} className="project-name-trigger" disabled={disabled} aria-label={t('编辑项目名称：{name}', { name })} onClick={() => { if (digest) setDraft({ name, digest }); }}>{name}</button>}
+    <span id="project-name-status" className={error ? 'project-name-error' : 'sr-only'} role="status">{error || (saving ? t('正在保存名称') : t('点击外部或按 Enter 保存，Esc 取消'))}</span>
   </div>;
 }

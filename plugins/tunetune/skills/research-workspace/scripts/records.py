@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and publish format-4 research files without executing commands."""
+"""Validate and publish research files without executing commands."""
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -17,7 +17,7 @@ import uuid
 ID = r"[A-Za-z0-9_-]+"
 SHA = re.compile(r"[a-f0-9]{64}\Z")
 FINAL = ("succeeded", "failed", "cancelled")
-SCHEMA = 4
+VERSION = "0.7.0"
 VIEWS = ("proposal", "plan", "resources", "evaluation", "review", "acceptance")
 RESPONSE_TARGETS = {"proposal": "proposal.json", "plan": "plan.json", "evaluation_review": "evaluation/draft/samples.jsonl",
                     "acceptance": "comparison/outputs.jsonl"}
@@ -221,7 +221,7 @@ class Tree:
 
 def shape(path, data):
     parts(path)
-    require(bool(RECORD.fullmatch(path)), "Path is not a format-4 research record")
+    require(bool(RECORD.fullmatch(path)), "Path is not a research record")
     if path.endswith(".jsonl"):
         rows = [strict(line) for line in data.decode("utf-8").splitlines() if line.strip()]
         ids = []
@@ -254,9 +254,7 @@ def shape(path, data):
     leaf = path.split("/")[-1]
     evaluation_run = "/evals/" in path
     if path == "project.json":
-        require(type(obj.get("schema_version")) is int and obj["schema_version"] == SCHEMA,
-                "Unsupported schema_version: format 4 required; no automatic migration")
-        fields(obj, ("schema_version", "name", "language", "current_evaluation", "deliveries"))
+        fields(obj, ("name", "language", "current_evaluation", "deliveries"))
         if obj["current_evaluation"] is not None:
             identifier(obj["current_evaluation"])
             require(obj["current_evaluation"] != "draft", "Current evaluation must be frozen")
@@ -478,12 +476,12 @@ def split_samples(tree, version, split="development"):
 
 
 def check_installed_metadata(tree):
-    """Fresh, uninstalled trees are allowed; installed tools must be format 4 only."""
+    """Fresh, uninstalled trees are allowed; an installed project must be pinned to these tools."""
     if not tree.exists(".workspace/manifest.json"):
         return False
     kit = strict(tree.read(".workspace/manifest.json"))
-    require(isinstance(kit, dict) and all(type(kit.get(key)) is int and kit[key] == SCHEMA
-            for key in ("schema_min", "schema_max")), "Incompatible kit schema range")
+    require(isinstance(kit, dict) and kit.get("version") == VERSION,
+            f"Project is pinned to other tools; tools {VERSION} do not migrate research")
     return True
 
 
@@ -769,7 +767,7 @@ def mutable(path, old, tree=None):
 
 def write(tree, path, source, create=False, expected=None):
     parts(path)
-    require(bool(RECORD.fullmatch(path)), "Path is not a writable format-4 research record")
+    require(bool(RECORD.fullmatch(path)), "Path is not a writable research record")
     require(not path.startswith("responses/"), "Responses are written only by the person through the panel")
     require(not create or expected is None, "Choose create or expected SHA-256, not both")
     require(".." not in os.fspath(source).split("/"), "Parent traversal is not allowed")
@@ -966,7 +964,7 @@ def validate(tree):
             error(required, "Missing or invalid core record")
     try:
         if not check_installed_metadata(tree):
-            report["warnings"].append("Missing workspace manifest; format compatibility is not verified")
+            report["warnings"].append("Missing workspace manifest; tool compatibility is not verified")
     except (OSError, ValueError, TypeError) as exc:
         error(".workspace/manifest.json", exc)
     packages = {p.rsplit("/", 1)[0] for p in names if re.fullmatch(rf"evaluation/{ID}/(?:definition.json|samples.jsonl|manifest.json)|experiments/{ID}/snapshot/manifest.json", p)}

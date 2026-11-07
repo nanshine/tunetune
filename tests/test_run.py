@@ -35,7 +35,7 @@ class RunTests(unittest.TestCase):
         self.root.mkdir()
         self.tree = records.Tree(self.root)
         self.addCleanup(self.tree.close)
-        self.raw("project.json", dict(schema_version=4, name="Synthetic", language="en", current_evaluation=None, deliveries=[]))
+        self.raw("project.json", dict(name="Synthetic", language="en", current_evaluation=None, deliveries=[]))
         self.raw("proposal.json", dict(summary="Fixture", examples=[]))
         self.raw("resources.json", dict(items=[]))
         source = self.base / "evaluation"
@@ -612,7 +612,7 @@ class RunTests(unittest.TestCase):
             records.Tree(alias)
         self.assertEqual(list(outside.iterdir()), [])
 
-    def test_lock_contention_invalid_paths_and_incompatible_schema_do_not_start(self):
+    def test_lock_contention_invalid_paths_and_older_project_do_not_start(self):
         with self.tree.locked():
             result = self.cli()
         self.assertEqual(result.returncode, 1)
@@ -625,21 +625,20 @@ class RunTests(unittest.TestCase):
         self.raw("project.json", dict(project, schema_version=1))
         result = self.cli()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("Unsupported schema_version", result.stderr)
+        self.assertIn("Unknown fields: schema_version", result.stderr)
         self.assert_unstarted()
 
     def test_incompatible_installed_metadata_refuses_execute_without_changes(self):
-        for metadata in (dict(schema_min=2, schema_max=2), dict(schema_min=1, schema_max=3),
-                         dict(schema_min=3, schema_max=4), dict(schema_min=3, schema_max=3), dict(schema_min=4, schema_max=True)):
+        for metadata in (dict(version="0.6.0"), dict(version="0.7.1"), dict(schema_min=4, schema_max=4)):
             with self.subTest(metadata=metadata):
                 self.raw(".workspace/manifest.json", metadata)
                 before = {p.relative_to(self.root): p.read_bytes() if p.is_file() else None
                           for p in self.root.rglob("*")}
-                with self.assertRaisesRegex(ValueError, "Incompatible kit schema range"):
+                with self.assertRaisesRegex(ValueError, "pinned to other tools"):
                     runner.execute(self.tree, "experiments/e1")
                 result = self.cli()
                 self.assertEqual(result.returncode, 1)
-                self.assertIn("Incompatible kit schema range", result.stderr)
+                self.assertIn("pinned to other tools", result.stderr)
                 self.assert_unstarted()
                 after = {p.relative_to(self.root): p.read_bytes() if p.is_file() else None
                          for p in self.root.rglob("*")}

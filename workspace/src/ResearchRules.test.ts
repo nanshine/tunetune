@@ -7,9 +7,13 @@ import { RecordView, mediaUrl } from './RecordView';
 import { ProposalView, ResourcesView } from './ProjectBrief';
 import { ExperimentDetails } from './ExperimentDetails';
 import { experiments } from './model';
+import { setLanguage } from './i18n';
+
+// These assertions read the Chinese source text; English is covered in i18n.test.ts.
+setLanguage('zh');
 
 const file = (content: unknown): ResearchFile => ({ content, sha256: 'a'.repeat(64) });
-const files: Snapshot['files'] = { 'project.json': file({ schema_version: 4, deliveries: ['local', 'api'] }) };
+const files: Snapshot['files'] = { 'project.json': file({ deliveries: ['local', 'api'] }) };
 for (const id of ['local', 'api']) {
   files[`experiments/${id}/config.json`] = file({ role: id === 'api' ? 'reference' : 'baseline' });
   files[`experiments/${id}/status.json`] = file({ state: 'succeeded', target: { kind: id, path: `experiments/${id}/model`, sha256: 'b'.repeat(64) } });
@@ -18,7 +22,7 @@ for (const id of ['local', 'api']) {
   files[`experiments/${id}/evals/a/outputs.jsonl`] = file([{ sample_id: 'same', input: '问题', output: id === 'api' ? { answer: '参照答案' } : ['本地答案'] }]);
 }
 
-describe('format 4 research behavior', () => {
+describe('research behavior', () => {
   it('keeps API references available for comparison and out of local deliveries', () => {
     expect(comparableModels(files).map(item => item.id)).toEqual(['api', 'local']);
     expect(deliveredModels(files).map(item => item.id)).toEqual(['local']);
@@ -35,10 +39,9 @@ describe('format 4 research behavior', () => {
     expect(comparisonSamples(matching, 'local', 'api', 'v1')).toHaveLength(1);
     expect(comparisonSamples({ ...files, 'experiments/api/evals/a/outputs.jsonl': file([{ sample_id: 'same', input: '不同问题', output: '答案' }]) }, 'local', 'api', 'v1')).toEqual([]);
   });
-  it('rejects old projects and invalid usage without replacing usable contents', () => {
+  it('rejects invalid usage without replacing usable contents', () => {
     const snapshot = { files, revision: 'r', synced_at: '', error: null };
     expect(parseSnapshot(snapshot).files).toBe(files);
-    expect(() => parseSnapshot({ ...snapshot, files: { ...files, 'project.json': file({ schema_version: 2, deliveries: [] }) } })).toThrow('格式 4');
     for (const usage of [{ cost: -1 }, { latency_seconds: Infinity }, { currency: 1 }, { api_key: 'secret' }]) expect(() => parseSnapshot({ ...snapshot, files: { ...files, 'experiments/api/status.json': file({ state: 'failed', usage }) } })).toThrow('用量');
   });
   it('shows researched alternatives, resource plans and safe primary-source links', () => {

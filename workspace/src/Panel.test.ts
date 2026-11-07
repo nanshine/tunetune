@@ -11,6 +11,10 @@ import { ReviewView, parseCorrection } from './ReviewView';
 import { AcceptanceView, inputTemplate } from './AcceptanceView';
 import { ExperimentSummary } from './Lineage';
 import { ExperimentDetails } from './ExperimentDetails';
+import { setLanguage } from './i18n';
+
+// These assertions read the Chinese source text; English is covered in i18n.test.ts.
+setLanguage('zh');
 
 const workspace = vi.hoisted(() => ({ snapshot: null as Snapshot | null, connectionError: null as string | null, renameProject: vi.fn() }));
 vi.mock('./useWorkspace', () => ({ useWorkspace: () => workspace, submitResponse: vi.fn(), runAcceptance: vi.fn(), tryModel: vi.fn(), loadModel: vi.fn(), unloadModel: vi.fn() }));
@@ -19,7 +23,7 @@ const { App } = await import('./App');
 const file = (content: unknown, sha = 'a'): ResearchFile => ({ content, sha256: sha.repeat(64) });
 const post = { title: '可拼搭的软件', text: '用多维表格搭一个自己的系统。' };
 const files: Snapshot['files'] = {
-  'project.json': file({ schema_version: 4, name: '博客标签', current_evaluation: 'v1', deliveries: ['e001-embed'] }),
+  'project.json': file({ name: '博客标签', language: 'zh-CN', current_evaluation: 'v1', deliveries: ['e001-embed'] }),
   'proposal.json': file({ summary: '为博客文章推荐导航标签。', goal: '给新文章打 1–2 个宽主题标签', examples: [{ id: 'one', input: post, expected_output: ['产品与商业'] }],
     considered: [{ family: '冻结向量加分类头', decision: 'adopted', reason: '标签少也能用' }, { family: '微调大模型', decision: 'excluded', reason: '16 GB 内存不够' }],
     approaches: [{ id: 'a', title: '关键词', roles: ['baseline'], rationale: '最便宜' }], budget: '下载不超过 1 GB', stopping: '两轮无提升就停', sources: [{ title: 'bge 模型卡', url: 'https://huggingface.co/BAAI/bge-small-zh-v1.5' }] }, 'b'),
@@ -45,7 +49,8 @@ const files: Snapshot['files'] = {
 // Views take differing props; each test passes the props that view expects.
 const render = (type: FunctionComponent<any>, props: Record<string, unknown>) => renderToStaticMarkup(createElement(type, props));
 
-beforeEach(() => { workspace.snapshot = { files, revision: '1', synced_at: '', error: null, view: { revision: 1, open: [], focus: {}, attention: [{ view: 'review', message: '22 篇标签待审阅' }] } }; workspace.connectionError = null; });
+vi.stubGlobal('navigator', { language: 'zh-CN' });
+beforeEach(() => { setLanguage('zh'); workspace.snapshot = { files, revision: '1', synced_at: '', error: null, view: { revision: 1, open: [], focus: {}, attention: [{ view: 'review', message: '22 篇标签待审阅' }] } }; workspace.connectionError = null; });
 
 describe('workspace shell', () => {
   it('shows the canvas, five research tiles and an attention mark without opening windows by itself on the server', () => {

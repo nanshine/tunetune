@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute one prepared format-4 config; never infer scientific success."""
+"""Execute one prepared config; never infer scientific success."""
 import argparse
 from datetime import datetime, timezone
 import json

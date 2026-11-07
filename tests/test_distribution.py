@@ -66,7 +66,8 @@ class DistributionTests(unittest.TestCase):
 
     def test_manifest_pins_exactly_the_copied_payload(self):
         manifest, _, payload = installer.verify_skill(self.skill)
-        self.assertEqual((manifest["version"], manifest["schema_min"], manifest["schema_max"]), ("0.7.0", 4, 4))
+        self.assertEqual(manifest["version"], "0.7.0")
+        self.assertEqual(set(manifest), {"version", "files"})
         self.assertEqual(builder.TEMPLATES, installer.TEMPLATES)
         self.assertEqual(builder.APP_SCRIPTS, installer.APP_SCRIPTS)
         self.assertEqual(set(builder.SKILLS), {"research-workspace", "tunetune-init", "build-evaluation", "run-experiments"})
@@ -177,13 +178,26 @@ class DistributionTests(unittest.TestCase):
     def test_template_defaults(self):
         self.install()
         expected = {
-            "project.json": {"schema_version": 4, "name": "未命名研究", "language": "zh-CN",
+            "project.json": {"name": "未命名研究", "language": "zh-CN",
                              "current_evaluation": None, "deliveries": []},
             "proposal.json": {"summary": "", "examples": []},
             "resources.json": {"items": []},
         }
         for name, value in expected.items():
             self.assertEqual(json.loads((self.project / name).read_text()), value)
+
+    def test_conversation_language_sets_project_language_and_default_name(self):
+        self.install(language="en")
+        self.assertEqual(json.loads((self.project / "project.json").read_text())["language"], "en")
+        self.assertEqual(json.loads((self.project / "project.json").read_text())["name"], "Untitled research")
+        other = self.base / "chinese"
+        installer.install(other, skill=self.skill, name="博客标签", language="zh-TW")
+        self.assertEqual({key: json.loads((other / "project.json").read_text())[key] for key in ("name", "language")},
+                         {"name": "博客标签", "language": "zh-TW"})
+        for language in ("", "english language", "e", "en_US", "../x"):
+            with self.subTest(language=language), self.assertRaisesRegex(ValueError, "Language must be a tag"):
+                installer.install(self.base / "refused", skill=self.skill, language=language)
+        self.assertFalse((self.base / "refused").exists())
 
     def test_repeated_install_preserves_current_research(self):
         self.install(name="原名称")
@@ -197,7 +211,7 @@ class DistributionTests(unittest.TestCase):
         (self.project / "AGENTS.md").write_text("Existing project instructions")
         (self.project / "experiments/e1").mkdir(parents=True)
         (self.project / "experiments/e1/analysis.json").write_text('{"outcome":"baseline","summary":"Measured reference"}')
-        (self.project / "project.json").write_text(json.dumps({"schema_version": 4, "name": "原名称", "language": "zh-CN",
+        (self.project / "project.json").write_text(json.dumps({"name": "原名称", "language": "zh-CN",
                                                               "current_evaluation": "v1", "deliveries": ["e1"]}))
         before = self.snapshot(self.project)
         directories = {path for path in self.project.rglob("*") if path.is_dir()}
@@ -226,12 +240,12 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(note.read_text(), "Existing personal engineering notes")
         self.assertTrue((self.project / "proposal.json").is_file())
 
-    def test_schema_one_project_is_refused_without_writes(self):
+    def test_older_project_is_refused_without_writes(self):
         self.project.mkdir()
         (self.project / "project.json").write_text(json.dumps({
-            "schema_version": 1, "name": "Previous study", "language": "en", "current_evaluation": None}))
+            "schema_version": 1, "name": "Previous study", "language": "en", "current_evaluation": None, "deliveries": []}))
         before = self.snapshot(self.project)
-        with self.assertRaisesRegex(ValueError, "format 4 required; no automatic migration"):
+        with self.assertRaisesRegex(ValueError, "Unknown fields: schema_version"):
             self.install()
         self.assertEqual(before, self.snapshot(self.project))
         self.assertEqual({path.name for path in self.project.iterdir()}, {"project.json"})
@@ -319,13 +333,13 @@ class DistributionTests(unittest.TestCase):
                     self.install()
         self.assertFalse(self.project.exists())
 
-    def test_tool_version_and_schema_range_are_exact(self):
+    def test_tool_version_is_exact(self):
         original = (self.skill / "manifest.json").read_bytes()
-        for version, low, high in (("0.6.0", 4, 4), ("0.7.0", 3, 3), ("0.7.0", 3, 4), ("0.7.0", True, 4)):
-            with self.subTest(version=version, low=low, high=high):
+        for version in ("0.6.0", "0.7.1", None, 7):
+            with self.subTest(version=version):
                 (self.skill / "manifest.json").write_bytes(original)
-                self.rewrite_manifest(lambda manifest: manifest.update(version=version, schema_min=low, schema_max=high))
-                with self.assertRaisesRegex(ValueError, "Unsupported tool version or schema range"):
+                self.rewrite_manifest(lambda manifest: manifest.update(version=version))
+                with self.assertRaisesRegex(ValueError, "Unsupported tool version"):
                     self.install()
                 self.assertFalse(self.project.exists())
 
@@ -378,11 +392,11 @@ class DistributionTests(unittest.TestCase):
 
     def test_malformed_or_conflicting_business_files_are_refused(self):
         self.project.mkdir()
-        project = {"schema_version": 4, "name": "Research", "language": "en", "current_evaluation": None, "deliveries": []}
+        project = {"name": "Research", "language": "en", "current_evaluation": None, "deliveries": []}
         proposal = {"summary": "", "examples": []}
         resource = {"id": "r1", "title": "Data", "type": "dataset", "status": "unknown"}
         cases = [("project.json", "[]"), ("project.json", "not json"),
-                 ("project.json", '{"schema_version":99}'), ("project.json", '{"schema_version":4,"schema_version":4}'), ("project.json", json.dumps({**project, "schema_version": 3})),
+                 ("project.json", '{"name":"a","name":"a"}'), ("project.json", '{"name":"Research"}'), ("project.json", json.dumps({**project, "schema_version": 3})),
                  ("project.json", json.dumps({**project, "deliveries": ["../escape"]})),
                  ("project.json", json.dumps({**project, "deliveries": ["e1", "e1"]})),
                  ("project.json", json.dumps({**project, "current_evaluation": "../escape"})),
@@ -526,7 +540,6 @@ class DistributionTests(unittest.TestCase):
             with urlopen(url + "/api/state", timeout=5) as response:
                 state = json.load(response)
             self.assertIsNone(state["error"])
-            self.assertEqual(state["files"]["project.json"]["content"]["schema_version"], 4)
             self.assertEqual(state["files"]["project.json"]["content"]["name"], "隔离项目")
             self.assertEqual(state["observations"]["items"], [])
         finally:

@@ -52,7 +52,7 @@ class ResourceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
-        (self.root / "project.json").write_text('{"schema_version":4}')
+        (self.root / "project.json").write_text('{}')
 
     def prepare(self, destination="resources/file.bin", **options):
         source = options.pop("source", self.url + "/data")
@@ -108,11 +108,12 @@ class ResourceTests(unittest.TestCase):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 self.prepare(**options)
 
-    def test_format_two_is_not_modified(self):
-        project = self.root / "project.json"
-        project.write_text('{"schema_version":2}')
+    def test_project_pinned_to_other_tools_is_not_modified(self):
+        project = self.root / ".workspace/manifest.json"
+        project.parent.mkdir()
+        project.write_text('{"version":"0.6.0"}')
         before = project.read_bytes()
-        with self.assertRaisesRegex(ValueError, "format 4"):
+        with self.assertRaisesRegex(ValueError, "pinned to other tools"):
             self.prepare(fetch=True)
         self.assertEqual(project.read_bytes(), before)
         self.assertFalse((self.root / "resources").exists())
@@ -128,6 +129,49 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(result["actual_bytes"], len(CONTENT))
         self.assertEqual((self.root / "resources/model/weights.bin").read_bytes(), CONTENT)
         self.assertEqual(list(self.root.rglob(".resource-*")), [])
+
+    def modelscope_listing(self, short=COMMIT[:8], sha256=None, size=None):
+        return json.dumps({"Code": 200, "Data": {"LatestCommitter": {"ShortId": short}, "Files": [
+            {"Type": "tree", "Path": "sub", "Size": 0, "Sha256": ""},
+            {"Type": "blob", "Path": ".gitattributes", "Size": 3, "Sha256": "0" * 64},
+            {"Type": "blob", "Path": "sub/weights.bin", "Size": len(CONTENT) if size is None else size,
+             "Sha256": hashlib.sha256(CONTENT).hexdigest() if sha256 is None else sha256}]}}).encode()
+
+    def test_modelscope_downloads_fixed_revision_with_hash_checks(self):
+        seen = []
+        def fake_download(url, target, budget, deadline, expected=None, internal=False):
+            seen.append(url)
+            content = self.modelscope_listing() if "/repo/files?" in url else CONTENT
+            target.write_bytes(content)
+            return len(content), hashlib.sha256(content).hexdigest()
+        with patch.object(resources, "download", side_effect=fake_download):
+            planned = self.prepare(source="example/model", destination="resources/ms", kind="model", revision=COMMIT, hub="modelscope")
+            self.assertEqual((planned["state"], planned["hub"]), ("planned", "modelscope"))
+            self.assertEqual(seen, [])
+            result = self.prepare(source="example/model", destination="resources/ms", kind="model", revision=COMMIT, hub="modelscope", fetch=True)
+        self.assertEqual(result["actual_bytes"], len(CONTENT))
+        self.assertEqual((self.root / "resources/ms/sub/weights.bin").read_bytes(), CONTENT)
+        self.assertFalse((self.root / "resources/ms/.gitattributes").exists())
+        self.assertTrue(all(url.startswith("https://www.modelscope.cn/api/v1/models/example/model/") for url in seen))
+        self.assertIn(f"Revision={COMMIT}", seen[-1])
+
+    def test_modelscope_refuses_other_revision_unknown_hash_or_changed_file(self):
+        for listing, message in ((self.modelscope_listing(short="bbbbbbbb"), "different revision"),
+                                 (self.modelscope_listing(sha256=""), "SHA-256 is unknown"),
+                                 (self.modelscope_listing(sha256="c" * 64), "differs from repository metadata"),
+                                 (json.dumps({"Code": 404, "Message": "missing"}).encode(), "did not list")):
+            def fake_download(url, target, budget, deadline, expected=None, internal=False, listing=listing):
+                content = listing if "/repo/files?" in url else CONTENT
+                target.write_bytes(content)
+                return len(content), hashlib.sha256(content).hexdigest()
+            with self.subTest(message=message), patch.object(resources, "download", side_effect=fake_download):
+                with self.assertRaisesRegex(ValueError, message):
+                    self.prepare(source="example/model", destination="resources/ms", kind="model", revision=COMMIT, hub="modelscope", fetch=True)
+                self.assertFalse((self.root / "resources/ms").exists())
+        with self.assertRaisesRegex(ValueError, "--hub applies only to model"):
+            self.prepare(hub="modelscope")
+        with self.assertRaisesRegex(ValueError, "--hub applies only to model"):
+            self.prepare(source="example/model", destination="resources/ms", kind="model", revision=COMMIT, hub="other")
 
     def test_git_rejects_links_before_publication(self):
         class Reply:

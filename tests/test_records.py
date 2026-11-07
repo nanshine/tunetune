@@ -27,10 +27,10 @@ class RecordsTests(unittest.TestCase):
         self.tree = records.Tree(self.root)
         self.addCleanup(self.tree.close)
         self.source = self.base / "input.json"
-        self.raw("project.json", dict(schema_version=4, name="Fixture", language="en", current_evaluation=None, deliveries=[]))
+        self.raw("project.json", dict(name="Fixture", language="en", current_evaluation=None, deliveries=[]))
         self.raw("proposal.json", self.proposal())
         self.raw("resources.json", dict(items=[]))
-        self.raw(".workspace/manifest.json", dict(schema_min=4, schema_max=4))
+        self.raw(".workspace/manifest.json", dict(version=records.VERSION))
 
     def raw(self, path, value):
         target = self.root / path
@@ -466,8 +466,8 @@ class RecordsTests(unittest.TestCase):
     def test_incompatible_project_and_legacy_paths_rejected_without_migration(self):
         project = records.read_record(self.tree, "project.json")
         self.raw("project.json", dict(project, schema_version=1))
-        self.assert_error("Unsupported schema_version")
-        with self.assertRaisesRegex(ValueError, "Unsupported schema_version"):
+        self.assert_error("Unknown fields: schema_version")
+        with self.assertRaisesRegex(ValueError, "Unknown fields: schema_version"):
             self.put("proposal.json", self.proposal("changed"), expected=self.sha("proposal.json"))
         for path in ("goal.json", "review.md", "candidates.json", "workspace.json", "feedback/incoming/f1.json",
                      "assessments/a1/config.json", "acceptance/a1/outputs.jsonl", "releases/r1.json",
@@ -482,9 +482,7 @@ class RecordsTests(unittest.TestCase):
         source.mkdir()
         (source / "code.py").write_bytes(b"# fixture\n")
         self.raw("experiments/e1/model/weights", b"fixture")
-        for metadata in (dict(schema_min=2, schema_max=2), dict(schema_min=1, schema_max=3),
-                         dict(schema_min=3, schema_max=4), dict(schema_min=3, schema_max=3), dict(schema_min=True, schema_max=4),
-                         dict(schema_min=4.0, schema_max=4), dict(schema_min=4)):
+        for metadata in (dict(version="0.6.0"), dict(version="0.7.1"), dict(version=None), dict(schema_min=4, schema_max=4), {}):
             with self.subTest(metadata=metadata):
                 self.raw(".workspace/manifest.json", metadata)
                 before = {p.relative_to(self.root): p.read_bytes() if p.is_file() else None
@@ -495,12 +493,12 @@ class RecordsTests(unittest.TestCase):
                     lambda: records.freeze(self.tree, self.root, source, "experiments/e1/snapshot"),
                     lambda: records.manifest(self.tree, "experiments/e1/model"),
                 ):
-                    with self.assertRaisesRegex(ValueError, "Incompatible kit schema range"):
+                    with self.assertRaisesRegex(ValueError, "pinned to other tools"):
                         operation()
                     after = {p.relative_to(self.root): p.read_bytes() if p.is_file() else None
                              for p in self.root.rglob("*")}
                     self.assertEqual(after, before)
-                self.assert_error("Incompatible kit schema range")
+                self.assert_error("pinned to other tools")
         self.assertFalse(self.tree.exists(".workspace/runtime"))
 
     def test_uninstalled_fresh_project_can_write_and_freeze(self):
@@ -628,8 +626,8 @@ class RecordsTests(unittest.TestCase):
         self.assertEqual(self.tree.read("proposal.json"), before)
         result = self.cli("hash", "--project", str(self.root), "--path", "proposal.json")
         self.assertEqual(json.loads(result.stdout)["sha256"], self.sha("proposal.json"))
-        self.raw(".workspace/manifest.json", dict(schema_min=1, schema_max=1))
-        self.assert_error("Incompatible kit schema range")
+        self.raw(".workspace/manifest.json", dict(version="0.6.0"))
+        self.assert_error("pinned to other tools")
         self.raw("experiments/e1/evals/r1/config.json", b"null")
         result = self.cli("validate", "--project", str(self.root))
         self.assertEqual(result.returncode, 1)

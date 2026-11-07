@@ -42,7 +42,6 @@ PATTERNS = (
     "experiments/*/evals/*/outputs.jsonl", "experiments/*/model/invoke.json",
     "comparison/inputs.jsonl", "comparison/outputs.jsonl", "responses/*.json",
 )
-SCHEMA = 4
 VIEWS = ("proposal", "plan", "resources", "evaluation", "review", "acceptance")
 ID = re.compile(r"[A-Za-z0-9_-]+\Z")
 
@@ -640,10 +639,6 @@ class Reader:
                     content = strict_json(raw.decode("utf-8"))
                     if not isinstance(content, dict):
                         raise ValueError("JSON must be an object")
-                    if "schema_version" in content and (
-                        type(content["schema_version"]) is not int or content["schema_version"] != SCHEMA
-                    ):
-                        raise ValueError("Unsupported schema_version (expected 4)")
                     field = {"proposal.json": "examples", "resources.json": "items", "project.json": "deliveries"}.get(path)
                     if field in content and not isinstance(content[field], list):
                         raise ValueError(f"{field} must be an array")
@@ -669,8 +664,6 @@ class Reader:
             files[path] = {"content": content, "sha256": hashlib.sha256(raw).hexdigest()}
         if "project.json" not in files:
             raise ValueError("Missing required project.json")
-        if files["project.json"]["content"].get("schema_version") != SCHEMA:
-            raise ValueError("project.json requires schema_version=4")
         return files
 
     def snapshot(self):
@@ -756,8 +749,8 @@ def save_project_name(reader, body):
                     if version(before) != version(os.fstat(stream.fileno())):
                         raise ValueError("project.json changed while reading")
                 project = strict_json(raw.decode("utf-8"))
-                if not isinstance(project, dict) or type(project.get("schema_version")) is not int or project["schema_version"] != SCHEMA:
-                    raise ValueError("project.json requires schema_version=4")
+                if not isinstance(project, dict):
+                    raise ValueError("project.json must be an object")
                 if hashlib.sha256(raw).hexdigest() != expected:
                     raise RequestError(409, "Project is stale; refresh before renaming")
                 project["name"] = name

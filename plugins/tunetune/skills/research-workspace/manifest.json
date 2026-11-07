@@ -1,19 +1,21 @@
 {
   "version": "0.7.0",
-  "schema_min": 4,
-  "schema_max": 4,
   "files": [
     {
-      "path": "assets/panel/assets/index-BAWGmzop.js",
-      "sha256": "f4a3bf1e2d5b0ec193b6c0c779849b5aad10627672b9b7697222fcdb7736827d"
+      "path": "assets/panel/assets/index-Bhs_7zLt.css",
+      "sha256": "18da902f2be7d65c9f4e1eb9b2c3495af67fad4a59b38adaa27bdc95adab9ff6"
     },
     {
-      "path": "assets/panel/assets/index-Dv7XbXz-.css",
-      "sha256": "1ad7483c903bb85a68654b86affc20b2c6057f289d38d1950e03154289778c59"
+      "path": "assets/panel/assets/index-CW3w383R.js",
+      "sha256": "11fbc4a3294feb70768eccbccf6de8b05e1c119b0ddac81b6607797d4adb2067"
+    },
+    {
+      "path": "assets/panel/favicon.svg",
+      "sha256": "1ed12a8289be250424a2ac078705fe982d19a0a861e13980369cac779820047d"
     },
     {
       "path": "assets/panel/index.html",
-      "sha256": "be48386c2c342f5448f94513efb8c25dcd5d915e04cba79eba3343974714e8e0"
+      "sha256": "b460c6ce9e5c1e6ed5f7f865d510f8ceca6dc6bef2de82d5e9e03f0b87a824c1"
     },
     {
       "path": "assets/templates/AGENTS.md",
@@ -21,7 +23,7 @@
     },
     {
       "path": "assets/templates/project.json",
-      "sha256": "e73fc9e7f09c0fbb7983150cdd7b0d61e41de72f6096cd8ad76336253a00b857"
+      "sha256": "17e4531105f089e58bfed6a2e2ba2338b8936c37d05ba9f6ae1578a3d715be82"
     },
     {
       "path": "assets/templates/proposal.json",
@@ -37,23 +39,23 @@
     },
     {
       "path": "scripts/records.py",
-      "sha256": "6bfe8dbcbd33e99a86c034fb1434599b39e30a9518dc731433321db507753250"
+      "sha256": "d55602d460c944f9d8144873e3f5eadd24ea1499ef533eb70e3d51897575b74b"
     },
     {
       "path": "scripts/resources.py",
-      "sha256": "a17674967b07f6bff9a5e5be095efa776f0b8269dec521014ec4bc121eca8798"
+      "sha256": "e6da82f76cee9dc5b1949851b24c82f2f11a0ef958692e9e2ea1d1cd24deb1de"
     },
     {
       "path": "scripts/run.py",
-      "sha256": "f31b1ea3ae2392dbfa9aaae3300bb3055b2b2a526a029f1a791b3a7def21f87b"
+      "sha256": "970707a089751abbfb20b4934e8392c3817edb2eed31ac60e39892b925e227a1"
     },
     {
       "path": "scripts/scout.py",
-      "sha256": "65bc38c050786edc31d5442aa880dcb42d263f4f4da1c9f1ab1a81c6f06cad31"
+      "sha256": "1acc5b81d24dd7a85f0c2c68cc988a36042476e70490473d68ca00c3d23a9a14"
     },
     {
       "path": "scripts/workspace.py",
-      "sha256": "ea9d7837ba7aadaebbb462c60761b00786870b739f7d9c9584065c9c2679610b"
+      "sha256": "ab611cf04b1a61f49473bbba735885bf283a9cb920f0256f4ad4ad9a57e54f41"
     }
   ]
 }

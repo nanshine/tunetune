@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { GripVertical, Maximize2, Minimize2, X } from 'lucide-react';
+import { t } from './i18n';
 
 export type WindowPlacement = { dock: 'left' | 'right'; maximized: boolean; position: { x: number; y: number } | null; z: number; cascade: number };
 
@@ -38,8 +39,8 @@ export function FloatingWindow({ id, title, icon, actions, placement, onClose, o
       <span className="window-icon" aria-hidden="true">{icon}</span>
       <h2 ref={heading} id={`${id}-title`} tabIndex={-1}>{title}</h2>
       <div className="window-actions">{actions}
-        <button className="icon-button" aria-label={placement.maximized ? `还原${title}` : `放大${title}`} onClick={onToggleMaximized}>{placement.maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
-        <button className="icon-button" aria-label={`关闭${title}`} onClick={onClose}><X size={15} /></button>
+        <button className="icon-button" aria-label={placement.maximized ? t('还原{title}', { title }) : t('放大{title}', { title })} onClick={onToggleMaximized}>{placement.maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
+        <button className="icon-button" aria-label={t('关闭{title}', { title })} onClick={onClose}><X size={15} /></button>
       </div>
     </header>
     <div className="window-body">{children}</div>

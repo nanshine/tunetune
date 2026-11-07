@@ -28,6 +28,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body if isinstance(body, bytes) else json.dumps(body).encode())
 
+    def do_PUT(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        Handler.bodies.append(json.loads(self.rfile.read(length) or b"null"))
+        self.do_GET()
+
 
 def load():
     spec = importlib.util.spec_from_file_location("scout_under_test", SCRIPT)
@@ -38,13 +43,13 @@ def load():
 
 class ScoutTests(unittest.TestCase):
     def setUp(self):
-        Handler.routes, Handler.seen = {}, []
+        Handler.routes, Handler.seen, Handler.bodies = {}, [], []
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
         base = f"http://127.0.0.1:{self.server.server_port}"
-        with patch.dict(os.environ, TUNETUNE_SCOUT_HF=base, TUNETUNE_SCOUT_ARXIV=base, TUNETUNE_SCOUT_GITHUB=base):
+        with patch.dict(os.environ, TUNETUNE_SCOUT_HF=base, TUNETUNE_SCOUT_MODELSCOPE=base, TUNETUNE_SCOUT_ARXIV=base, TUNETUNE_SCOUT_GITHUB=base):
             self.scout = load()
 
     def run_cli(self, *argv):
@@ -70,6 +75,47 @@ class ScoutTests(unittest.TestCase):
         self.assertIn("search=bge", Handler.seen[0])
         code, result = self.run_cli("models", "--query", "bge", "--min-downloads", "100", "--license", "permissive")
         self.assertEqual([r["id"] for r in result["results"]], ["org/small"])
+
+    def test_modelscope_search_inspect_and_fit(self):
+        model = {"Path": "BAAI", "Name": "bge-small-zh-v1.5", "Downloads": 900, "Stars": 4, "License": "mit", "Language": ["zh"],
+                 "IsAccessible": 1, "LastUpdatedTime": 1732194829, "Libraries": ["pytorch", "transformer"],
+                 "Tasks": [{"Name": "feature-extraction"}], "ModelInfos": {"safetensor": {"model_size": 24000000}},
+                 "Architectures": ["BertModel"], "ModelType": ["bert"]}
+        other = {"Path": "org", "Name": "custom", "Downloads": 10, "License": "other", "IsAccessible": 0}
+        Handler.routes["/api/v1/dolphin/models"] = (200, {"Code": 200, "Data": {"Model": {"Models": [model, other], "TotalCount": 2}}}, {})
+        code, result = self.run_cli("models", "--hub", "modelscope", "--query", "bge", "--task", "feature-extraction", "--lang", "zh", "--sort", "likes")
+        self.assertEqual(code, 0)
+        first, second = result["results"]
+        self.assertEqual((first["hub"], first["id"], first["task"], first["library"], first["params"]["value"]),
+                         ("modelscope", "BAAI/bge-small-zh-v1.5", "feature-extraction", "transformer", 24000000))
+        self.assertEqual(first["last_modified"], "2024-11-21T13:13:49Z")
+        self.assertEqual((second["gated"], second["license"]["class"]), (True, "restricted_or_custom"))
+        self.assertEqual(Handler.bodies[0]["Name"], "bge")
+        self.assertEqual(Handler.bodies[0]["SortBy"], "StarsCount")
+        self.assertEqual({c["category"]: c["values"] for c in Handler.bodies[0]["Criterion"]}, {"tasks": ["feature-extraction"], "languages": ["zh"]})
+        code, result = self.run_cli("models", "--hub", "modelscope", "--license", "permissive", "--max-params", "1e9")
+        self.assertEqual([r["id"] for r in result["results"]], ["BAAI/bge-small-zh-v1.5"])
+        full = "02ed473a14d4a4b3b9a61399080c77ccb485820b"
+        Handler.routes["/api/v1/models/BAAI/bge-small-zh-v1.5"] = (200, {"Code": 200, "Data": model}, {})
+        Handler.routes["/api/v1/models/BAAI/bge-small-zh-v1.5/repo/files"] = (200, {"Code": 200, "Data": {
+            "LatestCommitter": {"ShortId": full[:8]}, "Files": [
+                {"Type": "tree", "Path": "1_Pooling", "Size": 0, "Revision": "8" * 40},
+                {"Type": "blob", "Path": "model.safetensors", "Size": 95827648, "Sha256": "a" * 64, "Revision": full}]}}, {})
+        code, result = self.run_cli("inspect", "BAAI/bge-small-zh-v1.5", "--hub", "modelscope")
+        item = result["results"][0]
+        self.assertEqual((code, item["revision"], item["total_file_bytes"]), (0, full, 95827648))
+        self.assertEqual(item["files"], [{"path": "model.safetensors", "size": 95827648, "sha256": "a" * 64}])
+        self.assertEqual(item["config"], {"architectures": ["BertModel"], "model_type": "bert"})
+        Handler.routes["/api/v1/models/BAAI/bge-small-zh-v1.5/repo"] = (200, {"num_hidden_layers": 4, "num_attention_heads": 8, "hidden_size": 512}, {})
+        code, result = self.run_cli("fit", "BAAI/bge-small-zh-v1.5", "--hub", "modelscope", "--memory-gb", "8")
+        fit = result["results"][0]
+        self.assertEqual((code, fit["params"], fit["params_source"], fit["verdict"]), (0, 24000000, "metadata", "fits"))
+        self.assertGreater(fit["kv_cache_gb"], 0)
+        Handler.routes["/api/v1/models/org/absent"] = (200, {"Code": 10990101004, "Message": "model not found 404"}, {})
+        code, result = self.run_cli("inspect", "org/absent", "--hub", "modelscope")
+        self.assertEqual((code, result["error"]["code"]), (1, "not_found"))
+        code, result = self.run_cli("inspect", "org/data", "--hub", "modelscope", "--kind", "dataset")
+        self.assertEqual(result["error"]["code"], "unsupported")
 
     def test_rate_limit_and_missing_are_distinct_errors(self):
         Handler.routes["/search/repositories"] = (403, {}, {"x-ratelimit-remaining": "0", "retry-after": "60"})

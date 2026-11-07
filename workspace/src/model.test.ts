@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { comparisonSamples, currentResponse, deliveredModels, deliveryIds, evaluationRuns, experimentNumber, experiments, layout, NODE_HEIGHT, NODE_WIDTH, OBSERVATION_MAX_AGE_MS, plan, plannedNodes, outcomeLabels, parseSnapshot, preferredEvaluation, resourceObservation, statusLabel } from './model';
 import type { Observations, ResearchFile, Snapshot } from './model';
+import { setLanguage } from './i18n';
+
+// These assertions read the Chinese source text; English is covered in i18n.test.ts.
+setLanguage('zh');
 const file = (content: unknown): ResearchFile => ({ content, sha256: 'a'.repeat(64) });
 const files: Snapshot['files'] = {
-  'project.json': file({ schema_version: 4, deliveries: ['exp-1'] }),
+  'project.json': file({ deliveries: ['exp-1'] }),
   'experiments/exp-1/config.json': file({ id: 'exp-1', title: '初次训练', parameters: {} }),
   'experiments/exp-1/status.json': file({ state: 'succeeded', target: { kind: 'local', path: 'experiments/exp-1/model/model.bin', sha256: 'a'.repeat(64) } }),
   'experiments/exp-1/evals/a/config.json': file({ evaluation_version: 'v1' }),
@@ -13,18 +17,17 @@ const files: Snapshot['files'] = {
 };
 const snapshot = (source = files, observations?: Observations) => ({ files: source, revision: '1', synced_at: '', error: null, ...(observations ? { observations } : {}) });
 
-describe('format 4 research files', () => {
-  it('validates the snapshot envelope and requires format 4', () => {
+describe('research files', () => {
+  it('validates the snapshot envelope', () => {
     expect(parseSnapshot(snapshot()).files).toEqual(files);
     expect(parseSnapshot(snapshot({})).files).toEqual({});
     expect(() => parseSnapshot({ ...snapshot(), files: [] })).toThrow();
-    expect(() => parseSnapshot(snapshot({ 'project.json': file({ schema_version: 1, deliveries: [] }) }))).toThrow('格式 4');
     expect(() => parseSnapshot(snapshot({ 'project.json': { content: {}, sha256: '' } }))).toThrow();
   });
   it('rejects malformed structured records without replacing the last usable snapshot', () => {
     const good = parseSnapshot(snapshot());
     let current = good;
-    for (const bad of [{ 'proposal.json': file({ examples: 'bad' }) }, { 'resources.json': file({ items: null }) }, { 'test.json': file([]) }, { 'outputs.jsonl': file([null]) }, { 'project.json': file({ schema_version: 4, deliveries: null }) }] as Snapshot['files'][]) {
+    for (const bad of [{ 'proposal.json': file({ examples: 'bad' }) }, { 'resources.json': file({ items: null }) }, { 'test.json': file([]) }, { 'outputs.jsonl': file([null]) }, { 'project.json': file({ deliveries: null }) }] as Snapshot['files'][]) {
       expect(() => { current = parseSnapshot(snapshot({ ...files, ...bad })); }).toThrow();
       expect(current).toBe(good);
     }
@@ -85,7 +88,7 @@ describe('format 4 research files', () => {
   });
   it('resolves chosen models only when succeeded and model_path is present', () => {
     const configured = { ...files,
-      'project.json': file({ schema_version: 4, deliveries: ['exp-1', 'exp-1', 'missing', 'incomplete', 'no-model'] }),
+      'project.json': file({ deliveries: ['exp-1', 'exp-1', 'missing', 'incomplete', 'no-model'] }),
       'experiments/incomplete/config.json': file({ title: '未核验' }),
       'experiments/incomplete/status.json': file({ state: 'completed', target: { kind: 'local', path: 'experiments/incomplete/model/a', sha256: 'a'.repeat(64) } }),
       'experiments/no-model/config.json': file({ title: '无模型' }),

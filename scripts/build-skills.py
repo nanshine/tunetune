@@ -54,7 +54,7 @@ def collect(source):
 
 def manifest_bytes(source):
     inputs = collect(source)
-    manifest = {"version": VERSION, "schema_min": 4, "schema_max": 4,
+    manifest = {"version": VERSION,
                 "files": [{"path": relative, "sha256": hashlib.sha256(inputs[relative].read_bytes()).hexdigest()}
                           for relative in sorted(inputs)]}
     return (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")

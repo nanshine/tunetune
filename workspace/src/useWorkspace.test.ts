@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkspace } from './useWorkspace';
 import type { Snapshot } from './model';
+import { setLanguage } from './i18n';
+
+// These assertions read the Chinese source text; English is covered in i18n.test.ts.
+setLanguage('zh');
 
 // A small hook harness tests the file channel without introducing a DOM dependency.
 const hooks = vi.hoisted(() => ({ values: [] as unknown[], cursor: 0, mounted: false, cleanup: undefined as (() => void) | undefined }));
@@ -16,7 +20,7 @@ vi.mock('react', () => ({
 }));
 function render() { hooks.cursor = 0; return useWorkspace(); }
 const snapshot: Snapshot = {
-  files: { 'project.json': { content: { schema_version: 4, name: '研究', deliveries: [] }, sha256: 'a'.repeat(64) } },
+  files: { 'project.json': { content: { name: '研究', deliveries: [] }, sha256: 'a'.repeat(64) } },
   revision: 'stable', synced_at: '2026-11-01T12:00:00Z', error: null,
   observations: { checked_at: '2026-11-01T12:00:00Z', items: [{ id: 'data', state: 'ready' }] },
 };
@@ -65,6 +69,6 @@ describe('file channel polling', () => {
     await vi.advanceTimersByTimeAsync(0);
     await expect(render().renameProject('新名称', 'a'.repeat(64))).rejects.toThrow('项目记录已变更');
     expect(fetch).toHaveBeenLastCalledWith('/api/project/name', expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: '新名称', expected_sha256: 'a'.repeat(64) }) }));
-    expect(render().snapshot?.files['project.json'].content).toEqual({ schema_version: 4, name: '研究', deliveries: [] });
+    expect(render().snapshot?.files['project.json'].content).toEqual({ name: '研究', deliveries: [] });
   });
 });

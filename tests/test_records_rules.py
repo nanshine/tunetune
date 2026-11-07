@@ -9,17 +9,17 @@ import unittest
 from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "plugins/tunetune/skills/research-workspace/scripts"
-SPEC = importlib.util.spec_from_file_location("format3_records", SCRIPTS / "records.py")
+SPEC = importlib.util.spec_from_file_location("rules_records", SCRIPTS / "records.py")
 records = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(records)
 with patch.dict(sys.modules, records=records):
-    SPEC = importlib.util.spec_from_file_location("format3_runner", SCRIPTS / "run.py")
+    SPEC = importlib.util.spec_from_file_location("rules_runner", SCRIPTS / "run.py")
     runner = importlib.util.module_from_spec(SPEC)
     SPEC.loader.exec_module(runner)
 STAMP = "2026-11-03T00:00:00Z"
 
 
-class Format3Tests(unittest.TestCase):
+class ResearchRuleTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -28,10 +28,10 @@ class Format3Tests(unittest.TestCase):
         self.root.mkdir()
         self.tree = records.Tree(self.root)
         self.addCleanup(self.tree.close)
-        self.raw("project.json", dict(schema_version=4, name="Fixture", language="en", current_evaluation=None, deliveries=[]))
+        self.raw("project.json", dict(name="Fixture", language="en", current_evaluation=None, deliveries=[]))
         self.raw("proposal.json", dict(summary="Fixture", examples=[]))
         self.raw("resources.json", dict(items=[]))
-        self.raw(".workspace/manifest.json", dict(schema_min=4, schema_max=4))
+        self.raw(".workspace/manifest.json", dict(version=records.VERSION))
 
     def raw(self, path, value):
         target = self.root / path
@@ -288,7 +288,7 @@ print('simulated request completed; key was read only from the environment')
                 self.freeze(f"experiments/unsafe{index}/snapshot", {name: b"fixture"})
             self.assertFalse(self.tree.exists(f"experiments/unsafe{index}/snapshot"))
 
-    def test_schema_two_write_and_execution_refused_without_mutation(self):
+    def test_older_project_write_and_execution_refused_without_mutation(self):
         config = self.config()
         self.write("experiments/reference/config.json", config)
         self.raw("project.json", dict(schema_version=2, name="Old", language="en", current_evaluation=None, deliveries=[]))

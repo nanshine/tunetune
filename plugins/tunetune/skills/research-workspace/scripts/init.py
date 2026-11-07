@@ -95,10 +95,8 @@ def verify_skill(skill=SKILL):
         raise ValueError("Skill manifest must be a regular file")
     manifest_bytes = manifest_path.read_bytes()
     manifest = json_object(manifest_bytes, "manifest.json")
-    if (manifest.get("version") != VERSION or type(manifest.get("schema_min")) is not int
-            or type(manifest.get("schema_max")) is not int
-            or manifest["schema_min"] != 4 or manifest["schema_max"] != 4):
-        raise ValueError(f"Unsupported tool version or schema range; tools {VERSION} require schema 4 only")
+    if manifest.get("version") != VERSION:
+        raise ValueError(f"Unsupported tool version; expected tools {VERSION}")
     entries = manifest.get("files")
     if not isinstance(entries, list):
         raise ValueError("Manifest files must be a list of {path, sha256}")
@@ -142,7 +140,7 @@ def verify_skill(skill=SKILL):
     return manifest, manifest_bytes, payload
 
 
-def install(project, name=None, skill=SKILL):
+def install(project, name=None, skill=SKILL, language=None):
     skill, project = Path(os.path.realpath(skill)), Path(os.path.abspath(project))
     manifest, manifest_bytes, payload = verify_skill(skill)
     no_symlinks(project)
@@ -150,6 +148,8 @@ def install(project, name=None, skill=SKILL):
         raise ValueError("Project and skill directories must not overlap")
     if name is not None and not name.strip():
         raise ValueError("Project name must not be empty")
+    if language is not None and not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", language):
+        raise ValueError("Language must be a tag such as en, zh-CN or ja")
     if project.exists() and not project.is_dir():
         raise ValueError("Project path is not a directory")
     planned = {}
@@ -163,9 +163,14 @@ def install(project, name=None, skill=SKILL):
                 validate_business(template, path.read_bytes())
             continue
         data = payload[f"assets/templates/{template}"]
-        if template == "project.json" and name is not None:
+        if template == "project.json" and (name is not None or language is not None):
             obj = json_object(data, template)
-            obj["name"] = name
+            if language is not None:
+                obj["language"] = language
+                if name is None and not language.lower().startswith("zh"):
+                    obj["name"] = "Untitled research"
+            if name is not None:
+                obj["name"] = name
             data = (json.dumps(obj, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         planned[template] = data
     installed_manifest = project / ".workspace/manifest.json"
@@ -235,9 +240,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", required=True, type=Path)
     parser.add_argument("--name")
+    parser.add_argument("--language", help="the person's conversation language, such as en or zh-CN")
     args = parser.parse_args()
     try:
-        count = install(args.project, args.name)
+        count = install(args.project, args.name, language=args.language)
     except (OSError, ValueError) as error:
         parser.exit(1, f"Initialization refused: {error}\n")
     project = Path(os.path.abspath(args.project))

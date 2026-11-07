@@ -127,7 +127,7 @@ select { height: 28px; }
 
 /* Floating chrome */
 .project-pill { position: absolute; left: 16px; top: 14px; z-index: 6; display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px 0 10px; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-float); }
-.brand { width: 16px; height: 16px; border-radius: 5px; background: var(--cobalt); box-shadow: inset 0 0 0 4px #5c7fe0; }
+.brand { flex: none; margin: 0 2px 0 4px; color: #30343b; }
 .project-name-trigger { height: 28px; padding: 0 6px; border: 0; background: transparent; font-weight: 600; font-size: 14px; }
 .project-name-trigger:hover:not(:disabled) { background: var(--surface-2); }
 .project-name-input { width: 260px; height: 28px; font-weight: 600; }

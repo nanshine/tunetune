@@ -22,6 +22,9 @@ SPEC = importlib.util.spec_from_file_location("resource_records", Path(__file__)
 records = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(records)
 MAX_FILES = 10000
+HUBS = ("huggingface", "modelscope")
+MODELSCOPE = "https://www.modelscope.cn"
+REPOSITORY = r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*"
 
 
 def source_url(value):
@@ -126,9 +129,53 @@ def git_files(source, revision, stage, limit, deadline):
     return total
 
 
-def model_files(source, revision, stage, limit, deadline):
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*", source):
-        raise ValueError("Model source must be a public Hugging Face owner/repository ID")
+def modelscope_files(source, revision, stage, limit, deadline):
+    """Fetch a public ModelScope repository at a fixed commit, checking every file's listed SHA-256."""
+    metadata = stage / ".metadata"
+    query = f"Revision={revision}&Recursive=true"
+    download(f"{MODELSCOPE}/api/v1/models/{source}/repo/files?{query}", metadata,
+             min(limit, 16 * 1024 * 1024), deadline, internal=True)
+    info = json.loads(metadata.read_text())
+    metadata.unlink()
+    data = info.get("Data") if isinstance(info, dict) and info.get("Code") == 200 else None
+    if not isinstance(data, dict):
+        raise ValueError("ModelScope did not list this public repository revision")
+    short = (data.get("LatestCommitter") or {}).get("ShortId")
+    if not isinstance(short, str) or len(short) < 7 or not revision.startswith(short):
+        raise ValueError("Model repository returned a different revision")
+    files = []
+    total = 0
+    for item in data.get("Files") or []:
+        if not isinstance(item, dict) or item.get("Type") != "blob":
+            continue
+        name = item.get("Path")
+        if not isinstance(name, str) or any(p.startswith(".") for p in records.parts(name)):
+            continue
+        safe_name(name)
+        size, sha256 = item.get("Size"), item.get("Sha256")
+        if type(size) is not int or size < 0 or not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
+            raise ValueError("Model file size or SHA-256 is unknown; inspect the source before fetching")
+        total += size
+        files.append((name, size, sha256))
+    if not files or total > limit or len(files) > MAX_FILES:
+        raise ValueError("Model resource exceeds file or byte limit, or is empty")
+    consumed = 0
+    for name, size, sha256 in files:
+        target = stage.joinpath(*safe_name(name))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        count, digest = download(f"{MODELSCOPE}/api/v1/models/{source}/repo?Revision={revision}&FilePath={quote(name, safe='/')}",
+                                 target, limit - consumed, deadline, internal=True)
+        if count != size or digest != sha256:
+            raise ValueError("Model file differs from repository metadata")
+        consumed += count
+    return consumed
+
+
+def model_files(source, revision, stage, limit, deadline, hub="huggingface"):
+    if not re.fullmatch(REPOSITORY, source):
+        raise ValueError("Model source must be a public owner/repository ID")
+    if hub == "modelscope":
+        return modelscope_files(source, revision, stage, limit, deadline)
     metadata = stage / ".metadata"
     download(f"https://huggingface.co/api/models/{source}/revision/{revision}?blobs=true", metadata,
              min(limit, 16 * 1024 * 1024), deadline, internal=True)
@@ -185,7 +232,7 @@ def publish_directory(stage, parent_fd, name):
 
 
 def prepare(project, source, destination, kind="http", revision=None, sha256=None,
-            max_bytes=1024 ** 3, timeout=300, fetch=False):
+            max_bytes=1024 ** 3, timeout=300, fetch=False, hub="huggingface"):
     if type(max_bytes) is not int or max_bytes <= 0 or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("Provide positive --max-bytes and finite --timeout")
     parts = safe_name(destination)
@@ -193,10 +240,12 @@ def prepare(project, source, destination, kind="http", revision=None, sha256=Non
         raise ValueError("Resource destination must be inside resources/ or inputs/")
     if kind not in ("http", "git", "model"):
         raise ValueError("Unknown resource kind")
+    if hub not in HUBS or hub != "huggingface" and kind != "model":
+        raise ValueError("--hub applies only to model resources: huggingface or modelscope")
     if kind != "model":
         source_url(source)
-    elif not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*", source):
-        raise ValueError("Model source must be a public Hugging Face owner/repository ID")
+    elif not re.fullmatch(REPOSITORY, source):
+        raise ValueError("Model source must be a public owner/repository ID")
     if kind in ("git", "model") and not re.fullmatch(r"[0-9a-f]{40}", revision or ""):
         raise ValueError("Git and model resources require a fixed 40-character commit revision")
     if sha256 is not None and (kind != "http" or not re.fullmatch(r"[0-9a-f]{64}", sha256)):
@@ -204,12 +253,12 @@ def prepare(project, source, destination, kind="http", revision=None, sha256=Non
     tree = records.Tree(project)
     try:
         records.check_installed_metadata(tree)
-        if tree.exists("project.json") and records.strict(tree.read("project.json")).get("schema_version") != 4:
-            raise ValueError("Incompatible project format; format 4 is required")
         if tree.exists(destination):
             raise ValueError("Resource destination already exists")
         result = dict(kind=kind, source=source, revision=revision, destination=destination,
                       max_bytes=max_bytes, expected_bytes=None, state="planned")
+        if kind == "model":
+            result["hub"] = hub
         if not fetch:
             # Read-only: inspect any existing parent without creating directories.
             for index in range(1, len(parts)):
@@ -231,7 +280,10 @@ def prepare(project, source, destination, kind="http", revision=None, sha256=Non
                         result["sha256"] = digest
                     else:
                         stage.mkdir()
-                        count = (git_files if kind == "git" else model_files)(source, revision, stage, max_bytes, deadline)
+                        if kind == "git":
+                            count = git_files(source, revision, stage, max_bytes, deadline)
+                        else:
+                            count = model_files(source, revision, stage, max_bytes, deadline, hub)
                         publish_directory(stage, parent, parts[-1])
                     os.fsync(parent)
         return dict(result, state="prepared", actual_bytes=count)
@@ -247,13 +299,14 @@ def main():
     parser.add_argument("--destination", required=True)
     parser.add_argument("--kind", choices=("http", "git", "model"), default="http")
     parser.add_argument("--revision")
+    parser.add_argument("--hub", choices=HUBS, default="huggingface", help="model hosting service for --kind model")
     parser.add_argument("--sha256")
     parser.add_argument("--max-bytes", type=int, default=1024 ** 3)
     parser.add_argument("--timeout", type=float, default=300)
     args = parser.parse_args()
     try:
         result = prepare(args.project, args.source, args.destination, args.kind, args.revision,
-                         args.sha256, args.max_bytes, args.timeout, args.action == "fetch")
+                         args.sha256, args.max_bytes, args.timeout, args.action == "fetch", args.hub)
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         # Avoid child process stderr, which may contain remote credentials or private repository content.

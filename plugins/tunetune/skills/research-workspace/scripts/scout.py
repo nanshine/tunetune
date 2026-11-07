@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only lookup of public models, datasets, papers and repositories, plus hardware fit estimates.
+"""Read-only lookup of public models (Hugging Face or ModelScope), datasets, papers and repositories, plus hardware fit estimates.
 
 Results are leads for research decisions, not evidence about this study. Nothing is downloaded or
 written; no credentials are read or accepted.
@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
 HF = os.environ.get("TUNETUNE_SCOUT_HF", "https://huggingface.co")
+MODELSCOPE = os.environ.get("TUNETUNE_SCOUT_MODELSCOPE", "https://www.modelscope.cn")
 ARXIV = os.environ.get("TUNETUNE_SCOUT_ARXIV", "https://export.arxiv.org")
 GITHUB = os.environ.get("TUNETUNE_SCOUT_GITHUB", "https://api.github.com")
 MAX_BYTES = 8 * 1024 * 1024
@@ -22,6 +23,7 @@ PERMISSIVE = {"mit", "apache-2.0", "bsd", "bsd-2-clause", "bsd-3-clause", "isc",
 COPYLEFT = {"gpl-2.0", "gpl-3.0", "lgpl-2.1", "lgpl-3.0", "agpl-3.0", "mpl-2.0", "cc-by-sa-4.0"}
 BYTES_PER_PARAM = {"fp32": 4.0, "fp16": 2.0, "bf16": 2.0, "int8": 1.0, "q4": 0.6}
 USABLE_SHARE = {"apple": 0.65, "cuda": 0.9, "cpu": 0.7}
+HUBS = ("huggingface", "modelscope")
 
 
 class ScoutError(Exception):
@@ -34,8 +36,12 @@ def now():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def fetch(url, timeout, accept="application/json"):
-    request = Request(url, headers={"Accept": accept, "User-Agent": "tunetune-scout/1"})
+def fetch(url, timeout, accept="application/json", body=None):
+    headers = {"Accept": accept, "User-Agent": "tunetune-scout/1"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = Request(url, headers=headers, method="PUT" if body is not None else "GET",
+                      data=json.dumps(body).encode() if body is not None else None)
     try:
         with urlopen(request, timeout=timeout) as response:
             data = response.read(MAX_BYTES + 1)
@@ -74,7 +80,7 @@ def license_info(tags, explicit=None):
 def hf_item(raw, kind):
     tags = raw.get("tags") or []
     unknown = []
-    item = {"id": raw.get("id"), "url": f"{HF}/{'datasets/' if kind == 'dataset' else ''}{raw.get('id')}",
+    item = {"hub": "huggingface", "id": raw.get("id"), "url": f"{HF}/{'datasets/' if kind == 'dataset' else ''}{raw.get('id')}",
             "downloads": raw.get("downloads"), "likes": raw.get("likes"),
             "last_modified": raw.get("lastModified"), "gated": raw.get("gated", False),
             "license": license_info(tags, (raw.get("cardData") or {}).get("license") if isinstance((raw.get("cardData") or {}).get("license"), str) else None),
@@ -125,7 +131,87 @@ def hf_search(args, kind):
     return items[:args.limit], limits, warnings, {"matched_before_limit": len(items)}
 
 
+def ms_fetch(path, timeout, body=None):
+    """ModelScope wraps results as {Code, Data, Message}; a non-200 Code is an error even over HTTP 200."""
+    raw, limits = fetch(f"{MODELSCOPE}/api/v1/{path}", timeout, body=body)
+    if not isinstance(raw, dict) or raw.get("Code") != 200 or not isinstance(raw.get("Data"), dict):
+        message = str(raw.get("Message") or "unexpected response")[:200] if isinstance(raw, dict) else "unexpected response"
+        code = "not_found" if "404" in message or "不存在" in message else "http_error"
+        raise ScoutError(code, f"ModelScope {path.split('?')[0]}: {message}")
+    return raw["Data"], limits
+
+
+def ms_time(value):
+    return datetime.fromtimestamp(value, timezone.utc).isoformat().replace("+00:00", "Z") if isinstance(value, (int, float)) and value > 0 else None
+
+
+def ms_item(raw):
+    ident = f"{raw.get('Path')}/{raw.get('Name')}" if raw.get("Path") and raw.get("Name") else None
+    tasks = [t.get("Name") for t in raw.get("Tasks") or [] if isinstance(t, dict) and t.get("Name")]
+    total = ((raw.get("ModelInfos") or {}).get("safetensor") or {}).get("model_size")
+    item = {"hub": "modelscope", "id": ident, "url": f"{MODELSCOPE}/models/{ident}", "downloads": raw.get("Downloads"),
+            "likes": raw.get("Stars"), "last_modified": ms_time(raw.get("LastUpdatedTime")),
+            "gated": raw.get("IsAccessible") != 1, "license": license_info([], raw.get("License") or None),
+            "languages": sorted(raw.get("Language") or []), "task": tasks[0] if tasks else None,
+            "library": next((x for x in raw.get("Libraries") or [] if x not in ("pytorch", "safetensors")), None),
+            "params": {"value": total, "source": "safetensors"} if isinstance(total, int) and total > 0 else None}
+    item["unknown"] = [k for k, v in item.items() if v is None or v == []]
+    return item
+
+
+def ms_search(args):
+    criteria = [{"category": category, "predicate": "contains", "values": [value]}
+                for category, value in (("tasks", args.task), ("languages", args.lang)) if value]
+    sort = {"downloads": "DownloadsCount", "likes": "StarsCount", "trending": "Default", "recent": "GmtModified"}[args.sort]
+    body = {"PageSize": min(args.limit * 3, 100), "PageNumber": 1, "SortBy": sort, "Target": "",
+            "Criterion": criteria, "SingleCriterion": [], "Name": args.query or ""}
+    data, limits = ms_fetch("dolphin/models", args.timeout, body)
+    items = [ms_item(entry) for entry in (data.get("Model") or {}).get("Models") or []]
+    if args.library:
+        items = [i for i in items if i["library"] == args.library]
+    if args.min_downloads:
+        items = [i for i in items if (i["downloads"] or 0) >= args.min_downloads]
+    if args.max_params:
+        items = [i for i in items if i["params"] and i["params"]["value"] <= args.max_params]
+    if args.license:
+        items = [i for i in items if i["license"]["class"] == args.license]
+    warnings = ["ModelScope search uses its website endpoint and may change; inspect candidates before relying on them",
+                "Downloads and likes show popularity, not suitability for this study"]
+    return items[:args.limit], limits, warnings, {"matched_before_limit": len(items),
+                                                    "total_count": (data.get("Model") or {}).get("TotalCount")}
+
+
+def ms_files(name, revision, timeout):
+    data, limits = ms_fetch(f"models/{quote(name, safe='/')}/repo/files?{urlencode({'Revision': revision or 'master', 'Recursive': 'true'})}", timeout)
+    files = [f for f in data.get("Files") or [] if isinstance(f, dict) and f.get("Type") == "blob"]
+    short = (data.get("LatestCommitter") or {}).get("ShortId") or ""
+    # The API reports a short commit; resolve it against the full file revisions it lists.
+    full = next((f["Revision"] for f in files if short and str(f.get("Revision", "")).startswith(short)), None)
+    if revision and len(revision) == 40 and short and revision.startswith(short):
+        full = revision
+    return files, full, limits
+
+
+def ms_inspect(args):
+    if args.kind != "model":
+        raise ScoutError("unsupported", "ModelScope lookup covers models only; use Hugging Face for datasets")
+    query = f"?{urlencode({'Revision': args.revision})}" if args.revision else ""
+    raw, limits = ms_fetch(f"models/{quote(args.name, safe='/')}{query}", args.timeout)
+    item = ms_item(raw)
+    files, revision, more = ms_files(args.name, args.revision, args.timeout)
+    limits.update(more)
+    item["revision"] = revision
+    item["config"] = {k: v for k, v in (("architectures", raw.get("Architectures")), ("model_type", (raw.get("ModelType") or [None])[0])) if v} or None
+    listed = [{"path": f.get("Path"), "size": f.get("Size"), "sha256": f.get("Sha256") or None} for f in files]
+    item["files"] = listed[:200]
+    item["total_file_bytes"] = sum(f["size"] or 0 for f in listed)
+    item["unknown"] = [k for k, v in item.items() if k != "unknown" and (v is None or v == [])]
+    return [item], limits, ["Files list up to 200 entries"] if len(listed) > 200 else [], {}
+
+
 def inspect(args):
+    if args.hub == "modelscope":
+        return ms_inspect(args)
     kind = args.kind
     path = f"{HF}/api/{kind}s/{quote(args.name, safe='/')}"
     if args.revision:
@@ -149,8 +235,16 @@ def inspect(args):
     return [item], limits, ["Files list only the root of the repository"] if any(f.get("type") == "directory" for f in tree) else [], {}
 
 
-def model_shape(name, timeout):
+def model_shape(name, timeout, hub="huggingface"):
     """Return parameters and attention shape from public metadata, marking estimates."""
+    if hub == "modelscope":
+        raw, _ = ms_fetch(f"models/{quote(name, safe='/')}", timeout)
+        total = ((raw.get("ModelInfos") or {}).get("safetensor") or {}).get("model_size")
+        try:
+            config, _ = fetch(f"{MODELSCOPE}/api/v1/models/{quote(name, safe='/')}/repo?{urlencode({'Revision': 'master', 'FilePath': 'config.json'})}", timeout)
+        except ScoutError:
+            config = {}
+        return (total if isinstance(total, int) and total > 0 else None), (config if isinstance(config, dict) else {})
     raw, _ = fetch(f"{HF}/api/models/{quote(name, safe='/')}?" + urlencode([("expand[]", e) for e in ("safetensors", "gguf")]), timeout)
     total = (raw.get("safetensors") or {}).get("total") or (raw.get("gguf") or {}).get("total")
     try:
@@ -165,7 +259,7 @@ def fit(args):
     params, config = args.params, {}
     source = "argument" if params else None
     if args.name:
-        found, config = model_shape(args.name, args.timeout)
+        found, config = model_shape(args.name, args.timeout, args.hub)
         if not params and found:
             params, source = found, "metadata"
     usable = args.memory_gb * USABLE_SHARE[args.platform]
@@ -255,12 +349,15 @@ def main(argv=None):
         if name == "models":
             command.add_argument("--library")
             command.add_argument("--max-params", type=float)
+            command.add_argument("--hub", choices=HUBS, default="huggingface")
     command = commands.add_parser("inspect")
     command.add_argument("name")
     command.add_argument("--kind", choices=("model", "dataset"), default="model")
     command.add_argument("--revision")
+    command.add_argument("--hub", choices=HUBS, default="huggingface")
     command = commands.add_parser("fit")
     command.add_argument("name", nargs="?")
+    command.add_argument("--hub", choices=HUBS, default="huggingface")
     command.add_argument("--params", type=float, help="parameter count when metadata is unavailable")
     command.add_argument("--memory-gb", type=float, required=True)
     command.add_argument("--platform", choices=tuple(USABLE_SHARE), default="cpu")
@@ -282,7 +379,7 @@ def main(argv=None):
         parser.error("--limit must be 1-50 and --timeout positive")
     if args.command == "fit" and not args.name and not args.params:
         parser.error("fit needs a model name or --params")
-    handlers = {"models": lambda a: hf_search(a, "model"), "datasets": lambda a: hf_search(a, "dataset"),
+    handlers = {"models": lambda a: ms_search(a) if a.hub == "modelscope" else hf_search(a, "model"), "datasets": lambda a: hf_search(a, "dataset"),
                 "inspect": inspect, "fit": fit, "papers": papers, "repos": repos}
     query = {k: v for k, v in vars(args).items() if k not in ("command", "timeout") and v is not None}
     try:

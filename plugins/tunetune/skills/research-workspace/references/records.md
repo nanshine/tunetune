@@ -1,10 +1,10 @@
-# Research files — format 4
+# Research files
 
-The Agent maintains research files; the panel shows them and records the person's responses. Work starts, stops and changes boundaries in conversation. Tools 0.7.0 support format 4 only: refuse older projects and tools without migration or replacement. This is the single format guide.
+The Agent maintains research files; the panel shows them and records the person's responses. Work starts, stops and changes boundaries in conversation. A project is pinned to the tools that initialized it; refuse projects pinned to other tools without migration or replacement. This is the single format guide.
 
 ## Current study
 
-- `project.json`: `{schema_version:4,name,language,current_evaluation:null|string,deliveries:[experiment_id]}`.
+- `project.json`: `{name,language,current_evaluation:null|string,deliveries:[experiment_id]}`. `language` is the language tag of the person's conversation, such as `en` or `zh-CN`; the panel shows its interface in Chinese for `zh` tags and in English otherwise. Write research text for the person in that language, and update the tag when they switch languages.
 - `proposal.json`: `{summary,examples:[{id,input,expected_output?}],goal?,output?,considered?:[{family,decision:adopted|excluded,reason}],approaches?:[{id,title,roles:[baseline|recommended|reference|challenge],rationale,limitations?,resource_ids?:[resource_id]}],evaluation?,budget?,stopping?,delivery?,assumptions?:[string],sources?:[{title,url}],feasibility?:{verdict:feasible|conditional|infeasible|unknown,reason}}`. Text fields are plain sentences for a beginner; links belong in `sources`, not in prose.
 - `plan.json` (optional until the first round): `{rounds:[{round,goal,budget,items:[{id,title,question,expected,state:planned|running|done|dropped,intervention?,parent?,comparator?,cost?,resource_ids?:[resource_id],note?}],conclusion?}],ideas?:[{title,reason}]}`.
 - `resources.json`: `{items:[{id,title,type,status,purpose?,source?,preparation?,access?,path?,location?,version?,size?,monitor?}]}`.
