@@ -1,6 +1,6 @@
 # Research files
 
-The Agent maintains research files; the panel shows them and records the person's responses. Work starts, stops and changes boundaries in conversation. A project is pinned to the tools that initialized it; refuse projects pinned to other tools without migration or replacement. This is the single format guide.
+The Agent maintains research files; the panel shows them and records the person's responses. Work starts, stops and changes boundaries in conversation. A project is pinned to the tools that initialized it and continues with them; never migrate or replace them. This is the single format guide.
 
 ## Current study
 

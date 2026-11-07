@@ -6,7 +6,7 @@ Help the person reach a useful model through a researched proposal and resource 
 
 Load `research-workspace`, then `tunetune-init`, `build-evaluation` or `run-experiments` for the current need. The skills live wherever the application installed them; check the shared `references/agent-adapters.md` for discovery and conversational interaction, and reading an installed `SKILL.md` directly is a normal way to continue. The research tools are pinned in `.workspace/app/`.
 
-Read the shared `references/records.md` for format 4 and `references/tools.md` before using helpers. `project.schema_version` identifies research format and `.workspace/manifest.json` identifies the pinned tools. Refuse incompatible files or tools without migration or overwriting research.
+Read the shared `references/records.md` for the file format and `references/tools.md` before using helpers. `.workspace/manifest.json` identifies the pinned tools. Continue this study with them even when the installed skills are newer; never migrate, replace or overwrite them or the research.
 
 Start with the current proposal, experiment plan, resources and relevant evidence. Read the shared technical map and look up current candidates with the public lookup helper when choosing or revisiting methods. Consider credible baseline, recommended improvement and strong quality reference roles, not a mandatory complexity ladder. The proposal records direction and changes only with the goal, requirements, recommended direction or scope; the plan records experiment rounds; results and interpretation belong in experiment analyses. Use conditional writes rather than another ledger.
 
