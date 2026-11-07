@@ -482,7 +482,7 @@ class RecordsTests(unittest.TestCase):
         source.mkdir()
         (source / "code.py").write_bytes(b"# fixture\n")
         self.raw("experiments/e1/model/weights", b"fixture")
-        for metadata in (dict(version="0.6.0"), dict(version="0.7.1"), dict(version=None), dict(schema_min=4, schema_max=4), {}):
+        for metadata in (dict(version="0.6.0"), dict(version="99.0.0"), dict(version=None), dict(schema_min=4, schema_max=4), {}):
             with self.subTest(metadata=metadata):
                 self.raw(".workspace/manifest.json", metadata)
                 before = {p.relative_to(self.root): p.read_bytes() if p.is_file() else None

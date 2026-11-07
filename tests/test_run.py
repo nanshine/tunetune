@@ -629,7 +629,7 @@ class RunTests(unittest.TestCase):
         self.assert_unstarted()
 
     def test_incompatible_installed_metadata_refuses_execute_without_changes(self):
-        for metadata in (dict(version="0.6.0"), dict(version="0.7.1"), dict(schema_min=4, schema_max=4)):
+        for metadata in (dict(version="0.6.0"), dict(version="99.0.0"), dict(schema_min=4, schema_max=4)):
             with self.subTest(metadata=metadata):
                 self.raw(".workspace/manifest.json", metadata)
                 before = {p.relative_to(self.root): p.read_bytes() if p.is_file() else None

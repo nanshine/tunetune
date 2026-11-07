@@ -1,5 +1,5 @@
 {
-  "version": "0.7.0",
+  "version": "0.7.1",
   "files": [
     {
       "path": "assets/panel/assets/index-B91UmRNB.js",
@@ -39,11 +39,11 @@
     },
     {
       "path": "scripts/records.py",
-      "sha256": "d55602d460c944f9d8144873e3f5eadd24ea1499ef533eb70e3d51897575b74b"
+      "sha256": "9d026e10ea9d7f67768ef184c983791732b8690829cc2bc0c2ba5cf1846ddf7a"
     },
     {
       "path": "scripts/resources.py",
-      "sha256": "e6da82f76cee9dc5b1949851b24c82f2f11a0ef958692e9e2ea1d1cd24deb1de"
+      "sha256": "bc07bc73bd90bf511c5f50e534ff88fbe5fa0310f3a23c3b07c33e065eae2add"
     },
     {
       "path": "scripts/run.py",

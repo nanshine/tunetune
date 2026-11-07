@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
 SKILLS_DIR = "plugins/tunetune/skills"
 SKILLS = ("research-workspace", "tunetune-init", "build-evaluation", "run-experiments")

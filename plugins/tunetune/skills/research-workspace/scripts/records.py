@@ -17,7 +17,7 @@ import uuid
 ID = r"[A-Za-z0-9_-]+"
 SHA = re.compile(r"[a-f0-9]{64}\Z")
 FINAL = ("succeeded", "failed", "cancelled")
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 VIEWS = ("proposal", "plan", "resources", "evaluation", "review", "acceptance")
 RESPONSE_TARGETS = {"proposal": "proposal.json", "plan": "plan.json", "evaluation_review": "evaluation/draft/samples.jsonl",
                     "acceptance": "comparison/outputs.jsonl"}
