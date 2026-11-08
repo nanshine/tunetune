@@ -8,8 +8,10 @@ import { ProposalView, ResourcesView, readableSize } from './ProjectBrief';
 import { PlanView } from './PlanView';
 import { EvaluationView, SamplesView } from './EvaluationView';
 import { ReviewView, parseCorrection } from './ReviewView';
-import { AcceptanceView, inputTemplate } from './AcceptanceView';
+import { AcceptanceView, TryPanel, blankInput, trialGap } from './AcceptanceView';
 import { ExperimentSummary } from './Lineage';
+import { RecordView, readableNumber, sampleLabel } from './RecordView';
+import { attachmentExtension } from './attachments';
 import { ExperimentDetails } from './ExperimentDetails';
 import { setLanguage } from './i18n';
 
@@ -17,7 +19,7 @@ import { setLanguage } from './i18n';
 setLanguage('zh');
 
 const workspace = vi.hoisted(() => ({ snapshot: null as Snapshot | null, connectionError: null as string | null, renameProject: vi.fn() }));
-vi.mock('./useWorkspace', () => ({ useWorkspace: () => workspace, submitResponse: vi.fn(), runAcceptance: vi.fn(), tryModel: vi.fn(), loadModel: vi.fn(), unloadModel: vi.fn() }));
+vi.mock('./useWorkspace', () => ({ useWorkspace: () => workspace, submitResponse: vi.fn(), runAcceptance: vi.fn(), tryModel: vi.fn(), uploadTrialAttachment: vi.fn(), loadModel: vi.fn(), unloadModel: vi.fn() }));
 const { App } = await import('./App');
 
 const file = (content: unknown, sha = 'a'): ResearchFile => ({ content, sha256: sha.repeat(64) });
@@ -141,9 +143,28 @@ describe('research views', () => {
   it('lets the person run models on acceptance inputs and try new content in the same shape', () => {
     const runnable = { ...files, 'experiments/e001-embed/model/invoke.json': file({ argv: ['python3', 'predict.py'] }) };
     const html = render(AcceptanceView, { files: runnable, job: { id: 'j', state: 'running', experiments: ['e001-embed'], started_at: '' }, onRun: vi.fn(), onTry: vi.fn() });
-    for (const value of ['E001', '向量加逻辑回归', '可拼搭的软件', '正在让 E001', '试一段新内容', '标题', '正文', '不会写入研究记录']) expect(html).toContain(value);
-    expect(inputTemplate([{ sample_id: 'x', input: post }])).toEqual(['title', 'text']);
-    expect(inputTemplate([{ sample_id: 'x', input: '纯文本' }])).toBeNull();
+    for (const value of ['E001', '向量加逻辑回归', '可拼搭的软件', '正在让 E001', '试新输入', '改一改再试']) expect(html).toContain(value);
+    // A new input keeps the shape of the acceptance inputs: text emptied, choices kept, pictures still to choose.
+    expect(blankInput(post)).toEqual({ title: '', text: '' });
+    const picture = { image: { type: 'image', path: 'evaluation/v1/media/a.png', title: 'a' }, prepared_mask: true, domain: 'unseen', top: 3 };
+    expect(blankInput(picture)).toEqual({ image: { type: 'image', path: '' }, prepared_mask: true, domain: '', top: 3 });
+    expect(trialGap(blankInput(picture))).toBe('先选一张图片');
+    expect(trialGap({ title: '', text: '' })).toBe('先填写内容');
+    expect(trialGap(picture)).toBeNull();
+    const models = experiments(runnable).filter(item => item.id === 'e001-embed');
+    const form = render(TryPanel, { models, initial: post, from: '可拼搭的软件', blank: blankInput(post), onTry: vi.fn() });
+    for (const value of ['试新输入', '从「可拼搭的软件」复制而来', '标题', '正文', '用多维表格搭一个自己的系统。', '不会写入研究记录']) expect(form).toContain(value);
+    const pictureForm = render(TryPanel, { models, initial: blankInput(picture), from: null, blank: blankInput(picture), onTry: vi.fn(), onUpload: vi.fn() });
+    for (const value of ['选择图片', 'prepared_mask', 'type="checkbox"', '先选一张图片', 'accept=".png,.jpg,.jpeg,.gif,.webp"']) expect(pictureForm).toContain(value);
+    // Audio, video and other files are chosen the same way, each limited to the formats the service accepts.
+    const clip = { audio: { type: 'audio', path: '' }, video: { type: 'video', path: '' }, scan: { type: 'file', path: '' } };
+    const mediaForm = render(TryPanel, { models, initial: clip, from: null, blank: clip, onTry: vi.fn(), onUpload: vi.fn() });
+    for (const value of ['选择音频', '选择视频', '选择文件', 'accept=".wav,.mp3,.ogg,.flac,.m4a"', 'accept=".mp4,.m4v,.mov,.webm"', '先选一段音频']) expect(mediaForm).toContain(value);
+    expect(trialGap({ ...clip, audio: { type: 'audio', path: '.workspace/runtime/trial-a.wav' } })).toBe('先选一段视频');
+    expect(attachmentExtension(new File([''], 'Clip.MP3'), 'audio')).toBe('mp3');
+    expect(attachmentExtension(new File([''], 'clip.mp4'), 'audio')).toBeNull();
+    expect(attachmentExtension(new File([''], 'scan.pdf'), 'file')).toBe('pdf');
+    expect(attachmentExtension(new File([''], 'README'), 'file')).toBeNull();
     expect(render(AcceptanceView, { files: { 'project.json': files['project.json'] }, job: null, onRun: vi.fn(), onTry: vi.fn() })).toContain('还没有可验收的模型');
   });
   it('keeps nodes compact and details led by the conclusion and the change against the parent', () => {
@@ -186,5 +207,16 @@ describe('research views', () => {
     const answered = { ...files, 'responses/r1.json': file({ id: 'r1', kind: 'acceptance', target: { path: 'comparison/outputs.jsonl', sha256: 'a'.repeat(64) }, created_at: '2030-01-01T00:00:00Z', decision: 'submit',
       items: [{ sample_id: 'p1', experiment_id: 'e001-embed', verdict: 'bad', note: '少了旅行' }] }) };
     expect(render(AcceptanceView, { ...props, files: answered, onFeedback: vi.fn() })).toContain('这批输出的意见已提交（1 条）');
+  });
+  it('shows record fields without overlap, ranked lists as tables and readable numbers', () => {
+    const value = { image: { type: 'image', path: 'evaluation/v2/media/a.png' }, prepared_mask: true, top5: [{ species_id: 1, name_en: 'bulbasaur', score: 0.553757 }, { species_id: 143, name_en: 'snorlax', score: 0.2 }], inference_seconds: 0.0238408452143111 };
+    const html = render(RecordView, { value });
+    for (const part of ['<table>', '<th scope="col">species_id</th>', '<th scope="col">得分</th>', 'snorlax', '>0.02384<', 'title="0.0238408452143111"', 'prepared_mask', '>是<', 'media-frame loading']) expect(html).toContain(part);
+    expect(readableNumber(4673)).toBe('4673');
+    expect(readableNumber(12.345678)).toBe('12.3457');
+    expect(readableNumber(0.000123456)).toBe('0.0001235');
+    // Without a title the sample ID names an input before a bare number does.
+    expect(sampleLabel({ sample_id: 'show-063-abra', input: { image: {} } }, 0)).toBe('show-063-abra');
+    expect(sampleLabel({ input: { image: {} } }, 2)).toBe('样例 3');
   });
 });

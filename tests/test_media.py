@@ -144,7 +144,10 @@ class MediaTests(unittest.TestCase):
         status, _, headers = self.request('/')
         self.assertEqual(status, 200)
         policy = headers['Content-Security-Policy']
-        self.assertIn("media-src 'self'", policy)
+        self.assertIn("media-src 'self' blob:;", policy)
+        # Only page-made blob: URLs are added, so a picked trial file can be previewed before upload.
+        self.assertIn("img-src 'self' data: blob:;", policy)
+        self.assertNotIn("script-src 'self' blob:", policy)
         self.assertIn("object-src 'none'", policy)
         self.assertIn("frame-ancestors 'none'", policy)
         self.assertNotIn('https:', policy)

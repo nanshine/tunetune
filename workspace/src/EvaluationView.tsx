@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ClipboardCheck } from 'lucide-react';
 import { array, collection, currentResponse, document, evaluationRuns, object, referenceReview, referenceStatus, referenceStatusLabels, sampleSplit, splitCounts, text } from './model';
 import type { JsonObject, ReferenceStatus, Snapshot, Split } from './model';
 import { PAGE_SIZE, rowSource, sourceTotal, usePaged, useRowPage } from './rows';
 import type { RowSource } from './rows';
-import { RecordView, sampleLabel } from './RecordView';
+import { RecordView, prefetchImages, sampleLabel } from './RecordView';
 import { Empty, Section } from './Parts';
 import { ReviewView } from './ReviewView';
 import type { ReviewItem } from './useWorkspace';
@@ -37,8 +37,14 @@ export function SamplesView({ source, outputs = false, metricLabels = {} }: { so
   const page = Math.floor(activeIndex / PAGE_SIZE);
   const pages = Math.ceil(total / PAGE_SIZE);
   const loaded = useRowPage(source, page);
-  if (!total) return <p className="muted">{outputs ? t('这次评测没有逐例输出。') : t('还没有样例。')}</p>;
   const rows = loaded.value;
+  // The neighbouring samples' pictures are fetched ahead, so stepping through them shows each at once.
+  useEffect(() => {
+    if (!rows) return;
+    const at = activeIndex - page * PAGE_SIZE;
+    prefetchImages([rows[at + 1], rows[at - 1], rows[at + 2]].filter(Boolean).flatMap(row => [row.input, row.reference, row.output]));
+  }, [rows, activeIndex, page]);
+  if (!total) return <p className="muted">{outputs ? t('这次评测没有逐例输出。') : t('还没有样例。')}</p>;
   if (!rows) return <p className={loaded.error ? 'error-text' : 'muted'} role="status">{loaded.error || t('正在读取第 {page} 页…', { page: page + 1 })}</p>;
   const row = rows[activeIndex - page * PAGE_SIZE] ?? rows[0];
   const scores = Object.entries(object(row.scores)).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1]));

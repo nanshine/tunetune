@@ -44,6 +44,8 @@ MAX_BODY_BYTES = 128 * 1024
 # A JSONL record too large to send whole, such as per-sample outputs of a large evaluation, is indexed once
 # per version and read in pages; beyond these bounds it is left out and listed instead.
 MAX_PAGED_BYTES = 256 * 1024 * 1024
+# JSONL rows beyond this are paged too, so a large sample set is not resent and reparsed with every state change.
+MAX_INLINE_ROWS_BYTES = 1024 * 1024
 MAX_PAGED_ROWS = 500_000
 MAX_PAGE_ROWS = 200
 CONVERSATION_HEADER = "X-TuneTune-Conversation"
@@ -573,6 +575,99 @@ def try_model(reader, body):
         return {"error": (result.stderr or "Run failed")[-1500:]}
 
 
+# What a trial input may carry, by attachment kind: allowed extensions with the leading bytes each must have.
+def _ftyp(head):
+    return head[4:8] == b"ftyp"
+
+
+TRIAL_KINDS = {
+    "image": {"png": lambda h: h.startswith(b"\x89PNG\r\n\x1a\n"), "jpg": lambda h: h.startswith(b"\xff\xd8\xff"),
+              "jpeg": lambda h: h.startswith(b"\xff\xd8\xff"), "gif": lambda h: h.startswith((b"GIF87a", b"GIF89a")),
+              "webp": lambda h: h.startswith(b"RIFF") and h[8:12] == b"WEBP"},
+    "audio": {"wav": lambda h: h.startswith(b"RIFF") and h[8:12] == b"WAVE",
+              "mp3": lambda h: h.startswith(b"ID3") or (len(h) > 1 and h[0] == 0xFF and h[1] & 0xE0 == 0xE0),
+              "ogg": lambda h: h.startswith(b"OggS"), "flac": lambda h: h.startswith(b"fLaC"),
+              "m4a": _ftyp},
+    "video": {"mp4": _ftyp, "m4v": _ftyp, "mov": lambda h: h[4:8] in (b"ftyp", b"moov", b"mdat", b"wide", b"free"),
+              "webm": lambda h: h.startswith(b"\x1a\x45\xdf\xa3")},
+}
+TRIAL_LIMITS = {"image": 16 * 1024 * 1024, "audio": 64 * 1024 * 1024, "video": 256 * 1024 * 1024, "file": 256 * 1024 * 1024}
+KEEP_TRIAL_MEDIA = 64
+KEEP_TRIAL_BYTES = 1024 * 1024 * 1024
+TRIAL_NOTICES = {"image": "只能使用 PNG、JPEG、GIF 或 WebP 图片。", "audio": "只能使用 WAV、MP3、OGG、FLAC 或 M4A 音频。",
+                 "video": "只能使用 MP4、MOV 或 WebM 视频。"}
+
+
+def trial_target(query):
+    """The kind and extension a trial upload declares; the content is checked against them while it arrives."""
+    if set(query) != {"kind", "ext"} or any(len(values) != 1 for values in query.values()):
+        raise RequestError(400, "Expected one kind and one ext")
+    kind, ext = query["kind"][0], query["ext"][0].lower()
+    if kind not in TRIAL_LIMITS:
+        raise RequestError(400, "Unknown attachment kind")
+    if kind in TRIAL_KINDS and ext not in TRIAL_KINDS[kind]:
+        raise RequestError(415, f"Unsupported {kind} type", notice=TRIAL_NOTICES[kind])
+    if kind == "file" and not re.fullmatch(r"[a-z0-9]{1,8}", ext):
+        raise RequestError(415, "Unsupported file extension", notice="文件需要一个只含字母或数字的扩展名。")
+    return kind, ext
+
+
+def save_trial_media(reader, kind, ext, stream, length):
+    """A file the person chose for a trial input, kept as panel scratch beside the panel's runs.
+
+    It streams to disk, is named by its content and is referenced like any other attachment, so the model
+    reads it from the project as it would a recorded input. It is never research evidence and is never
+    served back; the oldest are pruned by count and total size.
+    """
+    if not 0 < length <= TRIAL_LIMITS[kind]:
+        raise RequestError(413, "Attachment exceeds limit", notice=f"这个文件不能超过 {TRIAL_LIMITS[kind] // (1024 * 1024)} MB。")
+    digest = hashlib.sha256()
+    part = f"trial-upload-{uuid.uuid4().hex}.part"
+    remaining, head = length, b""
+    with reader.tree.directory([".workspace", "runtime"], create=True) as parent:
+        fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        try:
+            with os.fdopen(fd, "wb") as output:
+                while remaining:
+                    chunk = stream.read(min(remaining, 1024 * 1024))
+                    if not chunk:
+                        raise RequestError(400, "Incomplete body")
+                    if len(head) < 16:
+                        head = (head + chunk)[:16]
+                        if len(head) >= 16 or remaining == len(chunk):
+                            if kind in TRIAL_KINDS and not TRIAL_KINDS[kind][ext](head):
+                                raise RequestError(415, "The content does not match its type", notice="文件内容和它的格式不符。")
+                    digest.update(chunk)
+                    output.write(chunk)
+                    remaining -= len(chunk)
+            name = f"trial-{digest.hexdigest()[:32]}.{ext}"
+            os.replace(part, name, src_dir_fd=parent, dst_dir_fd=parent)
+        except BaseException:
+            try:
+                os.unlink(part, dir_fd=parent)
+            except OSError:
+                pass
+            raise
+        try:
+            os.utime(name, dir_fd=parent, follow_symlinks=False)
+            kept = []
+            with os.scandir(parent) as entries:
+                for entry in entries:
+                    if entry.name.startswith("trial-") and not entry.name.endswith(".part") and entry.name != name \
+                            and entry.is_file(follow_symlinks=False):
+                        info = entry.stat(follow_symlinks=False)
+                        kept.append((info.st_mtime_ns, entry.name, info.st_size))
+            kept.sort(reverse=True)
+            total = length
+            for index, (_, old, size) in enumerate(kept):
+                total += size
+                if index + 1 >= KEEP_TRIAL_MEDIA or total > KEEP_TRIAL_BYTES:
+                    os.unlink(old, dir_fd=parent)
+        except OSError:
+            pass
+    return {"type": kind, "path": ".workspace/runtime/" + name}
+
+
 def attachments(value, found, depth=0):
     """Collect explicit display attachment paths, the only media a record can expose."""
     if depth > 8:
@@ -599,10 +694,12 @@ def media_reference(snapshot, path, paged_media=frozenset()):
     """Only explicit references in current display records expose project media."""
     if snapshot.get("error"):
         return False
-    if path in paged_media:
-        return True
+    return path in paged_media or path in shared_media(snapshot["files"])
+
+
+def shared_media(files):
     found = set()
-    for name, item in snapshot["files"].items():
+    for name, item in files.items():
         content = item["content"]
         if name == "proposal.json":
             for example in content.get("examples", []):
@@ -613,7 +710,7 @@ def media_reference(snapshot, path, paged_media=frozenset()):
         elif name.startswith("comparison/") or name.endswith("/samples.jsonl") or name.endswith("/outputs.jsonl"):
             for row in content:
                 row_attachments(row, found)
-    return path in found
+    return found
 
 
 def display_paths(tree):
@@ -725,24 +822,32 @@ class PagedFile:
         return [strict_json(raw[self.offsets[i]:self.offsets[i + 1]].decode("utf-8")) for i in indexes]
 
 
-def load_display(tree, index=None):
+def file_key(info):
+    """A file version as the filesystem describes it; any write changes its ctime."""
+    return (info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def load_display(tree, index=None, cache=None):
     """The panel's reading of the records as (files, paged, omitted); `records.py validate` reports the same.
 
     Small records are sent whole. A JSONL record too large for that is paged: described by its hash, size
     and row count and read in pages on request, with `index` caching each version's row offsets. Only what
-    exceeds even paging is left out and listed, so the proposal or a status never goes missing.
+    exceeds even paging is left out and listed, so the proposal or a status never goes missing. `cache`
+    keeps each whole record by file version, so an unchanged file is not read, hashed and parsed again.
     """
     files = {}
     paged = {}
     omitted = []
     total = 0
     index = {} if index is None else index
+    cache = {} if cache is None else cache
     for path in sorted(display_paths(tree), key=lambda name: (name.endswith(".jsonl"), name)):
         info = tree.info(path)
         size = info.st_size
-        if size > MAX_FILE_BYTES or total + size > MAX_TOTAL_BYTES:
+        if size > MAX_FILE_BYTES or total + size > MAX_TOTAL_BYTES \
+                or (path.endswith(".jsonl") and size > MAX_INLINE_ROWS_BYTES):
             if path.endswith(".jsonl") and size <= MAX_PAGED_BYTES:
-                key = (info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+                key = file_key(info)
                 entry = index.get(path)
                 if entry is None or entry.key != key:
                     entry = PagedFile(tree, path, info)
@@ -750,6 +855,12 @@ def load_display(tree, index=None):
                 paged[path] = entry
             else:
                 omitted.append({"path": path, "size": size})
+            continue
+        key = file_key(info)
+        cached = cache.get(path)
+        if cached is not None and cached[0] == key:
+            total += size
+            files[path] = cached[1]
             continue
         raw = tree.read(path, limit=MAX_FILE_BYTES)
         total += len(raw)
@@ -783,10 +894,14 @@ def load_display(tree, index=None):
         except (ValueError, RecursionError) as exc:
             raise ValueError(f"{path}: {exc}") from exc
         files[path] = {"content": content, "sha256": hashlib.sha256(raw).hexdigest()}
+        # A file rewritten while it was read gets a new key and is read again next time.
+        cache[path] = (key, files[path]) if file_key(tree.info(path)) == key else (None, None)
     if "project.json" not in files:
         raise ValueError("Missing required project.json")
     for path in [name for name in index if name not in paged]:
         del index[path]
+    for path in [name for name in cache if name not in files]:
+        del cache[path]
     return files, paged, omitted
 
 
@@ -797,6 +912,9 @@ class Reader:
         self._files = {}
         self._paged = {}
         self._index = {}
+        self._cache = {}
+        self._media = None
+        self._sync_error = None
         self._omitted = []
         self._revision = hashlib.sha256(b"").hexdigest()
         self._synced_at = None
@@ -807,25 +925,38 @@ class Reader:
         self.running = threading.Lock()
         self.models = ModelPool(self)
 
-    def snapshot(self):
+    def sync(self):
+        """Read the records again; unchanged files come from the cache, so this is cheap enough for every request."""
         with self.lock:
             error = None
             try:
-                files, paged, omitted = load_display(self.tree, self._index)
+                files, paged, omitted = load_display(self.tree, self._index, self._cache)
                 revision = hashlib.sha256(json.dumps(
                     [[(path, item["sha256"]) for path, item in sorted(files.items())],
                      [(path, entry.sha256) for path, entry in sorted(paged.items())], omitted],
                     separators=(",", ":")
                 ).encode()).hexdigest()
+                if revision != self._revision or not self._files:
+                    self._media = None
                 self._files, self._paged, self._omitted, self._revision, self._synced_at = files, paged, omitted, revision, now()
             except (OSError, ValueError, RecursionError) as exc:
                 error = f"Sync failed: {exc}"
+            self._sync_error = error
+            return error
+
+    def snapshot(self, since=None):
+        """The current records; when the panel already holds revision `since`, only what changes without them."""
+        with self.lock:
+            error = self.sync()
             inventory = self._files.get("resources.json", {}).get("content", {"items": []})
             observations = self.monitor.snapshot(inventory) if not error else copy.deepcopy(self.monitor.report)
-            return {"files": copy.deepcopy(self._files), "paged": {path: dict(entry.summary) for path, entry in self._paged.items()},
-                    "omitted": copy.deepcopy(self._omitted), "revision": self._revision,
-                    "synced_at": self._synced_at or now(), "error": error, "observations": observations,
-                    "view": self.view(), "acceptance": copy.deepcopy(self.job), "models": self.models.status()}
+            state = {"revision": self._revision, "synced_at": self._synced_at or now(), "error": error, "observations": observations,
+                     "view": self.view(), "acceptance": copy.deepcopy(self.job), "models": self.models.status()}
+            if since is not None and since == self._revision and not error:
+                return {**state, "unchanged": True}
+            # Cached records are replaced, never changed in place, so the reply can share them.
+            return {**state, "files": dict(self._files), "paged": {path: dict(entry.summary) for path, entry in self._paged.items()},
+                    "omitted": copy.deepcopy(self._omitted)}
 
     def page(self, path, sha256, offset=None, limit=None, ids=None):
         """Rows of a paged record, only for the version the panel was shown."""
@@ -851,6 +982,15 @@ class Reader:
     def paged_media(self):
         with self.lock:
             return frozenset().union(*(entry.media for entry in self._paged.values()))
+
+    def media_shared(self, path):
+        """Whether the current records reference this media; the referenced set is kept per revision."""
+        with self.lock:
+            if self.sync():
+                return False
+            if self._media is None:
+                self._media = shared_media(self._files) | self.paged_media()
+            return path in self._media
 
     def view(self):
         """Display focus published by the Agent; invalid or missing state is simply ignored."""
@@ -978,9 +1118,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        # blob: shows a file the person just picked for a trial before it reaches the service; only the page can make one.
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; "
-                         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-                         "connect-src 'self'; media-src 'self'; object-src 'none'; base-uri 'none'; "
+                         "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                         "connect-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; "
                          "frame-ancestors 'none'; form-action 'self'")
         self.end_headers()
         self.wfile.write(data)
@@ -992,7 +1133,10 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Invalid request path")
             path = unquote(parsed.path, errors="strict")
             if path == "/api/state":
-                state = self.server.reader.snapshot()
+                query = parse_qs(parsed.query, strict_parsing=True) if parsed.query else {}
+                if set(query) - {"since"} or len(query.get("since", [""])) != 1 or not HASH.fullmatch(query.get("since", ["0" * 64])[0]):
+                    raise RequestError(400, "Expected at most one since revision")
+                state = self.server.reader.snapshot(since=query["since"][0] if query else None)
                 # Set only by an application proxy that strips it from browser requests, such as the
                 # DeepSeek Harness plugin: there a panel answer reaches the conversation by itself.
                 state["conversation"] = self.headers.get_all(CONVERSATION_HEADER, []) == ["1"]
@@ -1031,7 +1175,7 @@ class Handler(BaseHTTPRequestHandler):
                            ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
                            ".glb": "application/octet-stream", ".gltf": "application/octet-stream", ".obj": "application/octet-stream",
                            ".stl": "application/octet-stream", ".ply": "application/octet-stream"}
-                if suffix not in allowed or not media_reference(self.server.reader.snapshot(), relative, self.server.reader.paged_media()):
+                if suffix not in allowed or not self.server.reader.media_shared(relative):
                     raise ValueError("Media is not shared in research records")
                 data = self.server.reader.tree.read(relative, limit=64 * 1024 * 1024)
                 self.reply(200, data, allowed[suffix])
@@ -1056,17 +1200,26 @@ class Handler(BaseHTTPRequestHandler):
             routes = {"/api/project/name": save_project_name, "/api/responses": submit_response,
                       "/api/acceptance/run": start_acceptance, "/api/try": try_model,
                       "/api/models/load": model_load, "/api/models/unload": model_unload}
-            if self.path not in routes:
+            route = urlsplit(self.path)
+            media = route.path == "/api/try/media"
+            # A refused upload leaves its body unread, so its connection never carries another request.
+            self.close_connection = self.close_connection or media
+            target = trial_target(parse_qs(route.query, keep_blank_values=True)) if media else None
+            if self.path not in routes and not media:
                 raise RequestError(404, "Not found")
             if self.headers.get_all("Transfer-Encoding"):
                 raise RequestError(400, "Transfer-Encoding is not supported")
             types = self.headers.get_all("Content-Type", [])
-            if len(types) != 1 or types[0].split(";", 1)[0].strip().lower() != "application/json":
+            mime = types[0].split(";", 1)[0].strip().lower() if len(types) == 1 else ""
+            if not media and mime != "application/json":
                 raise RequestError(415, "application/json required")
             lengths = self.headers.get_all("Content-Length", [])
             if len(lengths) != 1 or not re.fullmatch(r"[0-9]{1,10}", lengths[0]):
                 raise RequestError(411, "A single Content-Length is required")
             length = int(lengths[0])
+            if media:
+                self.reply(200, save_trial_media(self.server.reader, *target, self.rfile, length))
+                return
             if not 0 < length <= MAX_BODY_BYTES:
                 raise RequestError(413, "Request body exceeds limit")
             raw = self.rfile.read(length)

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { parseSnapshot } from './model';
 import type { Snapshot } from './model';
 import { labels, t } from './i18n';
+import { ATTACHMENT_LIMIT_MB, attachmentExtension, formatLabels } from './attachments';
+import type { AttachmentKind } from './attachments';
 
 export function useWorkspace() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -9,14 +11,17 @@ export function useWorkspace() {
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    // The records the panel holds; while their revision is unchanged the service sends only the live parts.
+    let held: Snapshot | null = null;
     async function refresh() {
       try {
-        const response = await fetch('api/state', { signal: controller.signal, cache: 'no-store' });
+        const since = held && !held.error ? `?since=${held.revision}` : '';
+        const response = await fetch(`api/state${since}`, { signal: controller.signal, cache: 'no-store' });
         if (!response.ok) throw new Error(t('读取失败（HTTP {status}）', { status: response.status }));
-        const next = parseSnapshot(await response.json());
+        const next = mergeSnapshot(held, await response.json());
         if (!controller.signal.aborted) {
-          // Monitor updates are independent of the research-file revision.
-          setSnapshot(previous => previous?.revision === next.revision && previous?.error === next.error && JSON.stringify(previous?.observations) === JSON.stringify(next.observations) ? previous : next);
+          held = next;
+          setSnapshot(previous => sameSnapshot(previous, next) ? previous : next);
           setConnectionError(null);
         }
       } catch (error) {
@@ -50,6 +55,21 @@ export function useWorkspace() {
   return { snapshot, connectionError, renameProject, submitResponse, runAcceptance, tryModel };
 }
 
+// An unchanged reply carries no records; it reuses the ones held for that exact revision.
+export function mergeSnapshot(held: Snapshot | null, raw: unknown): Snapshot {
+  const value = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+  if (value.unchanged !== true) return parseSnapshot(value);
+  if (!held || held.revision !== value.revision) throw new Error(t('文件通道返回了无效格式'));
+  const { unchanged: _unchanged, ...live } = value;
+  return parseSnapshot({ ...live, files: held.files, paged: held.paged, omitted: held.omitted });
+}
+// Model loading, runs and the Agent's focus change without the records, so they are compared as well.
+export function sameSnapshot(previous: Snapshot | null, next: Snapshot): boolean {
+  if (!previous || previous.revision !== next.revision || previous.error !== next.error || previous.files !== next.files) return false;
+  const live = (item: Snapshot) => JSON.stringify([item.observations, item.view, item.acceptance, item.models, item.conversation]);
+  return live(previous) === live(next);
+}
+
 const failures: Record<number, string> = labels({ 400: '内容不完整，请检查后重试。', 409: '内容刚被更新或有任务正在运行，请稍后再试。', 503: '这个研究目录还没有安装研究工具。', 504: '模型没有在限定时间内给出结果。' });
 async function post<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -71,6 +91,16 @@ export function loadModel(experiment: string) {
 }
 export function unloadModel(experiment: string) {
   return post<unknown>('api/models/unload', { experiment });
+}
+// An attachment for a trial input; the service keeps it as panel scratch and answers with its reference.
+export async function uploadTrialAttachment(file: File, kind: AttachmentKind): Promise<Record<string, unknown>> {
+  const ext = attachmentExtension(file, kind);
+  if (!ext) throw new Error(formatLabels[kind]);
+  const response = await fetch(`api/try/media?${new URLSearchParams({ kind, ext })}`, { method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
+  const value = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(response.status === 413 ? t('这个文件不能超过 {mb} MB。', { mb: ATTACHMENT_LIMIT_MB[kind] }) : response.status === 415 ? (/content does not match/.test(String(value.error)) ? t('文件内容和它的格式不符。') : formatLabels[kind]) : t('上传失败'));
+  if (value.type !== kind || typeof value.path !== 'string') throw new Error(t('文件通道返回了无效格式'));
+  return value;
 }
 export function tryModel(experiment: string, input: unknown) {
   return post<{ output?: unknown; error?: string; log_tail?: string; elapsed_seconds?: number }>('api/try', { experiment, input });

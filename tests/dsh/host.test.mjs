@@ -184,6 +184,28 @@ describe('studies and routes', () => {
     assert.equal(JSON.parse(readFileSync(join(study, 'project.json'), 'utf8')).name, '新名字');
   });
 
+  test('light state polls and trial attachments pass through to the pinned service', async () => {
+    const id = studyId(study);
+    const full = JSON.parse((await call(port, 'GET', `/tunetune/p/${id}/api/state`)).text);
+    const light = JSON.parse((await call(port, 'GET', `/tunetune/p/${id}/api/state?since=${full.revision}`)).text);
+    assert.equal(light.unchanged, true);
+    assert.equal(light.files, undefined);
+    const page = await call(port, 'GET', `/tunetune/p/${id}/`);
+    assert.match(page.headers['content-security-policy'], /img-src 'self' data: blob:;/);
+    assert.match(page.headers['content-security-policy'], /media-src 'self' blob:;/);
+    const wav = Buffer.concat([Buffer.from('RIFF\0\0\0\0WAVEfmt '), Buffer.alloc(16)]);
+    const headers = { 'content-type': 'audio/wav', 'content-length': wav.length, origin: `http://127.0.0.1:${port}` };
+    const saved = await call(port, 'POST', `/tunetune/p/${id}/api/try/media?kind=audio&ext=wav`, { headers, body: wav });
+    assert.equal(saved.status, 200, saved.text);
+    const reference = JSON.parse(saved.text);
+    assert.equal(reference.type, 'audio');
+    assert.deepEqual(readFileSync(join(study, reference.path)), wav);
+    const mismatched = await call(port, 'POST', `/tunetune/p/${id}/api/try/media?kind=video&ext=mp4`, { headers, body: wav });
+    assert.equal(mismatched.status, 415);
+    const foreign = await call(port, 'POST', `/tunetune/p/${id}/api/try/media?kind=audio&ext=wav`, { headers: { ...headers, origin: 'http://evil.example' }, body: wav });
+    assert.equal(foreign.status, 403);
+  });
+
   test('panel answers and sync failures reach the study’s conversation', async () => {
     const id = studyId(study);
     const steered = [];

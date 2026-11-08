@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useWorkspace } from './useWorkspace';
+import { mergeSnapshot, sameSnapshot, useWorkspace } from './useWorkspace';
 import type { Snapshot } from './model';
 import { setLanguage } from './i18n';
 
@@ -70,5 +70,16 @@ describe('file channel polling', () => {
     await expect(render().renameProject('新名称', 'a'.repeat(64))).rejects.toThrow('项目记录已变更');
     expect(fetch).toHaveBeenLastCalledWith('api/project/name', expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: '新名称', expected_sha256: 'a'.repeat(64) }) }));
     expect(render().snapshot?.files['project.json'].content).toEqual({ name: '研究', deliveries: [] });
+  });
+  it('reuses the held records for an unchanged revision and still follows model and run changes', () => {
+    const files = { 'project.json': { content: { name: '研究', deliveries: [] }, sha256: 'a'.repeat(64) } };
+    const held = mergeSnapshot(null, { files, revision: 'r'.repeat(64), synced_at: 't', error: null, models: { budget_gb: 8, used_gb: 0, items: {} } });
+    const light = mergeSnapshot(held, { unchanged: true, revision: 'r'.repeat(64), synced_at: 'u', error: null, models: { budget_gb: 8, used_gb: 2, items: { e: { state: 'loaded', memory_gb: 2 } } } });
+    expect(light.files).toBe(held.files);
+    expect(light.models?.used_gb).toBe(2);
+    expect(sameSnapshot(held, light)).toBe(false);
+    expect(sameSnapshot(light, mergeSnapshot(light, { unchanged: true, revision: 'r'.repeat(64), synced_at: 'v', error: null, models: light.models }))).toBe(true);
+    expect(() => mergeSnapshot(held, { unchanged: true, revision: 's'.repeat(64), synced_at: 'u', error: null })).toThrow('无效格式');
+    expect(() => mergeSnapshot(null, { unchanged: true, revision: 'r'.repeat(64), synced_at: 'u', error: null })).toThrow('无效格式');
   });
 });

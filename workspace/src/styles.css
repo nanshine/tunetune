@@ -317,7 +317,11 @@ select { height: 28px; }
 .input-list button { width: 100%; height: auto; min-height: 32px; padding: 5px 8px; border: 0; text-align: left; white-space: normal; line-height: 1.4; color: var(--ink-2); justify-content: flex-start; }
 .input-list button.active { background: var(--cobalt-soft); color: var(--ink); font-weight: 500; }
 .acceptance-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; overflow: auto; }
-.input-preview summary { cursor: pointer; font-weight: 600; margin-bottom: 6px; }
+.input-preview { display: flex; flex-direction: column; gap: 6px; }
+.input-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.input-preview-head strong { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.input-list .new-input { margin-bottom: 6px; border: 1px dashed var(--line-strong); color: var(--cobalt-ink); font-weight: 500; }
+.input-list .new-input.active { border-style: solid; border-color: var(--cobalt); background: var(--cobalt-soft); }
 .outputs { display: grid; gap: 10px; }
 .output-card { padding: 12px; border: 1px solid var(--line); border-radius: var(--r-md); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .output-card h4 { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
@@ -332,7 +336,24 @@ select { height: 28px; }
 .try-panel { padding: 12px; border-radius: var(--r-md); background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
 .try-head { display: flex; align-items: center; gap: 8px; color: var(--cobalt); }
 .try-head h3 { flex: 1; font-size: 13px; font-weight: 600; color: var(--ink); }
-.try-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink-3); }
+.try-fields { display: grid; gap: 10px; }
+.try-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-3); min-width: 0; }
+.try-field textarea, .try-field input[type='number'] { font-size: 13px; color: var(--ink); }
+.try-field input[type='number'] { width: 160px; height: 30px; }
+.check-field { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; }
+.mono-input { font-family: var(--mono); font-size: 12px; }
+.picture-pick { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 10px; border: 1px dashed var(--line-strong); border-radius: var(--r-md); background: var(--surface); }
+.picture-pick img, .picture-pick video { display: block; max-width: min(100%, 360px); max-height: 260px; border-radius: var(--r-sm); }
+.picture-pick audio { width: min(100%, 360px); }
+.attachment-name { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); overflow-wrap: anywhere; }
+.attachment-caption { flex-basis: 100%; font-size: 12px; overflow-wrap: anywhere; }
+.picture-pick.empty > .muted { display: inline-flex; align-items: center; gap: 6px; min-height: 80px; }
+.picture-pick .error-text { flex-basis: 100%; }
+.button-like { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface); color: var(--ink); font-size: 13px; cursor: pointer; white-space: nowrap; }
+.button-like:hover { border-color: var(--cobalt); }
+.button-like:focus-within { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.output-card.failed { border-color: var(--red-soft); }
+.log-tail { max-height: 160px; overflow: auto; padding: 8px; border-radius: var(--r-sm); background: var(--surface-2); font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .try-actions { display: flex; align-items: center; gap: 10px; }
 .try-result { padding: 10px; border-radius: var(--r-sm); background: var(--surface); border: 1px solid var(--line); }
 .try-result.failed { color: var(--red); background: var(--red-soft); border-color: transparent; }
@@ -362,12 +383,29 @@ select { height: 28px; }
 /* Record rendering */
 .record-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .record-list { display: grid; gap: 4px; }
-.record-fields { display: grid; gap: 6px; }
-.record-fields > div { display: grid; grid-template-columns: 56px 1fr; gap: 8px; }
-.record-fields dt { color: var(--ink-3); font-size: 12px; }
+/* Labels share one column as wide as the longest label, so long field names never run into their values. */
+.record-fields { display: grid; grid-template-columns: minmax(40px, max-content) minmax(0, 1fr); gap: 6px 12px; }
+.record-fields > div { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: start; }
+.record-fields dt { color: var(--ink-3); font-size: 12px; max-width: 13em; overflow-wrap: anywhere; line-height: 1.4; padding-top: 2px; }
 .record-fields dd { min-width: 0; }
-.record-media img, .record-media video { max-width: 100%; border-radius: var(--r-sm); }
-.record-media figcaption { color: var(--ink-3); font-size: 12px; }
+.record-table { max-width: 100%; overflow-x: auto; }
+.record-table table { border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.record-table th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 12px; padding: 3px 12px 3px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.record-table td { padding: 4px 12px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+.record-table td .record-text { white-space: nowrap; overflow-wrap: normal; }
+/* A table takes the full width below its label instead of squeezing into the value column. */
+.record-fields > div:has(> dd > .record-table) > dt, .record-fields > div:has(> dd > .record-table) > dd { grid-column: 1 / -1; }
+.record-table tr:last-child td { border-bottom: 0; }
+.record-media { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: 100%; }
+.record-media img, .record-media video { display: block; max-width: 100%; max-height: 420px; border-radius: var(--r-sm); }
+.record-media figcaption { color: var(--ink-3); font-size: 12px; max-width: 100%; overflow-wrap: anywhere; }
+/* Inside a bounded reading box a picture fits whole rather than being cropped by the box's scroll. */
+.reading .record-media img, .reading .record-media video { max-height: 200px; object-fit: contain; }
+.media-frame { display: inline-grid; place-items: center; max-width: 100%; border-radius: var(--r-sm); }
+.media-frame.loading, .media-frame.failed { min-width: 160px; min-height: 160px; background: var(--surface-2); background-image: linear-gradient(90deg, transparent, rgba(255, 255, 255, .55), transparent); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+.media-frame.failed { animation: none; background-image: none; }
+.media-frame.loading img, .media-frame.failed img { position: absolute; opacity: 0; width: 1px; height: 1px; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 
 @media (max-width: 900px) {
   .tiles { flex-direction: row; top: auto; bottom: 16px; left: 16px; }

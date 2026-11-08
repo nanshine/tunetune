@@ -90,7 +90,7 @@ function ResourceRow({ resource, state, detail, modified, size }: { resource: Js
   return <li className={`resource ${open ? 'open' : ''}`}>
     <button className="resource-row" aria-expanded={open} onClick={() => setOpen(!open)}>
       <span className={`state-dot resource-${state}`} aria-hidden="true" />
-      <span className="resource-name">{text(resource.title, t('未命名资源'))}</span>
+      <span className="resource-name" title={text(resource.title)}>{text(resource.title, t('未命名资源'))}</span>
       <span className="resource-state">{resourceStates[state]}</span>
       {size && <span className="resource-size">{size}</span>}
       <ChevronDown size={14} className="chevron" aria-hidden="true" />

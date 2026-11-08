@@ -2,12 +2,12 @@
   "version": "0.8.2",
   "files": [
     {
-      "path": "assets/panel/assets/index-CEw3R1KC.js",
-      "sha256": "120f421ac4e1822d26e53a8cebe85ed4f5e64a0bf2dcdec699d2dff95c490c83"
+      "path": "assets/panel/assets/index-B0nM-rB2.js",
+      "sha256": "4fc596d3c23e57cc57ac1815091b72c7a6cfdfa747694fc3ff44904a8990b630"
     },
     {
-      "path": "assets/panel/assets/index-vxFtJW3W.css",
-      "sha256": "c3a9acc7a41d15223066eda92a3411c815de7dd916673f8d45ae8b29ac6491ff"
+      "path": "assets/panel/assets/index-BVH83ROa.css",
+      "sha256": "02cb1cd06e5d7918c661edcbea91f88b227884ffa1b061aaaa43e61e7be9eb5a"
     },
     {
       "path": "assets/panel/favicon.svg",
@@ -15,7 +15,7 @@
     },
     {
       "path": "assets/panel/index.html",
-      "sha256": "1d3d8cfa25e342c1c6f0b068e3aa9c98f031b33a9740f232e0d149b0f138075e"
+      "sha256": "c33b6e0e2b3614edf32e8843fd510d7fbb37ba4569213c649eba733782eea576"
     },
     {
       "path": "assets/templates/AGENTS.md",
@@ -55,7 +55,7 @@
     },
     {
       "path": "scripts/workspace.py",
-      "sha256": "79623f9fdd566fd284614275d2e21823c01cbdb06be0c7af9bc87a79ce9e8c58"
+      "sha256": "d4967e34490b14cf044014f96a68862443483f90b50543fddc0bddd1cc4ea1cd"
     }
   ]
 }
