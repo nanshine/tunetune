@@ -2,13 +2,13 @@
 
 Use the application's available question capability for a consequential decision; use ordinary conversation when none is available. Offer a recommendation and meaningful choices without forcing a specific tool or requiring the person to have opened the panel. Continue work independent of a pending answer, but do not treat silence as authorization.
 
-Show the panel where the person already looks. When the application has a browser view beside the conversation that you can open, start `workspace.py` without `--open` and open the printed address there yourself; when it only opens links the person clicks, give the address as a link. Use `--open`, which opens the system's default browser, only where the application has no such view. Check the address responds before giving it either way. The side views below were reviewed against application documentation on 2026-11-08; say so if one behaves differently.
+Open the panel for the person so they can follow the research without an extra step: prefer the application's own side view, fall back to the system's default browser, and give only a link when neither can be opened. Check the address responds and use the available browser tools to open it; `workspace.py --open` opens the default browser when starting the service. Reuse a running service instead of starting another just to open its address. The side views below were reviewed against application documentation on 2026-11-08; say so if one behaves differently.
 
 ## Codex
 
 Use its available interactive user-question tool when suitable; the exact tool depends on the environment and mode. Codex discovers skills in `~/.agents/skills` for the user and `.agents/skills` in the working directory, and through installed plugins; it detects additions automatically, so continue without a skill-picker check. If the person reports them missing, ask them to reopen Codex in that same directory and provide the original request plus a concise continuation sentence. Official guidance: [skills](https://developers.openai.com/codex/skills/).
 
-The Codex app has an in-app browser beside the thread, opened when the person clicks a URL in it, so start the panel without `--open` and give its address as a link, which keeps the panel in Codex instead of a separate browser window. When the Browser plugin is enabled in this thread, open the address in the in-app browser yourself. If the in-app browser cannot load the local address, offer `--open` instead. Official guidance: [in-app browser](https://developers.openai.com/codex/app/browser).
+In the Codex app, start the panel without `--open` and use the available browser or Computer Use tools to open its address visibly beside the conversation, following the fallback order above if unavailable. A clickable link alone does not open the panel. Official guidance: [in-app browser](https://learn.chatgpt.com/docs/browser).
 
 ## Claude Code
 

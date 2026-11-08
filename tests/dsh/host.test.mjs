@@ -170,18 +170,20 @@ describe('studies and routes', () => {
     assert.equal(JSON.parse(JSON.stringify(snapshot.files['project.json'].content)).name, 'study');
   });
 
-  test('writes need the page’s own origin and then reach the pinned service', async () => {
+  test('authenticated desktop writes without Origin and same-origin web writes reach the pinned service', async () => {
     const id = studyId(study);
     const sha = JSON.parse((await call(port, 'GET', `/tunetune/p/${id}/api/state`)).text).files['project.json'].sha256;
     const body = JSON.stringify({ name: '新名字', expected_sha256: sha });
     const json = { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) };
-    const missing = await call(port, 'POST', `/tunetune/p/${id}/api/project/name`, { headers: json, body });
-    assert.equal(missing.status, 403);
+    // Harness desktop removes Origin after checking dsh-app://app and authenticating.
+    const desktop = await call(port, 'POST', `/tunetune/p/${id}/api/project/name`, { headers: json, body });
+    assert.equal(desktop.status, 200, desktop.text);
+    const nextBody = JSON.stringify({ name: '网页名字', expected_sha256: JSON.parse(desktop.text).sha256 });
     const foreign = await call(port, 'POST', `/tunetune/p/${id}/api/project/name`, { headers: { ...json, origin: 'http://evil.example' }, body });
     assert.equal(foreign.status, 403);
-    const saved = await call(port, 'POST', `/tunetune/p/${id}/api/project/name`, { headers: { ...json, origin: `http://127.0.0.1:${port}` }, body });
+    const saved = await call(port, 'POST', `/tunetune/p/${id}/api/project/name`, { headers: { ...json, 'content-length': Buffer.byteLength(nextBody), origin: `http://127.0.0.1:${port}` }, body: nextBody });
     assert.equal(saved.status, 200, saved.text);
-    assert.equal(JSON.parse(readFileSync(join(study, 'project.json'), 'utf8')).name, '新名字');
+    assert.equal(JSON.parse(readFileSync(join(study, 'project.json'), 'utf8')).name, '网页名字');
   });
 
   test('light state polls and trial attachments pass through to the pinned service', async () => {
@@ -206,7 +208,7 @@ describe('studies and routes', () => {
     assert.equal(foreign.status, 403);
   });
 
-  test('panel answers and sync failures reach the study’s conversation', async () => {
+  test('desktop panel answers without Origin and sync failures reach the study’s conversation', async () => {
     const id = studyId(study);
     const steered = [];
     const injected = [];
@@ -219,10 +221,13 @@ describe('studies and routes', () => {
       assert.equal(shown.conversation, true);
       const body = JSON.stringify({ kind: 'proposal', decision: 'approve', target_sha256: shown.files['proposal.json'].sha256 });
       const answer = await call(port, 'POST', `/tunetune/p/${id}/api/responses`, {
-        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), origin: `http://127.0.0.1:${port}` }, body,
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }, body,
       });
       assert.equal(answer.status, 200, answer.text);
       const record = JSON.parse(answer.text);
+      const persisted = JSON.parse(readFileSync(join(study, 'responses', `${record.id}.json`), 'utf8'));
+      assert.equal(persisted.decision, 'approve');
+      assert.equal(persisted.target.sha256, shown.files['proposal.json'].sha256);
       assert.equal(steered.length, 1);
       assert.equal(steered[0].role, 'user');
       assert.ok(Object.isFrozen(steered[0]));
@@ -249,6 +254,13 @@ describe('studies and routes', () => {
   test('requests the harness refuses are refused here too', async () => {
     rejection = 401;
     try {
+      for (const code of [401, 403]) {
+        rejection = code;
+        const refused = await call(port, 'POST', `/tunetune/p/${studyId(study)}/api/responses`);
+        assert.equal(refused.status, code);
+        assert.equal(JSON.parse(refused.text).error, 'Not authorized');
+      }
+      rejection = 401;
       for (const path of ['/tunetune/api/studies', `/tunetune/p/${studyId(study)}/api/state`, '/tunetune/ui/']) {
         assert.equal((await call(port, 'GET', path)).status, 401, path);
       }
@@ -276,10 +288,10 @@ describe('studies and routes', () => {
 
     // It can still open in a separate browser tab, started by the plugin and kept running there.
     const browser = `/tunetune/api/studies/${studyId(older)}/browser`;
-    assert.equal((await call(port, 'POST', browser)).status, 403);
+    assert.equal((await call(port, 'POST', browser, { headers: { origin: 'null' } })).status, 403);
     assert.equal((await call(port, 'GET', browser)).status, 404);
     assert.equal((await call(port, 'POST', `/tunetune/api/studies/${'0'.repeat(16)}/browser`, { headers: { origin: `http://127.0.0.1:${port}` } })).status, 404);
-    const opened = await call(port, 'POST', browser, { headers: { origin: `http://127.0.0.1:${port}` } });
+    const opened = await call(port, 'POST', browser);
     assert.equal(opened.status, 200, opened.text);
     const url = new URL(JSON.parse(opened.text).url);
     assert.equal(url.hostname, '127.0.0.1');

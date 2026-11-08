@@ -47,9 +47,12 @@ function serveUi(req, res, relative) {
   createReadStream(file).pipe(res);
 }
 
-// A browser POST must come from the page the harness served: no Origin, no write.
-function sameOrigin(req) {
+// Called only after Harness authentication: its desktop bridge checks the app origin,
+// removes browser markers and forwards with its own cookie. Missing Origin is valid
+// there; an attached browser Origin must still name this host.
+function compatibleOrigin(req) {
   const origin = req.headers.origin;
+  if (origin === undefined) return true;
   if (typeof origin !== 'string') return false;
   try {
     return new URL(origin).host === req.headers.host;
@@ -131,7 +134,7 @@ export function createRouter(ctx, { panels, findStudy = inspectStudy, shadowed =
     }
     const rest = url.pathname.slice(BASE.length) || '/';
     const reading = req.method === 'GET' || req.method === 'HEAD';
-    if (!reading && !(req.method === 'POST' && sameOrigin(req))) return sendJson(res, 403, { error: 'Same origin required' });
+    if (!reading && !(req.method === 'POST' && compatibleOrigin(req))) return sendJson(res, 403, { error: 'Same origin required' });
 
     let match;
     if ((match = rest.match(/^\/p\/([0-9a-f]{16})(\/.*)?$/))) {
