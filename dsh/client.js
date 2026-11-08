@@ -137,7 +137,7 @@ window.__ModuleLoader__.load({
     // closing the panel stays respected until the Agent has something for the person to see.
     function shouldOpen(previous, study) {
       if (!study || !study.embeddable) return false;
-      if (!previous || previous.study !== study.id) return true;
+      if (!previous || previous.study !== study.id || previous.instance !== study.instance) return true;
       return study.attention !== null && study.attention !== previous.attention;
     }
 
@@ -158,10 +158,10 @@ window.__ModuleLoader__.load({
         if (stopped || watched !== sessionId || sidebar.mounted.getSnapshot() !== sessionId) return;
         const previous = remembered(sessionId);
         if (!shouldOpen(previous, study)) return;
-        remember(sessionId, { study: study.id, attention: study.attention ?? null });
         try {
           // A page tab already open is focused rather than duplicated, and a collapsed column expands.
           sidebar.openTab(ID);
+          remember(sessionId, { study: study.id, instance: study.instance, attention: study.attention ?? null });
         } catch (error) {
           console.error('[tunetune] could not open the study panel', error);
         }

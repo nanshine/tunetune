@@ -38,10 +38,14 @@ export class Conversations {
     if (typeof sessionId === 'string' && this.sessionsOf(studyId).includes(sessionId)) this.viewers.set(studyId, sessionId);
   }
 
-  agent(studyId) {
+  agent(studyId, sessionId) {
     const lookup = this.agents();
     if (!lookup) return undefined;
-    const candidates = [this.viewers.get(studyId), ...this.sessionsOf(studyId)].filter(Boolean);
+    // The route validates an explicit session against its current working directory.
+    // Do not fall back to another agent or a cached directory listing for that click.
+    const candidates = sessionId !== undefined
+      ? [sessionId]
+      : [this.viewers.get(studyId), ...this.sessionsOf(studyId)].filter(Boolean);
     for (const id of candidates) {
       const agent = lookup.get(id);
       if (agent && typeof agent.steer === 'function' && typeof agent.inject === 'function') return agent;
@@ -49,31 +53,32 @@ export class Conversations {
     return undefined;
   }
 
-  answered(studyId, body) {
+  answered(studyId, body, sessionId) {
     let record;
     try { record = JSON.parse(body); } catch { return false; }
     if (!record || typeof record.id !== 'string' || typeof record.kind !== 'string' || typeof record.decision !== 'string'
       || typeof record.target?.path !== 'string' || typeof record.target?.sha256 !== 'string') return false;
-    const agent = this.agent(studyId);
+    const agent = this.agent(studyId, sessionId);
     if (!agent) return false;
     agent.steer(message(answerText(record)));
     return true;
   }
 
   // Report each new failure once, not on every poll; a recovery clears it.
-  synced(studyId, header) {
+  synced(studyId, header, sessionId) {
+    const key = JSON.stringify([studyId, sessionId]);
     let error = null;
     if (typeof header === 'string') {
       try { error = JSON.parse(header); } catch { error = null; }
     }
     if (typeof error !== 'string' || !error) {
-      this.errors.delete(studyId);
+      this.errors.delete(key);
       return false;
     }
-    if (this.errors.get(studyId) === error) return false;
-    const agent = this.agent(studyId);
+    if (this.errors.get(key) === error) return false;
+    const agent = this.agent(studyId, sessionId);
     if (!agent) return false;
-    this.errors.set(studyId, error);
+    this.errors.set(key, error);
     agent.inject(message(syncErrorText(error)));
     return true;
   }

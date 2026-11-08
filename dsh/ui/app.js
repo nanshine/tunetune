@@ -143,7 +143,7 @@ async function openStudy(study, header) {
       el('details', {}, el('summary', {}, t('manual')), el('pre', {}, study.command)), ...shadowNotes(shadowed)));
     return;
   }
-  const base = `../p/${study.id}/`;
+  const base = `../p/${study.id}/${sessionId ? `s/${encodeURIComponent(sessionId)}/` : ''}`;
   const probe = await json(`${base}api/state`).catch(() => ({ ok: false, status: 0, value: {} }));
   if (current?.study !== study) return;
   if (!probe.ok) {
@@ -154,8 +154,7 @@ async function openStudy(study, header) {
     return;
   }
   // The panel's conversation receives the person's answers given there.
-  const src = sessionId ? `${base}?session=${encodeURIComponent(sessionId)}` : base;
-  show(header, el('iframe', { class: 'frame', src, title: title(study) }));
+  show(header, el('iframe', { class: 'frame', src: base, title: title(study) }));
 }
 
 // The plugin starts the study's own service; the browser opens it on its loopback address.

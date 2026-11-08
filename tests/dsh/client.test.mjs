@@ -104,6 +104,19 @@ describe('automatic right-sidebar opening', () => {
     assert.deepEqual(sidebar.opened, ['dsh-tunetune']);
   });
 
+  test('reinitializing the same directory opens it even when attention restarts at one', async () => {
+    studies.set('s1', study({ instance: 'first', attention: '1' }));
+    sidebar.mounted.set('s1');
+    await settle();
+    studies.set('s1', study({ instance: 'replacement', attention: '1' }));
+    mock.timers.tick(4000);
+    await settle();
+    assert.equal(sidebar.opened.length, 2);
+    mock.timers.tick(4000);
+    await settle();
+    assert.equal(sidebar.opened.length, 2);
+  });
+
   test('each new attention request opens it again; the same or cleared request does not', async () => {
     studies.set('s1', study({ attention: '3' }));
     sidebar.mounted.set('s1');

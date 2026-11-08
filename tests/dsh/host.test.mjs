@@ -269,6 +269,38 @@ describe('studies and routes', () => {
     }
   });
 
+  test('two panels for one directory deliver each answer only to their own session', async () => {
+    const id = studyId(study);
+    const calls = [];
+    sessions.set('s-second', { id: 's-second', header: { cwd: study } });
+    agents = { get: (session) => ({ steer: () => calls.push(session), inject: () => {} }) };
+    try {
+      for (const session of ['s-study', 's-second']) {
+        const base = `/tunetune/p/${id}/s/${session}/`;
+        assert.equal((await call(port, 'GET', base)).status, 200);
+        const shown = JSON.parse((await call(port, 'GET', `${base}api/state`)).text);
+        assert.equal(shown.conversation, true);
+      }
+      for (const session of ['s-study', 's-second', 's-study']) {
+        const base = `/tunetune/p/${id}/s/${session}/`;
+        const shown = JSON.parse((await call(port, 'GET', `${base}api/state`)).text);
+        const body = JSON.stringify({ kind: 'proposal', decision: 'revise', target_sha256: shown.files['proposal.json'].sha256 });
+        const answer = await call(port, 'POST', `${base}api/responses`, {
+          headers: { 'content-type': 'application/json', 'transfer-encoding': 'chunked' }, body,
+        });
+        assert.equal(answer.status, 200, answer.text);
+      }
+      assert.deepEqual(calls, ['s-study', 's-second', 's-study']);
+      assert.equal((await call(port, 'GET', `/tunetune/p/${id}/s/s-plain/api/state`)).status, 404);
+      agents = { get: (session) => session === 's-second' ? { steer: () => calls.push(session), inject: () => {} } : undefined };
+      assert.equal(JSON.parse((await call(port, 'GET', `/tunetune/p/${id}/s/s-study/api/state`)).text).conversation, false);
+    } finally {
+      sessions.delete('s-second');
+      agents = undefined;
+      rmSync(join(study, 'responses'), { recursive: true, force: true });
+    }
+  });
+
   test('unknown studies, traversal and earlier panels are not served', async () => {
     assert.equal((await call(port, 'GET', `/tunetune/p/${'0'.repeat(16)}/api/state`)).status, 404);
     assert.equal((await call(port, 'GET', '/tunetune/ui/../host.js')).status, 404);
@@ -451,6 +483,40 @@ describe('forwarding', () => {
 });
 
 describe('panel processes', () => {
+  test('a reinitialized directory replaces its live service and concurrent requests share the replacement', async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'tunetune-dsh-replace-')));
+    const panels = new PanelServices({ findPython: () => findPython() });
+    try {
+      const directory = initStudy(base, 'study');
+      const first = inspectStudy(directory);
+      const port = await panels.port(first);
+      const child = panels.running.get(first.id).child;
+      assert.equal(inspectStudy(directory).instance, first.instance);
+      // Keep the old directory alive like a real service with pinned directory descriptors.
+      const { renameSync } = await import('node:fs');
+      renameSync(directory, join(base, 'previous'));
+      initStudy(base, 'study');
+      const next = inspectStudy(directory);
+      assert.equal(next.id, first.id);
+      assert.notEqual(next.instance, first.instance);
+      const ports = await Promise.all([panels.port(next), panels.port(next), panels.port(next)]);
+      assert.equal(new Set(ports).size, 1);
+      assert.notEqual(panels.running.get(next.id).child, child);
+      assert.ok(child.exitCode !== null || child.signalCode !== null);
+      const shown = JSON.parse((await call(ports[0], 'GET', '/api/state')).text);
+      const body = JSON.stringify({ kind: 'proposal', decision: 'approve', target_sha256: shown.files['proposal.json'].sha256 });
+      const answer = await call(ports[0], 'POST', '/api/responses', {
+        headers: { origin: `http://127.0.0.1:${ports[0]}`, 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }, body,
+      });
+      assert.equal(answer.status, 200, answer.text);
+      assert.equal(JSON.parse(readFileSync(join(directory, 'responses', `${JSON.parse(answer.text).id}.json`))).decision, 'approve');
+      assert.ok(port > 0);
+    } finally {
+      await panels.stopAll();
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   test('a missing Python is reported and nothing is started', async () => {
     let spawned = false;
     const panels = new PanelServices({ findPython: async () => null, spawnProcess: () => { spawned = true; } });

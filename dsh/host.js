@@ -146,21 +146,30 @@ export function createRouter(ctx, { panels, findStudy = inspectStudy, shadowed =
       const study = directory ? findStudy(directory) : null;
       if (!study || study.id !== match[1]) return sendJson(res, 404, { error: 'Study not found' });
       if (!study.embeddable) return sendJson(res, 409, { error: 'This study uses an earlier panel', command: study.command });
+      let page = match[2];
+      let sessionId;
+      // Relative API and asset URLs keep this prefix, binding every click to its
+      // own conversation even when another tab shows the same study directory.
+      const scoped = page.match(/^\/s\/([^/]+)(\/.*)$/);
+      if (scoped) {
+        try { sessionId = decodeURIComponent(scoped[1]); } catch { return sendJson(res, 400, { error: 'Invalid session' }); }
+        if (studyOfSession(sessionId)?.id !== study.id) return sendJson(res, 404, { error: 'Session no longer belongs to this study' });
+        page = scoped[2];
+      }
       let port;
       try {
         port = await panels.port(study);
       } catch (error) {
         return sendJson(res, 503, { error: error.message, code: error.code, detail: error.detail });
       }
-      const page = match[2];
       if (req.method === 'GET' && page === '/') conversations.viewed(study.id, url.searchParams.get('session'));
-      const reachable = conversations.agent(study.id) !== undefined;
+      const reachable = conversations.agent(study.id, sessionId) !== undefined;
       const options = { extra: reachable ? { 'x-tunetune-conversation': '1' } : {} };
       if (req.method === 'POST' && page === '/api/responses') {
         options.capture = true;
-        options.observe = ({ status, body }) => { if (status === 200 && body) conversations.answered(study.id, body); };
+        options.observe = ({ status, body }) => { if (status === 200 && body) conversations.answered(study.id, body, sessionId); };
       } else if (req.method === 'GET' && page === '/api/state') {
-        options.observe = ({ status, headers }) => { if (status === 200) conversations.synced(study.id, headers['x-tunetune-sync-error']); };
+        options.observe = ({ status, headers }) => { if (status === 200) conversations.synced(study.id, headers['x-tunetune-sync-error'], sessionId); };
       }
       return forward(req, res, port, `${page}${url.search}`, options);
     }

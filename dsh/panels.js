@@ -29,9 +29,12 @@ export class PanelServices {
   // A service opened in a separate browser tab sees no requests here, so it must not idle out.
   async port(study, { keep = false } = {}) {
     let entry = this.running.get(study.id);
+    const stopping = entry && entry.instance !== study.instance ? this.stop(study.id) : Promise.resolve();
+    entry = this.running.get(study.id);
     if (!entry) {
-      entry = { pending: this.start(study), child: null, timer: null, keep: false };
+      entry = { instance: study.instance, pending: null, child: null, timer: null, keep: false };
       this.running.set(study.id, entry);
+      entry.pending = stopping.then(() => this.start(study, entry));
       entry.pending.catch(() => {
         if (this.running.get(study.id) === entry) this.running.delete(study.id);
       });
@@ -51,14 +54,13 @@ export class PanelServices {
     entry.timer.unref?.();
   }
 
-  async start(study) {
+  async start(study, entry) {
     // The pinned tools refuse native Windows; studies there live inside WSL2 instead.
     if (this.platform === 'win32') throw Object.assign(new Error('TuneTune needs WSL2 on Windows'), { code: 'windows-host' });
     const python = await this.findPython();
     if (!python) throw Object.assign(new Error('Python 3.10 or newer was not found'), { code: 'python-missing' });
-    const entry = this.running.get(study.id);
     // Stopped while Python was being located: start nothing that nobody will stop.
-    if (!entry || entry.child) throw Object.assign(new Error('The research panel was stopped'), { code: 'panel-failed' });
+    if (this.running.get(study.id) !== entry || entry.child) throw Object.assign(new Error('The research panel was stopped'), { code: 'panel-failed' });
     const script = join(study.directory, '.workspace', 'app', 'workspace.py');
     // -B keeps bytecode caches out of the study; workspace.py binds 127.0.0.1 only.
     const child = this.spawnProcess(python, ['-B', script, '--project', study.directory, '--port', '0'], {

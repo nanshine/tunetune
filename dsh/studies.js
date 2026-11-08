@@ -70,7 +70,8 @@ export function inspectStudy(directory) {
     return null;
   }
   const manifest = readJson(join(real, '.workspace', 'manifest.json'));
-  if (!manifest || !regularFile(join(real, '.workspace', 'app', 'workspace.py'))) return null;
+  const pin = regularFile(join(real, '.workspace', 'manifest.json'));
+  if (!manifest || !pin || !regularFile(join(real, '.workspace', 'app', 'workspace.py'))) return null;
   const project = readJson(join(real, 'project.json'));
   let embeddable = false;
   const index = join(real, '.workspace', 'app', 'assets', 'index.html');
@@ -81,6 +82,9 @@ export function inspectStudy(directory) {
   const summary = typeof proposal?.summary === 'string' ? proposal.summary.trim() : '';
   return {
     id: studyId(real),
+    // Reinitializing a cleared directory creates a new pin even with identical tools.
+    // Keep the URL stable, but never reuse that earlier study's process or UI memory.
+    instance: createHash('sha256').update(JSON.stringify([pin.dev, pin.ino, pin.birthtimeMs, manifest])).digest('hex'),
     directory: real,
     path: shownPath(real),
     folder: basename(real),
