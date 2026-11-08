@@ -1,6 +1,6 @@
 {
   "name": "dsh-tunetune",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "TuneTune for DeepSeek Harness: train, test, and improve small models with your Agent, with a workbench beside the conversation.",
   "type": "module",
   "main": "./dsh/host.js",

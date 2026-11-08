@@ -1,5 +1,5 @@
 {
-  "version": "0.8.2",
+  "version": "0.8.3",
   "files": [
     {
       "path": "assets/panel/assets/index-B0nM-rB2.js",
@@ -39,11 +39,11 @@
     },
     {
       "path": "scripts/records.py",
-      "sha256": "495db3bec2c629f42465ae3144a94e7c2724ee52110852fe10f05c2ffe52c4c9"
+      "sha256": "605d494392d83135b9c0a3a59fe7d21128636866802d872c6135cb31d0ad1fd0"
     },
     {
       "path": "scripts/resources.py",
-      "sha256": "490a88c117fed54d274c973a7f86c2c6b52b2fdc002f09f1cd3648e76a5e2e4e"
+      "sha256": "84b577fecdae711d8d2c5bc61e735c5ea4f8a459d33a1252fed6fd5639477700"
     },
     {
       "path": "scripts/run.py",
