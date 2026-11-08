@@ -196,7 +196,7 @@ describe('studies and routes', () => {
     assert.match(page.headers['content-security-policy'], /img-src 'self' data: blob:;/);
     assert.match(page.headers['content-security-policy'], /media-src 'self' blob:;/);
     const wav = Buffer.concat([Buffer.from('RIFF\0\0\0\0WAVEfmt '), Buffer.alloc(16)]);
-    const headers = { 'content-type': 'audio/wav', 'content-length': wav.length, origin: `http://127.0.0.1:${port}` };
+    const headers = { 'content-type': 'audio/wav', 'transfer-encoding': 'chunked', origin: `http://127.0.0.1:${port}` };
     const saved = await call(port, 'POST', `/tunetune/p/${id}/api/try/media?kind=audio&ext=wav`, { headers, body: wav });
     assert.equal(saved.status, 200, saved.text);
     const reference = JSON.parse(saved.text);
@@ -221,7 +221,7 @@ describe('studies and routes', () => {
       assert.equal(shown.conversation, true);
       const body = JSON.stringify({ kind: 'proposal', decision: 'approve', target_sha256: shown.files['proposal.json'].sha256 });
       const answer = await call(port, 'POST', `/tunetune/p/${id}/api/responses`, {
-        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }, body,
+        headers: { 'content-type': 'application/json', 'transfer-encoding': 'chunked' }, body,
       });
       assert.equal(answer.status, 200, answer.text);
       const record = JSON.parse(answer.text);
@@ -386,6 +386,40 @@ describe('conversations', () => {
 });
 
 describe('forwarding', () => {
+  test('desktop streaming fetch bodies get an exact byte length and oversized bodies never reach the panel', async () => {
+    const received = [];
+    const upstream = await listen(async (req, res) => {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      received.push({ headers: req.headers, body: Buffer.concat(chunks) });
+      res.end('{}');
+    });
+    const front = await listen((req, res) => forward(req, res, upstream.address().port, '/api/responses'));
+    try {
+      const send = async (text) => {
+        // Match Harness forwardWebRequest: Request.body is a stream, not a string.
+        const original = new Request('http://localhost/', {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: text,
+        });
+        const answer = await fetch(`http://127.0.0.1:${front.address().port}/`, {
+          method: original.method, headers: original.headers, body: original.body, duplex: 'half',
+        });
+        await answer.text();
+        return answer.status;
+      };
+      const body = JSON.stringify({ note: '确认，开始研究' });
+      assert.equal(await send(body), 200);
+      assert.equal(received[0].body.toString(), body);
+      assert.equal(received[0].headers['content-length'], String(Buffer.byteLength(body)));
+      assert.equal(received[0].headers['transfer-encoding'], undefined);
+      assert.equal(await send('x'.repeat(128 * 1024 + 1)), 413);
+      assert.equal(received.length, 1);
+    } finally {
+      await new Promise((resolve) => front.close(resolve));
+      await new Promise((resolve) => upstream.close(resolve));
+    }
+  });
+
   test('only panel headers travel upstream and Host and Origin name the loopback service', async () => {
     let seen;
     const upstream = await listen((req, res) => {

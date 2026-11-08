@@ -85,7 +85,7 @@ npx skills add nanshine/tunetune --global --agent <application> -y
 
 ## Contributing
 
-[Report an issue](https://github.com/nanshine/tunetune/issues), share a real study, or submit a pull request. For code changes, see the repository's [contribution guidelines](CONTRIBUTING.md).
+Find the source code on [GitHub](https://github.com/nanshine/tunetune). [Report an issue](https://github.com/nanshine/tunetune/issues), share a real study, or submit a pull request. For code changes, see the repository's [contribution guidelines](CONTRIBUTING.md).
 
 ## License
 

@@ -3,6 +3,9 @@
 // how an existing study is read, validated or written.
 import { spawn } from 'node:child_process';
 import { request } from 'node:http';
+import { createReadStream } from 'node:fs';
+import { mkdtemp, open, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const START_TIMEOUT_MS = 20_000;
@@ -129,49 +132,103 @@ export function embeddedPolicy(value) {
 
 const OBSERVED_BODY_LIMIT = 256 * 1024;
 
-// Forward one request to the panel service on 127.0.0.1:port, rewriting only Host and Origin,
-// which workspace.py checks against its own loopback address. `extra` headers come from the
+// Desktop forwards a ReadableStream with chunked framing; pinned Python services
+// accept only Content-Length. Bound and spool that body before forwarding, without
+// buffering large trial attachments in memory or changing the study's pinned tools.
+async function sizedBody(req, path) {
+  const url = new URL(path, 'http://localhost');
+  const mediaLimits = { image: 16, audio: 64, video: 256, file: 256 };
+  const kind = url.searchParams.get('kind');
+  const limit = url.pathname === '/api/try/media'
+    ? (Object.hasOwn(mediaLimits, kind) ? mediaLimits[kind] : 0) * 1024 * 1024 : 128 * 1024;
+  const directory = await mkdtemp(join(tmpdir(), 'tunetune-request-'));
+  const file = join(directory, 'body');
+  const cleanup = () => rm(directory, { recursive: true, force: true });
+  let handle;
+  try {
+    handle = await open(file, 'wx', 0o600);
+    let length = 0;
+    req.setTimeout(30_000, () => req.destroy(new Error('Request body timed out')));
+    for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+      length += chunk.length;
+      if (length > limit) throw Object.assign(new Error('Request body exceeds limit'), { status: 413 });
+      await handle.writeFile(chunk);
+    }
+    await handle.close();
+    handle = undefined;
+    return { length, stream: createReadStream(file), cleanup };
+  } catch (error) {
+    await handle?.close();
+    await cleanup();
+    throw error;
+  } finally {
+    req.setTimeout(0);
+  }
+}
+
+// Forward one request to the panel service on 127.0.0.1:port, normalizing request framing
+// and Host/Origin for workspace.py. `extra` headers come from the
 // plugin itself, never the browser. `observe` sees the answer's status and headers, and with
 // `capture` also its body when small, after the browser has it.
-export function forward(req, res, port, path, { extra = {}, observe, capture = false } = {}) {
-  return new Promise((resolve) => {
-    const headers = { host: `127.0.0.1:${port}` };
-    for (const name of FORWARD_REQUEST) if (req.headers[name] !== undefined) headers[name] = req.headers[name];
-    Object.assign(headers, extra);
-    if (req.method === 'POST') headers.origin = `http://127.0.0.1:${port}`;
-    const upstream = request({ host: '127.0.0.1', port, method: req.method, path, headers }, (answer) => {
-      const out = {};
-      for (const name of FORWARD_RESPONSE) if (answer.headers[name] !== undefined) out[name] = answer.headers[name];
-      const policy = embeddedPolicy(answer.headers['content-security-policy']);
-      if (policy) out['content-security-policy'] = policy;
-      res.writeHead(answer.statusCode ?? 502, out);
-      const chunks = [];
-      let size = 0;
-      if (capture) {
-        answer.on('data', (chunk) => {
-          size += chunk.length;
-          if (size <= OBSERVED_BODY_LIMIT) chunks.push(chunk);
+export async function forward(req, res, port, path, { extra = {}, observe, capture = false } = {}) {
+  let body;
+  try {
+    if (req.method === 'POST' && req.headers['content-length'] === undefined) body = await sizedBody(req, path);
+  } catch (error) {
+    if (!res.destroyed) {
+      res.writeHead(error.status ?? 400, { 'content-type': 'application/json', connection: 'close' });
+      res.end(JSON.stringify({ error: error.message }));
+    }
+    return;
+  }
+  try {
+    if (res.destroyed) return;
+    await new Promise((resolve) => {
+      const headers = { host: `127.0.0.1:${port}` };
+      for (const name of FORWARD_REQUEST) if (req.headers[name] !== undefined) headers[name] = req.headers[name];
+      Object.assign(headers, extra);
+      if (body) headers['content-length'] = String(body.length);
+      if (req.method === 'POST') headers.origin = `http://127.0.0.1:${port}`;
+      const upstream = request({ host: '127.0.0.1', port, method: req.method, path, headers }, (answer) => {
+        const out = {};
+        for (const name of FORWARD_RESPONSE) if (answer.headers[name] !== undefined) out[name] = answer.headers[name];
+        const policy = embeddedPolicy(answer.headers['content-security-policy']);
+        if (policy) out['content-security-policy'] = policy;
+        res.writeHead(answer.statusCode ?? 502, out);
+        const chunks = [];
+        let size = 0;
+        if (capture) {
+          answer.on('data', (chunk) => {
+            size += chunk.length;
+            if (size <= OBSERVED_BODY_LIMIT) chunks.push(chunk);
+          });
+        }
+        answer.pipe(res);
+        answer.on('end', () => {
+          if (observe) {
+            const body = capture && size <= OBSERVED_BODY_LIMIT ? Buffer.concat(chunks).toString('utf8') : undefined;
+            try { observe({ status: answer.statusCode, headers: answer.headers, body }); } catch { /* observing never breaks the panel */ }
+          }
+          resolve();
         });
-      }
-      answer.pipe(res);
-      answer.on('end', () => {
-        if (observe) {
-          const body = capture && size <= OBSERVED_BODY_LIMIT ? Buffer.concat(chunks).toString('utf8') : undefined;
-          try { observe({ status: answer.statusCode, headers: answer.headers, body }); } catch { /* observing never breaks the panel */ }
+        answer.on('error', resolve);
+      });
+      upstream.on('error', () => {
+        if (!res.headersSent) {
+          res.writeHead(502, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+          res.end(JSON.stringify({ error: 'The research panel is not reachable' }));
+        } else {
+          res.destroy();
         }
         resolve();
       });
-      answer.on('error', resolve);
+      const source = body?.stream ?? req;
+      source.on('error', (error) => upstream.destroy(error));
+      res.on('close', () => { upstream.destroy(); resolve(); });
+      source.pipe(upstream);
     });
-    upstream.on('error', () => {
-      if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-        res.end(JSON.stringify({ error: 'The research panel is not reachable' }));
-      } else {
-        res.destroy();
-      }
-      resolve();
-    });
-    req.pipe(upstream);
-  });
+  } finally {
+    body?.stream.destroy();
+    await body?.cleanup();
+  }
 }

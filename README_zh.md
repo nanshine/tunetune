@@ -85,7 +85,7 @@ npx skills add nanshine/tunetune --global --agent <application> -y
 
 ## 参与贡献
 
-欢迎[反馈问题](https://github.com/nanshine/tunetune/issues)、分享真实研究案例或提交 PR；修改代码时，请参考仓库的[贡献指南](CONTRIBUTING.md)。
+源码托管在 [GitHub](https://github.com/nanshine/tunetune)。欢迎[反馈问题](https://github.com/nanshine/tunetune/issues)、分享真实研究案例或提交 PR；修改代码时，请参考仓库的[贡献指南](CONTRIBUTING.md)。
 
 ## 许可证
 

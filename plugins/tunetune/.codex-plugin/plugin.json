@@ -14,7 +14,7 @@
   "interface": {
     "displayName": "TuneTune",
     "shortDescription": "Train and improve small models",
-    "longDescription": "Work with your Agent to train, test, and improve small models for your own tasks. Your Agent researches approaches, proposes a plan and budget, calibrates tests, measures a baseline, and runs bounded experiments. Follow the study in the workbench and try your own inputs on verified local models. Results depend on the task, data, and available resources.",
+    "longDescription": "Work with your Agent to train, test, and improve small models for your own tasks. Your Agent researches approaches, proposes a plan and budget, calibrates tests, measures a baseline, and runs bounded experiments. Follow the study in the workbench and try your own inputs on verified local models. Results depend on the task, data, and available resources.\n\nOpen source: https://github.com/nanshine/tunetune",
     "composerIcon": "./skills/research-workspace/assets/panel/favicon.svg",
     "logo": "./skills/research-workspace/assets/panel/favicon.svg",
     "developerName": "nanshine",

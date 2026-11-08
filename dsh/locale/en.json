@@ -1,6 +1,7 @@
 {
   "meta": {
     "title": "TuneTune",
-    "description": "Work with your Agent to train, test, and improve small models for your own tasks. Follow plans, experiments, and results in the workbench beside the conversation, and try your own inputs."
+    "description": "Work with your Agent to train, test, and improve small models for your own tasks. Follow plans, experiments, and results in the workbench beside the conversation, and try your own inputs.",
+    "detail": "README.md"
   }
 }

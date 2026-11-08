@@ -28,6 +28,10 @@ class BundleTests(unittest.TestCase):
         for language in ("en", "zh"):
             meta = json.loads((ROOT / f"dsh/locale/{language}.json").read_text())["meta"]
             self.assertTrue(meta["title"] and meta["description"])
+            expected_detail = "README_zh.md" if language == "zh" else "README.md"
+            self.assertEqual(meta["detail"], expected_detail)
+            self.assertTrue((ROOT / meta["detail"]).is_file())
+            self.assertIn(meta["detail"], package["files"])
         patch = (ROOT / "dsh/cordis.patch.yml").read_text()
         self.assertIn("name: 'dsh-tunetune'", patch)
         # No dependencies means no install scripts and no build to allow on git installs.
@@ -42,7 +46,7 @@ class BundleTests(unittest.TestCase):
         skills = {path.relative_to(ROOT).as_posix() for path in SKILLS.rglob("*")
                   if path.is_file() and path.name != ".DS_Store" and "__pycache__" not in path.parts}
         bundle = {path.relative_to(ROOT).as_posix() for path in (ROOT / "dsh").rglob("*") if path.is_file() and path.name != ".DS_Store"}
-        self.assertEqual(packed, skills | bundle | {"package.json", "README.md", "INSTALL.md", "LICENSE", "NOTICE"})
+        self.assertEqual(packed, skills | bundle | {"package.json", "README.md", "README_zh.md", "INSTALL.md", "LICENSE", "NOTICE"})
 
     @unittest.skipUnless(NODE, "Node.js is not installed")
     def test_node_host_suite(self):
