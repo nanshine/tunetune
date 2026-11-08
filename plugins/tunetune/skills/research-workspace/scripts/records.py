@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -880,7 +881,8 @@ def finalize(tree, path, kind="local", target=None):
     evaluation run publishes `result/outputs.jsonl` rows `{sample_id,output,scores?}`,
     `result/metrics.json` and optional `result/usage.json`; inputs and references
     are copied from the frozen samples. A final-check run publishes only its metrics
-    and removes the per-sample rows once their coverage is checked. Nothing is
+    and removes the per-sample rows once their coverage is checked; its result may hold
+    no other files. Nothing is
     published unless every check passes.
     """
     require(isinstance(path, str) and re.fullmatch(ATTEMPT, path), "Invalid attempt path")
@@ -896,6 +898,12 @@ def finalize(tree, path, kind="local", target=None):
             require(target is None and kind == "local", "Evaluation runs have no target")
             evaluation = "evaluation/" + config["evaluation_version"]
             final = config.get("split") == "final"
+            if final:
+                # Any other file, such as a scorer's per-image scratch, would keep final per-sample results to tune against.
+                extra = [name for name in tree.files(path + "/result")
+                         if name.rsplit("/", 1)[-1] not in ("outputs.jsonl", "metrics.json", "usage.json")]
+                require(not extra, "A final-check result may contain only outputs.jsonl, metrics.json and usage.json; "
+                        "have the evaluation remove its other files before exiting: " + ", ".join(extra[:5]))
             samples = {row["sample_id"]: row for row in split_samples(tree, config["evaluation_version"], config.get("split", "development"))}
             rows = []
             for line in tree.read(path + "/result/outputs.jsonl").decode("utf-8").splitlines():
@@ -975,14 +983,21 @@ def validate(tree):
         error(".workspace/manifest.json", exc)
     packages = {p.rsplit("/", 1)[0] for p in names if re.fullmatch(rf"evaluation/{ID}/(?:definition.json|samples.jsonl|manifest.json)|experiments/{ID}/snapshot/manifest.json", p)}
     packages |= {p.rsplit("/", 1)[0] + "/snapshot" for p in docs if re.fullmatch(rf"experiments/{ID}/config.json", p)}
+    # An evaluation version has a definition or samples; a manifest alone pins other material, such as reserved sources.
+    versions = {p.rsplit("/", 1)[0] for p in names if re.fullmatch(rf"evaluation/{ID}/(?:definition.json|samples.jsonl)", p)}
     for base in sorted(packages - {"evaluation/draft"}):
         try:
             verify_manifest(tree, base)
-            if base.startswith("evaluation/"):
+            if base in versions:
                 read_record(tree, base + "/definition.json")
                 read_record(tree, base + "/samples.jsonl")
         except (OSError, ValueError, TypeError) as exc:
             error(base, exc)
+    problem, omitted = display_check(tree)
+    if problem:
+        error("panel", problem)
+    for item in omitted:
+        report["warnings"].append(f"The panel leaves out {item['path']} ({item['size']} bytes), too large even to page")
     current = docs.get("project.json", {}).get("current_evaluation")
     measured = {(run["experiment"], run["target_sha256"]) for run in final_runs(docs) if run["version"] == current and run["state"] == "succeeded"}
     for ident in docs.get("project.json", {}).get("deliveries", []):
@@ -1017,6 +1032,26 @@ def validate(tree):
                 report["unfinished"].append(base)
     report["valid"] = not report["errors"]
     return report
+
+
+def display_check(tree):
+    """(problem, omitted): what would stop the panel from showing these records and what it leaves out,
+    read with the panel's own reader beside this tool, so the two never disagree."""
+    source = Path(__file__).with_name("workspace.py")
+    if not source.is_file():
+        return None, []
+    try:
+        spec = importlib.util.spec_from_file_location("tunetune_display", source)
+        module = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.dont_write_bytecode = previous
+        _, _, omitted = module.load_display(module.SafeTree(tree.root))
+    except (OSError, ValueError, RecursionError) as exc:
+        return f"The panel cannot show these records: {exc}", []
+    return None, omitted
 
 
 def final_runs(docs):

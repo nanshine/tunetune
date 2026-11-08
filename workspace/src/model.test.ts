@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { comparisonSamples, currentResponse, deliveredModels, deliveryIds, evaluationRuns, experimentNumber, experiments, layout, NODE_HEIGHT, NODE_WIDTH, OBSERVATION_MAX_AGE_MS, plan, plannedNodes, outcomeLabels, parseSnapshot, preferredEvaluation, resourceObservation, statusLabel } from './model';
+import { acceptanceInputs, combineComparison, comparisonPlan, comparisonSamples, currentResponse, deliveredModels, deliveryIds, evaluationRuns, experimentNumber, experiments, layout, NODE_HEIGHT, NODE_WIDTH, OBSERVATION_MAX_AGE_MS, plan, plannedNodes, outcomeLabels, parseSnapshot, preferredEvaluation, resourceObservation, statusLabel } from './model';
 import type { Observations, ResearchFile, Snapshot } from './model';
 import { setLanguage } from './i18n';
 
@@ -22,6 +22,12 @@ describe('research files', () => {
     expect(parseSnapshot(snapshot()).files).toEqual(files);
     expect(parseSnapshot(snapshot({})).files).toEqual({});
     expect(() => parseSnapshot({ ...snapshot(), files: [] })).toThrow();
+    expect(parseSnapshot({ ...snapshot(), conversation: true, omitted: [{ path: 'evaluation/v1/samples.jsonl', size: 5_000_000 }] }).omitted).toHaveLength(1);
+    expect(() => parseSnapshot({ ...snapshot(), conversation: 'yes' })).toThrow();
+    expect(() => parseSnapshot({ ...snapshot(), omitted: [{ path: 1 }] })).toThrow();
+    expect(parseSnapshot({ ...snapshot(), paged: { 'evaluation/v1/samples.jsonl': { sha256: 'a'.repeat(64), size: 5, rows: 2, splits: { final: 1 } } } }).paged).toBeTruthy();
+    expect(() => parseSnapshot({ ...snapshot(), paged: { 'evaluation/v1/samples.jsonl': { sha256: 'x', size: 5, rows: 2 } } })).toThrow();
+    expect(() => parseSnapshot({ ...snapshot(), paged: { 'proposal.json': { sha256: 'a'.repeat(64), size: 5, rows: 2 } } })).toThrow();
     expect(() => parseSnapshot(snapshot({ 'project.json': { content: {}, sha256: '' } }))).toThrow();
   });
   it('rejects malformed structured records without replacing the last usable snapshot', () => {
@@ -117,6 +123,13 @@ describe('research files', () => {
       'comparison/outputs.jsonl': file([{ sample_id: 'a', input: '新', outputs: { 'exp-1': '甲' } }, { sample_id: 'b', input: '旧', outputs: { 'exp-1': '乙' } }]),
     };
     expect(comparisonSamples(acceptance, 'exp-1', 'exp-1', 'v1').map(row => row.outputs)).toEqual([{ 'exp-1': '甲' }, {}, {}]);
+    // A paged inputs file still drives the rows; outputs are matched to each page by sample ID.
+    const { 'comparison/inputs.jsonl': _inputs, ...rest } = acceptance;
+    const paged = { 'comparison/inputs.jsonl': { sha256: 'e'.repeat(64), size: 1, rows: 3 } };
+    const plan = comparisonPlan(rest, '', '', 'v1', paged);
+    expect(plan).toMatchObject({ mode: 'inputs', rows: 'comparison/inputs.jsonl', partner: 'comparison/outputs.jsonl' });
+    expect(acceptanceInputs(rest, paged)).toBe(true);
+    expect(combineComparison(plan, [{ sample_id: 'a', input: '新' }], new Map([['a', { sample_id: 'a', input: '新', outputs: { 'exp-1': '甲' } }]])).map(row => row.outputs)).toEqual([{ 'exp-1': '甲' }]);
   });
   it('lays out lineage as a tidy tree without overlaps and tolerates unresolved or cyclic ancestry', () => {
     const tree = [{ id: 'a', parent: null }, { id: 'b', parent: 'a' }, { id: 'c', parent: 'a' }, { id: 'd', parent: 'c' }, { id: 'e', parent: null }];

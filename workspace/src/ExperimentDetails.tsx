@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { array, experimentNumber, object, preferredEvaluation, recentEvaluations, roleLabels, statusLabel } from './model';
+import { experimentNumber, preferredEvaluation, recentEvaluations, roleLabels, statusLabel } from './model';
 import type { EvaluationRun, Experiment, Snapshot } from './model';
 import { OutcomeBadge, StateDot } from './Lineage';
 import { UsageView } from './UsageView';
 import { SamplesView } from './EvaluationView';
+import { rowSource, usePaged } from './rows';
 import { Section } from './Parts';
 import { labels, t } from './i18n';
 
@@ -22,7 +23,8 @@ export function ExperimentDetails({ experiment, experimentsById, results, files,
   const version = versions.includes(selection) ? selection : versions.includes(currentVersion) ? currentVersion : versions[0] ?? '';
   const active = preferredEvaluation(experimentResults, version);
   const final = preferredEvaluation(experimentResults, version, 'final');
-  const outputFile = active ? files[active.path.replace('/config.json', '/outputs.jsonl')] : undefined;
+  const paged = usePaged();
+  const outputs = active ? rowSource(files, paged, active.path.replace('/config.json', '/outputs.jsonl')) : null;
   const parent = experiment.parent ? experimentsById.get(experiment.parent) : undefined;
   const parentResult = parent ? preferredEvaluation(results.filter(result => result.experimentId === parent.id), version) : undefined;
   const headline = active?.state === 'succeeded' ? Object.entries(active.metrics)[0] : undefined;
@@ -58,7 +60,7 @@ export function ExperimentDetails({ experiment, experimentsById, results, files,
         {final.state === 'succeeded' && <div className="metric-grid">{Object.entries(final.metrics).map(([key, value]) => <div key={key}><span>{Object.hasOwn(final.metricLabels, key) ? final.metricLabels[key] : key}</span><strong>{format(value)}</strong></div>)}</div>}
         <p className="muted">{t('最终检查用的是研究中没有看过的样例，只记录汇总分数，不显示逐条结果。')}</p></Section>}
       <UsageView usage={active.usage} />
-      <SamplesView key={active.path} rows={outputFile ? array(outputFile.content).map(object) : null} outputs metricLabels={active.metricLabels} />
+      <SamplesView key={active.path} source={outputs} outputs metricLabels={active.metricLabels} />
     </> : <p className="muted">{t('还没有评测。跑通不等于效果已经验证。')}</p>)}
     {tab === 'usage' && <>
       {experiment.invoke.length ? <>

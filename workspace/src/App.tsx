@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Boxes, ClipboardCheck, FlaskConical, ListChecks, PlayCircle, Target } from 'lucide-react';
+import { PagedContext } from './rows';
 import { loadModel, runAcceptance, submitResponse, tryModel, unloadModel, useWorkspace } from './useWorkspace';
 import { deliveredModels, document, evaluationRuns, experimentNumber, experiments, plannedNodes, text } from './model';
 import type { Snapshot, ViewName } from './model';
@@ -18,6 +19,7 @@ import { resolveLanguage, setLanguage, t } from './i18n';
 type Panel = 'proposal' | 'plan' | 'resources' | 'evaluation' | 'acceptance';
 type WindowId = Panel | 'experiment';
 const emptyFiles: Snapshot['files'] = {};
+const emptyPaged: NonNullable<Snapshot['paged']> = {};
 // Labels stay in source form here and are translated when rendered.
 const panels: { id: Panel; label: string; title: string; icon: ReactNode }[] = [
   { id: 'proposal', label: '提案', title: '研究提案', icon: <Target size={18} /> },
@@ -51,6 +53,10 @@ export function App() {
   const projectName = text(project.name, 'TuneTune');
   const attention = snapshot?.view?.attention ?? [];
   const waiting = (view: ViewName) => attention.find(note => note.view === view)?.message ?? null;
+  // Answers given here reach the conversation by themselves only where the application delivers them.
+  const delivered = snapshot?.conversation === true;
+  const omitted = snapshot?.omitted ?? [];
+  const paged = snapshot?.paged ?? emptyPaged;
   useEffect(() => { window.document.title = `${projectName} · TuneTune`; }, [projectName]);
 
   function open(id: WindowId, options: { maximized?: boolean } = {}) {
@@ -93,17 +99,17 @@ export function App() {
 
   const respond = (kind: 'proposal' | 'plan') => (decision: string, note: string, sha: string) => submitResponse({ kind, decision, target_sha256: sha, ...(note ? { note } : {}) });
   const content: Record<Panel, ReactNode> = {
-    proposal: <ProposalView files={files} waiting={waiting('proposal')} onRespond={respond('proposal')} />,
-    plan: <PlanView files={files} waiting={waiting('plan')} onRespond={respond('plan')} onFocusExperiment={focusExperiment} />,
+    proposal: <ProposalView files={files} waiting={waiting('proposal')} onRespond={respond('proposal')} delivered={delivered} />,
+    plan: <PlanView files={files} waiting={waiting('plan')} onRespond={respond('plan')} onFocusExperiment={focusExperiment} delivered={delivered} />,
     resources: <ResourcesView resources={document(files, 'resources.json')} observations={snapshot?.observations} />,
     evaluation: <EvaluationView key={evaluationTab} files={files} currentVersion={version} selection={evaluationSelection} onSelect={setEvaluationSelection} initialTab={evaluationTab}
-      onReview={(reviewItems, sha) => submitResponse({ kind: 'evaluation_review', decision: 'submit', target_sha256: sha, items: reviewItems })} />,
+      onReview={(reviewItems, sha) => submitResponse({ kind: 'evaluation_review', decision: 'submit', target_sha256: sha, items: reviewItems })} delivered={delivered} />,
     acceptance: <AcceptanceView files={files} job={snapshot?.acceptance} pool={snapshot?.models} onRun={runAcceptance} onTry={tryModel} onLoad={loadModel} onUnload={unloadModel}
-      onFeedback={(feedback, sha) => submitResponse({ kind: 'acceptance', decision: 'submit', target_sha256: sha, items: feedback })} />,
+      onFeedback={(feedback, sha) => submitResponse({ kind: 'acceptance', decision: 'submit', target_sha256: sha, items: feedback })} delivered={delivered} />,
   };
   const empty = !items.length && !planned.length;
 
-  return <div className="app">
+  return <PagedContext.Provider value={paged}><div className="app">
     <a className="skip-link" href="#canvas">{t('跳到实验画布')}</a>
     <main id="canvas" className="canvas" tabIndex={-1} aria-label={t('实验画布')}>
       <Lineage items={items} planned={planned} results={results} currentVersion={version} selected={selected} focus={focus ? focus.id : null} deliveries={deliveries} onSelect={selectExperiment} />
@@ -115,6 +121,7 @@ export function App() {
       {version && <span className="pill-meta" title={t('当前评测版本')}>{t('评测')} {version}</span>}
     </header>
     <div className={`connection ${error ? 'warning' : ''}`} role="status" title={error ?? undefined}><span className="connection-dot" aria-hidden="true" />{connectionError ? t('连接中断') : snapshot?.error ? t('同步待恢复') : snapshot ? t('本地已连接') : t('正在连接')}</div>
+    {!error && omitted.length > 0 && <div className="sync-banner" role="status" title={omitted.map(item => item.path).join('\n')}>{t('{count} 个文件太大，面板没有显示：{paths}', { count: omitted.length, paths: omitted.slice(0, 3).map(item => item.path).join('、') + (omitted.length > 3 ? '…' : '') })}</div>}
     {error && <div className="sync-banner" role="alert">{ready ? t('{error}。保留上次的内容，正在自动重试。', { error }) : t('{error}。请检查研究目录，正在自动重试。', { error })}</div>}
     <nav className="tiles" aria-label={t('研究资料')}>{panels.map(panel => {
       const note = attention.find(item => item.view === panel.id || (panel.id === 'evaluation' && item.view === 'review'));
@@ -130,7 +137,7 @@ export function App() {
       onClose={() => close('experiment')} onToggleMaximized={() => update('experiment', { maximized: !windows.experiment!.maximized })} onFocus={() => update('experiment', { z: ++top.current })} onMove={position => update('experiment', { position })}>
       <ExperimentDetails experiment={experiment} experimentsById={new Map(items.map(item => [item.id, item]))} results={results} files={files} currentVersion={version} delivered={deliveries.has(experiment.id)} onOpenAcceptance={() => open('acceptance')} />
     </FloatingWindow>}
-  </div>;
+  </div></PagedContext.Provider>;
 }
 
 function ProjectName({ name, digest, disabled, onSave }: { name: string; digest?: string; disabled: boolean; onSave: (name: string, digest: string) => Promise<void> }) {

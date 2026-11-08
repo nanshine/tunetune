@@ -153,7 +153,9 @@ async function openStudy(study, header) {
     show(header, notice(t('failTitle'), t(known || 'failBody'), detail, retry));
     return;
   }
-  show(header, el('iframe', { class: 'frame', src: base, title: title(study) }));
+  // The panel's conversation receives the person's answers given there.
+  const src = sessionId ? `${base}?session=${encodeURIComponent(sessionId)}` : base;
+  show(header, el('iframe', { class: 'frame', src, title: title(study) }));
 }
 
 // The plugin starts the study's own service; the browser opens it on its loopback address.

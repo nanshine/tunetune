@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, LoaderCircle, Play, Sparkles, Star, ThumbsDown, ThumbsUp } from 'lucide-react';
-import { acceptanceInputs, acceptanceModels, comparisonSamples, currentResponse, array, deliveryIds, document, experimentNumber, object, outcomeLabels, runState, runStateLabels, text } from './model';
+import { acceptanceInputs, acceptanceModels, combineComparison, comparisonPlan, currentResponse, array, deliveryIds, document, experimentNumber, object, outcomeLabels, runState, runStateLabels, text } from './model';
+import { PAGE_SIZE, rowSource, sourceTotal, targetSha, usePaged, useRowPage, useRowsById } from './rows';
 import type { AcceptanceJob, Experiment, JsonObject, ModelPool, Snapshot } from './model';
 import { RecordView, sampleLabel } from './RecordView';
 import { Empty } from './Parts';
@@ -75,11 +76,11 @@ function Verdict({ judgment, onChange }: { judgment: Judgment | undefined; onCha
   </div>;
 }
 
-export function AcceptanceView({ files, job, pool, onRun, onTry, onLoad, onUnload, onFeedback }: {
+export function AcceptanceView({ files, job, pool, onRun, onTry, onLoad, onUnload, onFeedback, delivered: answersDelivered = false }: {
   files: Snapshot['files']; job: AcceptanceJob | null | undefined; pool?: ModelPool | null;
   onRun: (experiments: string[]) => Promise<unknown>; onTry: (experiment: string, input: unknown) => Promise<{ output?: unknown; error?: string }>;
   onLoad?: (experiment: string) => Promise<unknown>; onUnload?: (experiment: string) => Promise<unknown>;
-  onFeedback?: (items: AcceptanceItem[], sha: string) => Promise<unknown>;
+  onFeedback?: (items: AcceptanceItem[], sha: string) => Promise<unknown>; delivered?: boolean;
 }) {
   const { primary, more } = acceptanceModels(files);
   const ordered = [...primary, ...more];
@@ -90,11 +91,24 @@ export function AcceptanceView({ files, job, pool, onRun, onTry, onLoad, onUnloa
   const [error, setError] = useState('');
   const [judgments, setJudgments] = useState<Record<string, Judgment>>({});
   const [sending, setSending] = useState(false);
-  const shown = files['comparison/outputs.jsonl'];
-  const answered = currentResponse(files, 'acceptance');
+  const [page, setPage] = useState(0);
+  const paged = usePaged();
+  const shownSha = targetSha(files, paged, 'comparison/outputs.jsonl');
+  const shown = shownSha ? { sha256: shownSha } : undefined;
+  const answered = currentResponse(files, 'acceptance', paged);
   const version = text(document(files, 'project.json').current_evaluation);
   const selected = ordered.filter(item => chosen.includes(item.id));
-  const rows = acceptanceInputs(files) ? comparisonSamples(files, '', '', version) : comparisonSamples(files, selected[0]?.id ?? '', selected[1]?.id ?? '', version);
+  const inputs = acceptanceInputs(files, paged);
+  // One page of the driving file at a time, matched by sample ID to the file it is compared with.
+  const plan = inputs ? comparisonPlan(files, '', '', version, paged) : comparisonPlan(files, selected[0]?.id ?? '', selected[1]?.id ?? '', version, paged);
+  const driver = plan ? rowSource(files, paged, plan.rows) : null;
+  const total = sourceTotal(driver);
+  const pages = Math.ceil(total / PAGE_SIZE);
+  const currentPage = Math.min(page, Math.max(0, pages - 1));
+  const pageRows = useRowPage(driver, currentPage);
+  const partner = useRowsById(plan?.partner ? rowSource(files, paged, plan.partner) : null, (pageRows.value ?? []).map(row => text(row.sample_id)));
+  const loading = !!driver && (!pageRows.value || !partner.value);
+  const rows = !loading && pageRows.value && partner.value ? combineComparison(plan, pageRows.value, partner.value) : [];
   const active = rows[Math.min(index, Math.max(0, rows.length - 1))];
   const outputs = object(active?.outputs);
   const running = job?.state === 'running';
@@ -133,25 +147,27 @@ export function AcceptanceView({ files, job, pool, onRun, onTry, onLoad, onUnloa
         {more.length > 0 && <button className="more-toggle" aria-expanded={showMore} onClick={() => setShowMore(!showMore)}>{showMore ? t('收起') : t('其他实验 {count} 个', { count: more.length })}</button>}
         {showMore && more.map(pick)}</div>
       {pool && ordered.some(item => item.serve) && <span className="memory-line muted">{t('常驻内存 {used} / {budget} GB', { used: pool.used_gb.toFixed(1), budget: pool.budget_gb.toFixed(1) })}</span>}
-      {acceptanceInputs(files) && <button className="primary" disabled={running || !runnable.length} onClick={() => void run()}>{running ? <LoaderCircle size={14} className="spin" /> : <Play size={14} />}{running ? t('正在运行') : t('用所选模型重新运行')}</button>}
+      {inputs && <button className="primary" disabled={running || !runnable.length} onClick={() => void run()}>{running ? <LoaderCircle size={14} className="spin" /> : <Play size={14} />}{running ? t('正在运行') : t('用所选模型重新运行')}</button>}
     </div>
     {(job || error) && <p className={`job-line ${job?.state ?? 'failed'}`} role="status">{error || (job!.state === 'running' ? t('正在让 {models} 处理全部输入…', { models: list(job!.experiments.map(experimentNumber)) }) : job!.state === 'succeeded' ? t('运行完成，输出已更新。') : job!.failed?.length ? t('有模型没跑完（{models}），保留了之前的输出。', { models: list(job!.failed.map(experimentNumber)) }) : t('有模型没跑完，保留了之前的输出。'))}</p>}
     <div className="acceptance-body">
-      <nav className="input-list" aria-label={t('验收输入')}>{rows.length ? <ol>{rows.map((row, i) => <li key={text(row.sample_id, String(i))}><button className={row === active ? 'active' : ''} aria-current={row === active} onClick={() => setIndex(i)}>{sampleLabel(row, i)}</button></li>)}</ol>
-        : <p className="muted">{t('还没有验收输入。告诉 Agent 你想看哪些内容的结果，它们会出现在这里。')}</p>}</nav>
+      <nav className="input-list" aria-label={t('验收输入')}>{rows.length ? <ol start={currentPage * PAGE_SIZE + 1}>{rows.map((row, i) => <li key={text(row.sample_id, String(i))}><button className={row === active ? 'active' : ''} aria-current={row === active} onClick={() => setIndex(i)}>{sampleLabel(row, currentPage * PAGE_SIZE + i)}</button></li>)}</ol>
+        : loading ? <p className={pageRows.error || partner.error ? 'error-text' : 'muted'} role="status">{pageRows.error || partner.error || t('正在读取第 {page} 页…', { page: currentPage + 1 })}</p>
+        : <p className="muted">{t('还没有验收输入。告诉 Agent 你想看哪些内容的结果，它们会出现在这里。')}</p>}
+        {pages > 1 && <p className="pager page-pager"><button disabled={currentPage === 0} onClick={() => { setPage(currentPage - 1); setIndex(0); }}>{t('上一页')}</button><span className="muted">{t('第 {page} / {pages} 页', { page: currentPage + 1, pages })}</span><button disabled={currentPage >= pages - 1} onClick={() => { setPage(currentPage + 1); setIndex(0); }}>{t('下一页')}</button></p>}</nav>
       <div className="acceptance-main">
         {active && <>
-          <details className="input-preview" open={JSON.stringify(active.input).length < 600}><summary>{t('输入：')}{sampleLabel(active, index)}</summary><div className="reading"><RecordView value={active.input} /></div></details>
+          <details className="input-preview" open={JSON.stringify(active.input).length < 600}><summary>{t('输入：')}{sampleLabel(active, currentPage * PAGE_SIZE + index)}</summary><div className="reading"><RecordView value={active.input} /></div></details>
           <div className="outputs" style={{ gridTemplateColumns: `repeat(${Math.max(selected.length, 1)}, minmax(0, 1fr))` }}>{selected.map(item => <section key={item.id} className="output-card">
             <h4><span className="node-number">{experimentNumber(item.id)}</span>{item.title}{onLoad && onUnload && <LoadButton item={item} pool={pool} onLoad={onLoad} onUnload={onUnload} onError={setError} />}</h4>
             <p className={`run-state ${runState(item, job, pool)}`} title={pool?.items[item.id]?.error}>{runStateLabels[runState(item, job, pool)]}{pool?.items[item.id] && pool.items[item.id].state !== 'failed' && t(' · 约 {gb} GB', { gb: pool.items[item.id].memory_gb.toFixed(1) })}</p>
-            {hasOutput(outputs, item.id) ? <RecordView value={outputs[item.id]} /> : <p className="muted">{acceptanceInputs(files) && ['runnable', 'loaded'].includes(runState(item, job, pool)) ? t('还没有这个输入的输出，点上方按钮运行。') : t('还没有这个输入的输出。')}</p>}
+            {hasOutput(outputs, item.id) ? <RecordView value={outputs[item.id]} /> : <p className="muted">{inputs && ['runnable', 'loaded'].includes(runState(item, job, pool)) ? t('还没有这个输入的输出，点上方按钮运行。') : t('还没有这个输入的输出。')}</p>}
             {shown && onFeedback && hasOutput(outputs, item.id) && <Verdict judgment={judgments[judgmentKey(text(active.sample_id), item.id)]} onChange={value => judge(text(active.sample_id), item.id, value)} />}
           </section>)}</div>
           {shown && onFeedback && (judged > 0 || answered) && <div className="feedback-bar" role="status">
             {judged > 0 ? <><span>{t('已评价 {count} 个输出。觉得不好的会补进下一版评测，你会在审阅里再看到它们。', { count: judged })}</span>
               <button className="primary" disabled={sending} onClick={() => void sendFeedback()}>{t('提交验收意见')}</button></>
-              : <span><Check size={14} aria-hidden="true" />{t('这批输出的意见已提交（{count} 条）。回到对话告诉 Agent。', { count: array(answered!.items).length })}</span>}
+              : <span><Check size={14} aria-hidden="true" />{answersDelivered ? t('这批输出的意见已提交（{count} 条），已转给对话中的 Agent。', { count: array(answered!.items).length }) : t('这批输出的意见已提交（{count} 条）。回到对话告诉 Agent。', { count: array(answered!.items).length })}</span>}
           </div>}
         </>}
         <TryPanel models={selected.length ? selected : ordered} template={inputTemplate(rows)} onTry={onTry} />

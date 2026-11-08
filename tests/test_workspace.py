@@ -3,6 +3,7 @@ import hashlib
 import http.client
 import importlib.util
 import json
+from urllib.parse import quote
 import os
 from pathlib import Path
 import signal
@@ -81,7 +82,7 @@ class WorkspaceTests(unittest.TestCase):
     def state(self):
         status, value, _ = self.request()
         self.assertEqual(status, 200)
-        self.assertEqual(set(value), {"files", "revision", "synced_at", "error", "observations", "view", "acceptance", "models"})
+        self.assertEqual(set(value), {"files", "paged", "omitted", "conversation", "revision", "synced_at", "error", "observations", "view", "acceptance", "models"})
         return value
 
 
@@ -612,6 +613,69 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(set(value["files"]), {pattern.replace("*", "one") for pattern in wb.PATTERNS})
         self.write("comparison/outputs.jsonl", '{}\n[]\n')
         self.assertTrue(self.state()["error"])
+
+    def test_unrecognized_entries_beside_records_are_ignored(self):
+        # Split notes beside evaluation versions once stopped the whole panel from syncing.
+        self.write("evaluation/coverage-v2.json", {"missing": []})
+        self.write("experiments/notes.json", {"x": 1})
+        self.write("evaluation/v1/definition.json", {"version": "v1"})
+        (self.root / "responses/r1.json").mkdir(parents=True)
+        value = self.state()
+        self.assertIsNone(value["error"])
+        self.assertIn("evaluation/v1/definition.json", value["files"])
+        self.assertNotIn("evaluation/coverage-v2.json", value["files"])
+
+    def test_large_jsonl_is_paged_and_larger_files_are_listed(self):
+        rows = [{"sample_id": f"s{i}", "input": {"image": {"type": "image", "path": f"media/{i}.png"}}, "split": "final" if i % 4 == 0 else "development",
+                 "reference_status": "draft"} for i in range(250)]
+        self.write("evaluation/v1/samples.jsonl", "".join(json.dumps(row) + "\n" for row in rows))
+        self.write("evaluation/v1/definition.json", {"version": "v1"})
+        self.write("experiments/e/analysis.json", {"summary": "y" * 400})
+        with patch.object(wb, "MAX_FILE_BYTES", 300):
+            value = self.state()
+            self.assertIsNone(value["error"])
+            self.assertIn("project.json", value["files"])
+            self.assertNotIn("evaluation/v1/samples.jsonl", value["files"])
+            described = value["paged"]["evaluation/v1/samples.jsonl"]
+            self.assertEqual((described["rows"], described["splits"], described["reference_status"]),
+                             (250, {"development": 187, "final": 63}, {"draft": 250}))
+            sha = described["sha256"]
+            base = "/api/rows?path=" + quote("evaluation/v1/samples.jsonl", safe="") + "&sha256=" + sha
+            status, page, _ = self.request(path=base + "&offset=200&limit=100")
+            self.assertEqual(status, 200)
+            self.assertEqual((page["total"], page["offset"], [row["sample_id"] for row in page["rows"]][:2], len(page["rows"])), (250, 200, ["s200", "s201"], 50))
+            status, page, _ = self.request(path=base + "&id=s7&id=missing&id=s3")
+            self.assertEqual([row["sample_id"] for row in page["rows"]], ["s3", "s7"])
+            for query, expected in ((base + "&offset=0&limit=201", 400), (base + "&offset=0", 400), (base + "&id=a&offset=0", 400),
+                                    ("/api/rows?path=project.json&sha256=" + sha + "&offset=0&limit=1", 404),
+                                    (base.replace(sha, "0" * 64) + "&offset=0&limit=1", 409)):
+                self.assertEqual(self.request(path=query)[0], expected, query)
+            # Media referenced only from paged rows stays reachable; other files stay private.
+            self.write("media/3.png", "png")
+            self.write("media/elsewhere.png", "png")
+            self.assertEqual(self.request(path="/api/media?path=media%2F3.png")[0], 200)
+            self.assertEqual(self.request(path="/api/media?path=media%2Felsewhere.png")[0], 404)
+            self.assertEqual([item["path"] for item in value["omitted"]], ["experiments/e/analysis.json"])
+            # A changed file is a new version: an old page request is refused.
+            self.write("evaluation/v1/samples.jsonl", "".join(json.dumps(row) + "\n" for row in rows[:240]))
+            self.assertEqual(self.state()["paged"]["evaluation/v1/samples.jsonl"]["rows"], 240)
+            self.assertEqual(self.request(path=base + "&offset=0&limit=1")[0], 409)
+            self.write("evaluation/v1/samples.jsonl", '{"sample_id":"a","input":"' + "x" * 400 + '"}\n[]\n')
+            self.assertTrue(self.state()["error"])
+        self.write("evaluation/v1/samples.jsonl", "".join(json.dumps(row) + "\n" for row in rows))
+        files, paged, omitted = wb.load_display(wb.SafeTree(self.root))
+        self.assertEqual((paged, omitted), ({}, []))
+
+    def test_conversation_flag_and_sync_error_header(self):
+        self.assertFalse(self.state()["conversation"])
+        status, value, _ = self.request(headers={"X-TuneTune-Conversation": "1"})
+        self.assertTrue(value["conversation"])
+        _, _, headers = self.request()
+        self.assertNotIn("X-TuneTune-Sync-Error", headers)
+        self.write("proposal.json", "{")
+        _, value, headers = self.request()
+        self.assertTrue(value["error"])
+        self.assertEqual(json.loads(headers["X-TuneTune-Sync-Error"]), value["error"][:500])
 
     def test_read_bounds_retain_snapshot(self):
         good = self.state()

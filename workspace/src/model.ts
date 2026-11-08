@@ -9,7 +9,8 @@ export type ViewState = { revision: number; open: ViewName[]; focus: { experimen
 export type AcceptanceJob = { id: string; state: 'running' | 'succeeded' | 'failed'; experiments: string[]; started_at: string; finished_at?: string; failed?: string[]; message?: string };
 export type LoadedModel = { state: 'loading' | 'loaded' | 'failed'; memory_gb: number; estimated?: boolean; error?: string };
 export type ModelPool = { budget_gb: number; used_gb: number; items: Record<string, LoadedModel> };
-export type Snapshot = { files: Record<string, ResearchFile>; revision: string; synced_at: string; error: string | null; observations?: Observations; view?: ViewState | null; acceptance?: AcceptanceJob | null; models?: ModelPool };
+export type PagedFile = { sha256: string; size: number; rows: number; splits?: Record<string, number>; reference_status?: Record<string, number> };
+export type Snapshot = { files: Record<string, ResearchFile>; revision: string; synced_at: string; error: string | null; paged?: Record<string, PagedFile>; omitted?: { path: string; size: number }[]; conversation?: boolean; observations?: Observations; view?: ViewState | null; acceptance?: AcceptanceJob | null; models?: ModelPool };
 export type Outcome = 'baseline' | 'keep' | 'discard' | 'inconclusive' | 'invalid';
 export type Analysis = { outcome: Outcome | 'unknown'; summary: string };
 export type Usage = { requests?: number; input_tokens?: number; output_tokens?: number; cost?: number; currency?: string; latency_seconds?: number };
@@ -88,6 +89,17 @@ export function parseSnapshot(value: unknown): Snapshot {
       ids.add(text(item.id));
     }
   }
+  if (data.paged !== undefined) {
+    const paged = object(data.paged);
+    if (data.paged === null || typeof data.paged !== 'object' || Array.isArray(data.paged)) throw new Error(t('文件通道返回了无效格式'));
+    for (const [path, raw] of Object.entries(paged)) {
+      const file = object(raw);
+      const count = (value: unknown) => value === undefined || (value !== null && typeof value === 'object' && !Array.isArray(value) && Object.values(value).every(item => Number.isInteger(item) && (item as number) >= 0));
+      if (!path.endsWith('.jsonl') || Object.hasOwn(data.files as object, path) || !/^[a-f0-9]{64}$/.test(text(file.sha256)) || !Number.isInteger(file.rows) || (file.rows as number) < 0 || typeof file.size !== 'number' || !count(file.splits) || !count(file.reference_status)) throw new Error(t('{path}：分页记录格式无效', { path }));
+    }
+  }
+  if (data.conversation !== undefined && typeof data.conversation !== 'boolean') throw new Error(t('文件通道返回了无效格式'));
+  if (data.omitted !== undefined && (!Array.isArray(data.omitted) || data.omitted.some(raw => typeof object(raw).path !== 'string' || typeof object(raw).size !== 'number'))) throw new Error(t('文件通道返回了无效格式'));
   return data as Snapshot;
 }
 
@@ -127,11 +139,11 @@ export function experimentNumber(id: string): string {
 export type ResponseKind = 'proposal' | 'plan' | 'evaluation_review' | 'acceptance';
 export const responseTargets: Record<ResponseKind, string> = { proposal: 'proposal.json', plan: 'plan.json', evaluation_review: 'evaluation/draft/samples.jsonl', acceptance: 'comparison/outputs.jsonl' };
 // The person's latest answer still applies only while the file they answered is unchanged.
-export function currentResponse(files: Snapshot['files'], kind: ResponseKind): JsonObject | null {
-  const target = files[responseTargets[kind]];
-  if (!target) return null;
+export function currentResponse(files: Snapshot['files'], kind: ResponseKind, paged: Record<string, PagedFile> = {}): JsonObject | null {
+  const sha = files[responseTargets[kind]]?.sha256 ?? paged[responseTargets[kind]]?.sha256;
+  if (!sha) return null;
   const answers = collection(files, /^responses\/[A-Za-z0-9_-]+\.json$/).map(([, value]) => value)
-    .filter(value => value.kind === kind && text(object(value.target).sha256) === target.sha256)
+    .filter(value => value.kind === kind && text(object(value.target).sha256) === sha)
     .sort((a, b) => text(a.created_at).localeCompare(text(b.created_at)));
   return answers.at(-1) ?? null;
 }
@@ -272,29 +284,41 @@ export function compatibleMeasurements(left: EvaluationRun | undefined, right: E
   return !!left && !!right && left.state === 'succeeded' && right.state === 'succeeded' && !!left.evaluationHash && left.evaluationHash === right.evaluationHash && left.version === right.version && left.inputFingerprint === right.inputFingerprint;
 }
 
-export function acceptanceInputs(files: Snapshot['files']): boolean {
-  return Array.isArray(files['comparison/inputs.jsonl']?.content);
+export function acceptanceInputs(files: Snapshot['files'], paged: Record<string, PagedFile> = {}): boolean {
+  return Array.isArray(files['comparison/inputs.jsonl']?.content) || !!paged['comparison/inputs.jsonl'];
 }
-export function comparisonSamples(files: Snapshot['files'], leftId: string, rightId: string, version: string): JsonObject[] {
-  const explicit = files['comparison/outputs.jsonl'];
-  if (acceptanceInputs(files)) {
-    // Acceptance inputs define the rows; outputs for a since-changed input are not shown.
-    const produced = new Map(array(explicit?.content).map(object).map(row => [text(row.sample_id), row]));
-    return array(files['comparison/inputs.jsonl'].content).map(object).map(row => {
-      const done = produced.get(text(row.sample_id));
-      return { ...row, outputs: done && JSON.stringify(done.input) === JSON.stringify(row.input) ? object(done.outputs) : {} };
-    });
-  }
-  if (explicit) return array(explicit.content).map(object);
+// Which file drives the rows of a same-input view and which one is matched to it by sample ID.
+export type ComparisonPlan = { mode: 'inputs' | 'explicit' | 'join'; rows: string; partner: string | null; leftId: string; rightId: string } | null;
+export function comparisonPlan(files: Snapshot['files'], leftId: string, rightId: string, version: string, paged: Record<string, PagedFile> = {}): ComparisonPlan {
+  const present = (path: string) => !!files[path] || !!paged[path];
+  if (acceptanceInputs(files, paged)) return { mode: 'inputs', rows: 'comparison/inputs.jsonl', partner: present('comparison/outputs.jsonl') ? 'comparison/outputs.jsonl' : null, leftId, rightId };
+  if (present('comparison/outputs.jsonl')) return { mode: 'explicit', rows: 'comparison/outputs.jsonl', partner: null, leftId, rightId };
   const results = evaluationRuns(files);
   const left = preferredEvaluation(results.filter(run => run.experimentId === leftId), version);
   const right = preferredEvaluation(results.filter(run => run.experimentId === rightId), version);
-  if (!compatibleMeasurements(left, right)) return [];
-  const leftRows = array(files[left!.path.replace('/config.json', '/outputs.jsonl')]?.content).map(object);
-  const rightRows = new Map(array(files[right!.path.replace('/config.json', '/outputs.jsonl')]?.content).map(object).map(row => [text(row.sample_id), row]));
-  return leftRows.flatMap(row => {
-    const other = rightRows.get(text(row.sample_id));
+  if (!compatibleMeasurements(left, right)) return null;
+  return { mode: 'join', rows: left!.path.replace('/config.json', '/outputs.jsonl'), partner: right!.path.replace('/config.json', '/outputs.jsonl'), leftId, rightId };
+}
+export function combineComparison(plan: ComparisonPlan, rows: JsonObject[], partner: Map<string, JsonObject>): JsonObject[] {
+  if (!plan) return [];
+  if (plan.mode === 'explicit') return rows;
+  if (plan.mode === 'inputs') {
+    // Acceptance inputs define the rows; outputs for a since-changed input are not shown.
+    return rows.map(row => {
+      const done = partner.get(text(row.sample_id));
+      return { ...row, outputs: done && JSON.stringify(done.input) === JSON.stringify(row.input) ? object(done.outputs) : {} };
+    });
+  }
+  return rows.flatMap(row => {
+    const other = partner.get(text(row.sample_id));
     if (!other || JSON.stringify(row.input) !== JSON.stringify(other.input)) return [];
-    return [{ sample_id: row.sample_id, input: row.input, outputs: { [leftId]: row.output, [rightId]: other.output } }];
+    return [{ sample_id: row.sample_id, input: row.input, outputs: { [plan.leftId]: row.output, [plan.rightId]: other.output } }];
   });
+}
+export function comparisonSamples(files: Snapshot['files'], leftId: string, rightId: string, version: string): JsonObject[] {
+  const plan = comparisonPlan(files, leftId, rightId, version);
+  if (!plan) return [];
+  const rows = array(files[plan.rows]?.content).map(object);
+  const partner = new Map(array(plan.partner ? files[plan.partner]?.content : []).map(object).map(row => [text(row.sample_id), row]));
+  return combineComparison(plan, rows, partner);
 }

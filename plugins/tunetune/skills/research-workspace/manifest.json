@@ -2,12 +2,12 @@
   "version": "0.8.2",
   "files": [
     {
-      "path": "assets/panel/assets/index-B91UmRNB.js",
-      "sha256": "9377615751f92e3a032edacec0b43258c3e775cc2e9ebf8f32daddf20b3b5ef4"
+      "path": "assets/panel/assets/index-CEw3R1KC.js",
+      "sha256": "120f421ac4e1822d26e53a8cebe85ed4f5e64a0bf2dcdec699d2dff95c490c83"
     },
     {
-      "path": "assets/panel/assets/index-Bhs_7zLt.css",
-      "sha256": "18da902f2be7d65c9f4e1eb9b2c3495af67fad4a59b38adaa27bdc95adab9ff6"
+      "path": "assets/panel/assets/index-vxFtJW3W.css",
+      "sha256": "c3a9acc7a41d15223066eda92a3411c815de7dd916673f8d45ae8b29ac6491ff"
     },
     {
       "path": "assets/panel/favicon.svg",
@@ -15,7 +15,7 @@
     },
     {
       "path": "assets/panel/index.html",
-      "sha256": "9c80941c82641ff562bbfd6d1fd5d0726474c5e5bbe2fe375fd0cf5d7b6ed994"
+      "sha256": "1d3d8cfa25e342c1c6f0b068e3aa9c98f031b33a9740f232e0d149b0f138075e"
     },
     {
       "path": "assets/templates/AGENTS.md",
@@ -39,7 +39,7 @@
     },
     {
       "path": "scripts/records.py",
-      "sha256": "5e00b781cef82ea7a31920b7f9fa4b4d0db24d3d1b2100296179020825cb04c7"
+      "sha256": "495db3bec2c629f42465ae3144a94e7c2724ee52110852fe10f05c2ffe52c4c9"
     },
     {
       "path": "scripts/resources.py",
@@ -47,7 +47,7 @@
     },
     {
       "path": "scripts/run.py",
-      "sha256": "9ddae2ece8521d73c7fd28ec24dc8cfba77a9775df0b463945f249a864d8fd7e"
+      "sha256": "f7f00686861f68d6768162721a02ecf97aed92ee47a5038bff2d4023860d72d3"
     },
     {
       "path": "scripts/scout.py",
@@ -55,7 +55,7 @@
     },
     {
       "path": "scripts/workspace.py",
-      "sha256": "3e157e5d372b9f7fabc4c6a6a6e3969733a24b41fc30b9a15f01bf0779568379"
+      "sha256": "79623f9fdd566fd284614275d2e21823c01cbdb06be0c7af9bc87a79ce9e8c58"
     }
   ]
 }

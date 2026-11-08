@@ -13,13 +13,13 @@ python3 "$RECORDS" view --project "$PROJECT" --open proposal --attention "propos
 python3 "$RECORDS" view --project "$PROJECT" --open review --focus e000-keyword --clear
 ```
 
-`hash` returns `{path,sha256}` for actual file bytes. `validate` returns `{valid,errors,warnings,unfinished}`. Validation checks core records, record shapes, references, frozen file sets and byte hashes, model containment, declared metrics and evaluation samples/outputs. Missing or nonfinal attempt statuses are unfinished; `completed` still awaits output verification. Missing installed-tool metadata is a warning; an incompatible schema range is an error. A delivery without a succeeded final-check measurement on the current evaluation, when it has final samples, is a warning, and so is each `audit` finding for a delivery.
+`hash` returns `{path,sha256}` for actual file bytes. `validate` returns `{valid,errors,warnings,unfinished}`. Validation checks core records, record shapes, references, frozen file sets and byte hashes, model containment, declared metrics and evaluation samples/outputs. Missing or nonfinal attempt statuses are unfinished; `completed` still awaits output verification. Missing installed-tool metadata is a warning; an incompatible schema range is an error. A delivery without a succeeded final-check measurement on the current evaluation, when it has final samples, is a warning, and so is each `audit` finding for a delivery. Validation also reads the records with the panel's own reader beside it: anything that would stop the panel from showing them is an error under `panel`. The panel reads JSONL records over 4 MB, such as per-sample outputs of a large evaluation, in pages; a file too large even for that (a JSONL record over 256 MB or 500,000 rows, or another record over 4 MB) is left out and listed, and validation warns about it. The panel ignores files outside the record layout, so notes beside records do not break it, but neither are they shown.
 
 `audit` is read-only and returns `{findings:[{experiment,check,values,count}],final_checks:{version:{attempts,succeeded,experiments}}}`. It searches each experiment's snapshot and the readable text of its model directory, skipping files over 1 MB and non-UTF-8 files such as weights. `final_label` lists reference labels found only in final samples; `unconfirmed_vocabulary` lists reference labels the proposal never names; `final_content` lists verbatim spans of final inputs or long references; `reads_evaluation` lists files that mention evaluation paths or variables. Findings are leads: explain or fix each one before relying on the experiment, and say so in its analysis. Matching is literal, so paraphrased leakage passes unseen.
 
 Exit 0 means no validation errors, not scientific validity or finished research. Errors exit 1; argument errors exit 2. Results are JSON on stdout; operational errors are JSON on stderr. Validation is read-only and can observe partial multi-file publication. It does not prove process liveness, dependency completeness, suitability of resources or user authorization. Explicit external resource locations are descriptive and never fetched.
 
-`view` publishes panel focus: windows to open, an experiment to centre and attention notes `view:message` shown on the matching tile. Notes for a view replace earlier notes for that view; `--clear` drops all earlier notes. Clear a note once its decision is made. `next-id` returns `{id}` with the next `eNNN` number after existing experiment directories and plan items, plus the optional lowercase slug. It reserves nothing by itself; write the ID into the plan or an experiment config.
+`view` publishes panel focus: windows to open, an experiment to centre and attention notes `view:message` shown on the matching tile. Notes for a view replace earlier notes for that view; `--clear` drops all earlier notes. Clear a note once its decision is made, including when the person answered in conversation, or the panel keeps showing it as waiting. `next-id` returns `{id}` with the next `eNNN` number after existing experiment directories and plan items, plus the optional lowercase slug. It reserves nothing by itself; write the ID into the plan or an experiment config.
 
 ## Publish records
 
@@ -90,7 +90,15 @@ python3 "$RECORDS" finalize --project "$PROJECT" --path experiments/e1
 python3 "$RECORDS" finalize --project "$PROJECT" --path experiments/e1/evals/r1
 ```
 
-Only a `completed` attempt can be finalized. For an experiment it creates or verifies the model manifest (or hashes `--target`, a file inside `model/`; `--kind api` for API descriptors) and publishes `target`. For an evaluation run it copies inputs and references from the frozen samples, requires every sample and declared metric, publishes `outputs.jsonl` and marks success. Checks run before publication; on refusal inspect, fix the cause in a new attempt or mark the status `failed` explicitly. Manual finalization remains available and must preserve all process facts. Repeated evaluations use new nested IDs without retraining. Never reset status or delete a reserved log to rerun an ID.
+Only a `completed` attempt can be finalized. A final-check result may contain only `outputs.jsonl`, `metrics.json` and `usage.json`, so the scorer must remove its own per-sample scratch before exiting; finalize refuses anything else rather than leave final per-sample results to tune against. For an experiment it creates or verifies the model manifest (or hashes `--target`, a file inside `model/`; `--kind api` for API descriptors) and publishes `target`. For an evaluation run it copies inputs and references from the frozen samples, requires every sample and declared metric, publishes `outputs.jsonl` and marks success. Checks run before publication; on refusal inspect, fix the cause in a new attempt or mark the status `failed` explicitly. Manual finalization remains available and must preserve all process facts. Repeated evaluations use new nested IDs without retraining. Never reset status or delete a reserved log to rerun an ID.
+
+### Rehearsing an evaluation before freezing
+
+```sh
+python3 "$RUN" --project "$PROJECT" --rehearse e000-keyword --source evaluation/draft --timeout 600
+```
+
+Scores one verified model, normally the baseline, with a prepared evaluation that is not frozen yet: `evaluation/draft` or a directory under `.workspace/tmp/` holding `definition.json`, `samples.jsonl` and the scoring code. Write the source as it will be frozen: arguments of its `command` under `evaluation/<version>/` are read from the source instead. Only development samples run, with the same `TUNETUNE_*` locations an evaluation run receives, from the project root and without the writer lock. It prints `{rehearsal,experiment,returncode,timed_out,elapsed_seconds,samples,metrics?,missing_metrics,missing_outputs,unexpected_outputs?,log_tail?}` and keeps outputs in the printed `.workspace/tmp/` directory for inspection. A rehearsal checks the scoring path, coverage and saturation before freezing; it is never a measurement, so report no score from it, and change samples or scoring freely before freezing. Exit 1 when the command fails or misses outputs or declared metrics.
 
 ### Trying one input
 
@@ -122,7 +130,7 @@ The supervisor reserves its process-group identity until cleanup. Completion, ti
 - `next_id(tree,slug=None) -> {id}`; `set_view(tree,open_views,focus,attention,clear)`; `publish_response(...)` is for the panel only.
 - Sibling `run.py`: `execute(tree,attempt_path) -> status`, `compare(tree,experiments,timeout,local_only=False)` and `try_model(tree,experiment,value,timeout)`.
 
-Writing, freezing, manifest generation and execution acquire the lock themselves; do not call them while holding `tree.locked()`. Rejected operations raise errors. Neither tool imports or controls the panel.
+Writing, freezing, manifest generation and execution acquire the lock themselves; do not call them while holding `tree.locked()`. Rejected operations raise errors. Neither tool controls the panel; validation only reads records with its reader.
 
 
 ## API references and measured usage

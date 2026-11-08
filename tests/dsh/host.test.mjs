@@ -9,6 +9,7 @@ import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { apply, createRouter, inject } from '../../dsh/host.js';
 import { embeddedPolicy, forward, PanelServices } from '../../dsh/panels.js';
+import { Conversations, answerText } from '../../dsh/conversation.js';
 import { createSkillProvider, shadowingSkills, SKILLS } from '../../dsh/skills.js';
 import { findPython, inspectStudy, studyId } from '../../dsh/studies.js';
 
@@ -103,6 +104,7 @@ describe('studies and routes', () => {
   let server;
   let port;
   let rejection;
+  let agents;
   const sessions = new Map();
 
   before(async () => {
@@ -116,7 +118,7 @@ describe('studies and routes', () => {
     const ctx = {
       connection: { requestRejection: () => rejection },
       sessions: { get: (id) => sessions.get(id), list: () => [...sessions.values()] },
-      get: () => undefined,
+      get: (name) => (name === 'agents' ? agents : undefined),
     };
     panels = new PanelServices({ findPython: () => findPython(), idleMs: 60_000 });
     server = await listen(createRouter(ctx, { panels, shadowed: () => [] }));
@@ -180,6 +182,46 @@ describe('studies and routes', () => {
     const saved = await call(port, 'POST', `/tunetune/p/${id}/api/project/name`, { headers: { ...json, origin: `http://127.0.0.1:${port}` }, body });
     assert.equal(saved.status, 200, saved.text);
     assert.equal(JSON.parse(readFileSync(join(study, 'project.json'), 'utf8')).name, '新名字');
+  });
+
+  test('panel answers and sync failures reach the study’s conversation', async () => {
+    const id = studyId(study);
+    const steered = [];
+    const injected = [];
+    const state = async (headers = {}) => JSON.parse((await call(port, 'GET', `/tunetune/p/${id}/api/state`, { headers })).text);
+    // A browser cannot claim delivery for itself; without a live agent there is none.
+    assert.equal((await state({ 'x-tunetune-conversation': '1' })).conversation, false);
+    agents = { get: (session) => (session === 's-study' ? { steer: (m) => steered.push(m), inject: (m) => injected.push(m) } : undefined) };
+    try {
+      const shown = await state();
+      assert.equal(shown.conversation, true);
+      const body = JSON.stringify({ kind: 'proposal', decision: 'approve', target_sha256: shown.files['proposal.json'].sha256 });
+      const answer = await call(port, 'POST', `/tunetune/p/${id}/api/responses`, {
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), origin: `http://127.0.0.1:${port}` }, body,
+      });
+      assert.equal(answer.status, 200, answer.text);
+      const record = JSON.parse(answer.text);
+      assert.equal(steered.length, 1);
+      assert.equal(steered[0].role, 'user');
+      assert.ok(Object.isFrozen(steered[0]));
+      assert.match(steered[0].content[0].text, new RegExp(`responses/${record.id}\\.json`));
+      assert.equal(steered[0].source.kind, 'tunetune-panel');
+
+      const proposal = readFileSync(join(study, 'proposal.json'), 'utf8');
+      writeFileSync(join(study, 'proposal.json'), '{');
+      try {
+        assert.ok((await state()).error);
+        await state();
+        assert.equal(injected.length, 1);
+        assert.match(injected[0].content[0].text, /proposal\.json/);
+      } finally {
+        writeFileSync(join(study, 'proposal.json'), proposal);
+      }
+      assert.equal((await state()).error, null);
+      rmSync(join(study, 'responses'), { recursive: true, force: true });
+    } finally {
+      agents = undefined;
+    }
   });
 
   test('requests the harness refuses are refused here too', async () => {
@@ -261,6 +303,32 @@ describe('studies and routes', () => {
     } finally {
       sessions.set('s-study', { id: 's-study', header: { cwd: study } });
     }
+  });
+});
+
+describe('conversations', () => {
+  test('answers steer the viewing or newest live agent; sync failures are injected once', () => {
+    const calls = [];
+    const agent = (name) => ({ steer: (m) => calls.push([name, 'steer', m]), inject: (m) => calls.push([name, 'inject', m]) });
+    const live = new Map([['old', agent('old')], ['new', agent('new')]]);
+    const conversations = new Conversations({ agents: () => live, sessionsOf: () => ['gone', 'new', 'old'] });
+    const record = { id: 'r1', kind: 'plan', decision: 'continue', target: { path: 'plan.json', sha256: 'a'.repeat(64) } };
+    assert.equal(conversations.answered('s', JSON.stringify(record)), true);
+    conversations.viewed('s', 'old');
+    conversations.viewed('s', 'elsewhere');
+    assert.equal(conversations.answered('s', JSON.stringify(record)), true);
+    assert.deepEqual(calls.map(([name, kind]) => [name, kind]), [['new', 'steer'], ['old', 'steer']]);
+    assert.equal(calls[0][2].content[0].text, answerText(record));
+    assert.equal(conversations.answered('s', '{"id":"r2"}'), false);
+    assert.equal(conversations.answered('s', 'not json'), false);
+    calls.length = 0;
+    assert.equal(conversations.synced('s', JSON.stringify('Sync failed: x')), true);
+    assert.equal(conversations.synced('s', JSON.stringify('Sync failed: x')), false);
+    assert.equal(conversations.synced('s', undefined), false);
+    assert.equal(conversations.synced('s', JSON.stringify('Sync failed: x')), true);
+    assert.deepEqual(calls.map(([name, kind]) => [name, kind]), [['old', 'inject'], ['old', 'inject']]);
+    const none = new Conversations({ agents: () => undefined, sessionsOf: () => ['old'] });
+    assert.equal(none.answered('s', JSON.stringify(record)), false);
   });
 });
 

@@ -18,10 +18,12 @@ function readableTime(value: unknown): string {
   return Number.isFinite(time) ? new Date(time).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 }
 
-// A decision the Agent asked for in conversation can be answered here; the answer is bound to the exact file shown.
-export function ResponseBar({ files, kind, waiting, prompt, approve, decisions, onSubmit }: {
+// A decision the Agent asked for in conversation. Where the application delivers panel answers to the
+// conversation, it can be answered here, bound to the exact file shown; elsewhere the answer belongs in the
+// conversation, so the panel only says what is waiting.
+export function ResponseBar({ files, kind, waiting, prompt, approve, decisions, onSubmit, delivered }: {
   files: Snapshot['files']; kind: ResponseKind; waiting: string | null; prompt: string; approve: string;
-  decisions: { approve: string; revise: string }; onSubmit: (decision: string, note: string, sha: string) => Promise<unknown>;
+  decisions: { approve: string; revise: string }; onSubmit: (decision: string, note: string, sha: string) => Promise<unknown>; delivered: boolean;
 }) {
   const [revising, setRevising] = useState(false);
   const [note, setNote] = useState('');
@@ -31,9 +33,10 @@ export function ResponseBar({ files, kind, waiting, prompt, approve, decisions, 
   const target = files[responseTargets[kind]];
   if (answer) {
     const approved = answer.decision === decisions.approve;
-    return <div className={`response-bar ${approved ? 'done' : 'noted'}`} role="status"><CheckCircle2 size={16} aria-hidden="true" /><div><strong>{approved ? t('你已确认') : t('你已请求修改')}</strong><span className="muted"> · {readableTime(answer.created_at)}</span>{text(answer.note) && <p>{text(answer.note)}</p>}<p className="muted">{t('回到对话告诉 Agent 一声，它会按你的回复继续。')}</p></div></div>;
+    return <div className={`response-bar ${approved ? 'done' : 'noted'}`} role="status"><CheckCircle2 size={16} aria-hidden="true" /><div><strong>{approved ? t('你已确认') : t('你已请求修改')}</strong><span className="muted"> · {readableTime(answer.created_at)}</span>{text(answer.note) && <p>{text(answer.note)}</p>}<p className="muted">{delivered ? t('已转给对话中的 Agent，它会按你的回复继续。') : t('回到对话告诉 Agent 一声，它会按你的回复继续。')}</p></div></div>;
   }
   if (!waiting || !target) return null;
+  if (!delivered) return <div className="response-bar waiting" role="status"><CircleAlert size={16} aria-hidden="true" /><div className="response-main"><strong>{waiting}</strong><p>{t('Agent 在对话里等你的回复，直接在那里回答即可。')}</p></div></div>;
   async function send(decision: string) {
     setBusy(true); setError('');
     try { await onSubmit(decision, note.trim(), target!.sha256); }

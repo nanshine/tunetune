@@ -71,11 +71,17 @@ describe('workspace shell', () => {
 
 describe('research views', () => {
   it('shows the proposal as structured decisions with a confirmation bar when the Agent asks', () => {
-    const html = render(ProposalView, { files, waiting: '请确认研究提案', onRespond: vi.fn() });
+    const html = render(ProposalView, { files, waiting: '请确认研究提案', onRespond: vi.fn(), delivered: true });
     for (const value of ['请确认研究提案', '确认，开始研究', '需要修改', '目标', '你的例子', '可拼搭的软件', '产品与商业', '采用', '不采用', '16 GB 内存不够', '两轮无提升就停', 'bge 模型卡', 'huggingface.co']) expect(html).toContain(value);
-    expect(render(ProposalView, { files, onRespond: vi.fn() })).not.toContain('确认，开始研究');
+    expect(render(ProposalView, { files, onRespond: vi.fn(), delivered: true })).not.toContain('确认，开始研究');
+    // Where panel answers do not reach the conversation, the decision is asked there and only shown as waiting here.
+    const undelivered = render(ProposalView, { files, waiting: '请确认研究提案', onRespond: vi.fn() });
+    expect(undelivered).toContain('请确认研究提案');
+    expect(undelivered).toContain('Agent 在对话里等你的回复');
+    expect(undelivered).not.toContain('确认，开始研究');
     const answered = { ...files, 'responses/r1.json': file({ kind: 'proposal', target: { path: 'proposal.json', sha256: 'b'.repeat(64) }, created_at: '2026-11-03T01:00:00Z', decision: 'approve' }) };
     expect(render(ProposalView, { files: answered, waiting: '请确认', onRespond: vi.fn() })).toContain('你已确认');
+    expect(render(ProposalView, { files: answered, waiting: '请确认', onRespond: vi.fn(), delivered: true })).toContain('已转给对话中的 Agent');
     expect(render(ProposalView, { files: {} })).toContain('还没有研究提案');
   });
   it('lists the round with numbers, states, comparators and expectations', () => {
@@ -147,7 +153,17 @@ describe('research views', () => {
     for (const value of ['E001', '向量加逻辑回归', '交付', '标签 F1', '0.81', '保留']) expect(node).toContain(value);
     const details = render(ExperimentDetails, { experiment: items[1], experimentsById: new Map(items.map(item => [item.id, item])), results, files, currentVersion: 'v1', delivered: true, onOpenAcceptance: vi.fn() });
     for (const value of ['比关键词更稳。', '+0.19 对比 E000', '做了什么', '评测', '怎么用', '交付模型']) expect(details).toContain(value);
-    expect(render(SamplesView, { rows: [], outputs: true })).toContain('没有逐例输出');
+    expect(render(SamplesView, { source: { kind: 'inline', rows: [], sha256: '' }, outputs: true })).toContain('没有逐例输出');
+    // Long tables show one page at a time; paged files load their page on request.
+    const many = Array.from({ length: 230 }, (_, i) => ({ sample_id: `s${i}`, input: `第 ${i} 条`, output: 'x' }));
+    const first = render(SamplesView, { source: { kind: 'inline', rows: many, sha256: '' }, outputs: true });
+    expect(first).toContain('第 1 / 3 页');
+    expect(first).toContain('1 / 230');
+    expect(first).not.toContain('s100');
+    expect(render(SamplesView, { source: { kind: 'paged', path: 'experiments/e/evals/r/outputs.jsonl', file: { sha256: 'c'.repeat(64), size: 9, rows: 4677 } }, outputs: true })).toContain('正在读取第 1 页');
+    const review = render(ReviewView, { files, source: { kind: 'inline', rows: many.map(row => ({ ...row, reference: '甲', reference_status: 'draft' })), sha256: 'd'.repeat(64) } });
+    expect(review).toContain('已看 0 / 230');
+    expect(review).toContain('第 1 / 3 页');
   });
   it('keeps the final check apart from development scores and shows how often it ran', () => {
     const split = { ...files,

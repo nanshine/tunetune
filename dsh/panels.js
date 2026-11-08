@@ -127,12 +127,17 @@ export function embeddedPolicy(value) {
   return value.replace(/frame-ancestors\s+'none'/, "frame-ancestors 'self'");
 }
 
+const OBSERVED_BODY_LIMIT = 256 * 1024;
+
 // Forward one request to the panel service on 127.0.0.1:port, rewriting only Host and Origin,
-// which workspace.py checks against its own loopback address.
-export function forward(req, res, port, path) {
+// which workspace.py checks against its own loopback address. `extra` headers come from the
+// plugin itself, never the browser. `observe` sees the answer's status and headers, and with
+// `capture` also its body when small, after the browser has it.
+export function forward(req, res, port, path, { extra = {}, observe, capture = false } = {}) {
   return new Promise((resolve) => {
     const headers = { host: `127.0.0.1:${port}` };
     for (const name of FORWARD_REQUEST) if (req.headers[name] !== undefined) headers[name] = req.headers[name];
+    Object.assign(headers, extra);
     if (req.method === 'POST') headers.origin = `http://127.0.0.1:${port}`;
     const upstream = request({ host: '127.0.0.1', port, method: req.method, path, headers }, (answer) => {
       const out = {};
@@ -140,8 +145,22 @@ export function forward(req, res, port, path) {
       const policy = embeddedPolicy(answer.headers['content-security-policy']);
       if (policy) out['content-security-policy'] = policy;
       res.writeHead(answer.statusCode ?? 502, out);
+      const chunks = [];
+      let size = 0;
+      if (capture) {
+        answer.on('data', (chunk) => {
+          size += chunk.length;
+          if (size <= OBSERVED_BODY_LIMIT) chunks.push(chunk);
+        });
+      }
       answer.pipe(res);
-      answer.on('end', resolve);
+      answer.on('end', () => {
+        if (observe) {
+          const body = capture && size <= OBSERVED_BODY_LIMIT ? Buffer.concat(chunks).toString('utf8') : undefined;
+          try { observe({ status: answer.statusCode, headers: answer.headers, body }); } catch { /* observing never breaks the panel */ }
+        }
+        resolve();
+      });
       answer.on('error', resolve);
     });
     upstream.on('error', () => {

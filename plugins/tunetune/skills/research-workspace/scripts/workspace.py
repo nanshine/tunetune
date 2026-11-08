@@ -10,6 +10,7 @@ if sys.platform == "win32":
              "in the Linux home directory, not under /mnt; INSTALL.md describes the setup.")
 
 import argparse
+from array import array
 import webbrowser
 import copy
 import fcntl
@@ -40,6 +41,13 @@ MAX_TOTAL_BYTES = 32 * 1024 * 1024
 MAX_FILES = 2000
 MAX_ENTRIES = 10000
 MAX_BODY_BYTES = 128 * 1024
+# A JSONL record too large to send whole, such as per-sample outputs of a large evaluation, is indexed once
+# per version and read in pages; beyond these bounds it is left out and listed instead.
+MAX_PAGED_BYTES = 256 * 1024 * 1024
+MAX_PAGED_ROWS = 500_000
+MAX_PAGE_ROWS = 200
+CONVERSATION_HEADER = "X-TuneTune-Conversation"
+SYNC_ERROR_HEADER = "X-TuneTune-Sync-Error"
 HASH = re.compile(r"[0-9a-f]{64}\Z")
 # A closed allowlist: wildcard matches exactly one safe path component.
 PATTERNS = (
@@ -156,6 +164,17 @@ class SafeTree:
                 yield
             finally:
                 os.close(fd)
+
+    def info(self, path):
+        segments = parts(path)
+        with self.directory(segments[:-1]) as parent:
+            info = os.stat(segments[-1], dir_fd=parent, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"Not a regular file: {path}")
+        return info
+
+    def size(self, path):
+        return self.info(path).st_size
 
     def read(self, path, limit=MAX_FILE_BYTES):
         segments = parts(path)
@@ -554,29 +573,221 @@ def try_model(reader, body):
         return {"error": (result.stderr or "Run failed")[-1500:]}
 
 
-def media_reference(snapshot, path):
+def attachments(value, found, depth=0):
+    """Collect explicit display attachment paths, the only media a record can expose."""
+    if depth > 8:
+        return found
+    if isinstance(value, dict):
+        if value.get("type") in ("image", "audio", "video", "file") and isinstance(value.get("path"), str):
+            found.add(value["path"])
+        for child in value.values():
+            attachments(child, found, depth + 1)
+    elif isinstance(value, list):
+        for child in value:
+            attachments(child, found, depth + 1)
+    return found
+
+
+def row_attachments(row, found):
+    for key in ("input", "reference", "output", "outputs"):
+        if key in row:
+            attachments(row[key], found)
+    return found
+
+
+def media_reference(snapshot, path, paged_media=frozenset()):
     """Only explicit references in current display records expose project media."""
     if snapshot.get("error"):
         return False
-    def contains(value, depth=0):
-        if depth > 8:
-            return False
-        if isinstance(value, dict):
-            if value.get("type") in ("image", "audio", "video", "file") and value.get("path") == path:
-                return True
-            return any(contains(child, depth + 1) for child in value.values())
-        return isinstance(value, list) and any(contains(child, depth + 1) for child in value)
-    visible = []
+    if path in paged_media:
+        return True
+    found = set()
     for name, item in snapshot["files"].items():
         content = item["content"]
         if name == "proposal.json":
             for example in content.get("examples", []):
                 if isinstance(example, dict):
-                    visible.extend(example[key] for key in ("input", "expected_output") if key in example)
+                    for key in ("input", "expected_output"):
+                        if key in example:
+                            attachments(example[key], found)
         elif name.startswith("comparison/") or name.endswith("/samples.jsonl") or name.endswith("/outputs.jsonl"):
             for row in content:
-                visible.extend(row[key] for key in ("input", "reference", "output", "outputs") if key in row)
-    return any(contains(value) for value in visible)
+                row_attachments(row, found)
+    return path in found
+
+
+def display_paths(tree):
+    """Recognized display files; anything else, such as notes beside the records, is not shown."""
+    trie = {}
+    for pattern in PATTERNS:
+        node = trie
+        for segment in pattern.split("/"):
+            node = node.setdefault(segment, {})
+    count = 0
+    found = []
+
+    def walk(fd, node, prefix):
+        nonlocal count
+        with os.scandir(fd) as entries:
+            for entry in entries:
+                count += 1
+                if count > MAX_ENTRIES:
+                    raise ValueError("Directory entry limit exceeded")
+                name = entry.name
+                key = name if name in node else (
+                    "*" if "*" in node else
+                    "*.json" if "*.json" in node and name.endswith(".json") else None
+                )
+                if key is None or name.startswith("."):
+                    continue
+                path = "/".join(prefix + [name])
+                if entry.is_symlink():
+                    raise ValueError(f"Symlink is not allowed: {path}")
+                if node[key]:
+                    # Plain files beside record directories, such as split notes, are simply not shown.
+                    if not entry.is_dir(follow_symlinks=False):
+                        continue
+                    child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                    dir_fd=fd)
+                    try:
+                        walk(child, node[key], prefix + [name])
+                    finally:
+                        os.close(child)
+                else:
+                    if entry.is_dir(follow_symlinks=False):
+                        continue
+                    if not recognized(path):
+                        raise ValueError("Unsafe recognized filename")
+                    found.append(path)
+                    if len(found) > MAX_FILES:
+                        raise ValueError("Recognized file count limit exceeded")
+    with tree.directory() as root:
+        walk(root, trie, [])
+    return sorted(found)
+
+
+def strict_rows(raw, path):
+    """Validated JSONL rows as the panel accepts them."""
+    try:
+        rows = [strict_json(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
+        if any(not isinstance(item, dict) for item in rows):
+            raise ValueError("JSONL rows must be objects")
+    except (ValueError, RecursionError) as exc:
+        raise ValueError(f"{path}: {exc}") from exc
+    return rows
+
+
+class PagedFile:
+    """One version of a large JSONL record: its hash, row offsets, sample IDs and display attachments."""
+
+    def __init__(self, tree, path, info):
+        self.path = path
+        self.key = (info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        raw = tree.read(path, limit=MAX_PAGED_BYTES)
+        self.sha256 = hashlib.sha256(raw).hexdigest()
+        self.size = len(raw)
+        self.offsets = array("Q")
+        self.ids = {}
+        self.media = set()
+        splits, statuses = {}, {}
+        samples = re.fullmatch(r"evaluation/[^/]+/samples\.jsonl", path) is not None
+        position = 0
+        for line in raw.split(b"\n"):
+            start, position = position, position + len(line) + 1
+            if not line.strip():
+                continue
+            try:
+                row = strict_json(line.decode("utf-8"))
+            except (ValueError, RecursionError) as exc:
+                raise ValueError(f"{path}: {exc}") from exc
+            if not isinstance(row, dict):
+                raise ValueError(f"{path}: JSONL rows must be objects")
+            if len(self.offsets) >= MAX_PAGED_ROWS:
+                raise ValueError(f"{path}: more than {MAX_PAGED_ROWS} rows")
+            if isinstance(row.get("sample_id"), str):
+                self.ids.setdefault(row["sample_id"], len(self.offsets))
+            self.offsets.append(start)
+            row_attachments(row, self.media)
+            if samples:
+                split = row.get("split", "development") if isinstance(row.get("split", "development"), str) else "development"
+                splits[split] = splits.get(split, 0) + 1
+                if isinstance(row.get("reference_status"), str):
+                    statuses[row["reference_status"]] = statuses.get(row["reference_status"], 0) + 1
+        self.offsets.append(position)
+        self.summary = {"sha256": self.sha256, "size": self.size, "rows": len(self.offsets) - 1}
+        if samples:
+            self.summary.update(splits=splits, reference_status=statuses)
+
+    def rows(self, tree, indexes):
+        raw = tree.read(self.path, limit=MAX_PAGED_BYTES)
+        if hashlib.sha256(raw).hexdigest() != self.sha256:
+            raise ValueError("File changed; refresh")
+        return [strict_json(raw[self.offsets[i]:self.offsets[i + 1]].decode("utf-8")) for i in indexes]
+
+
+def load_display(tree, index=None):
+    """The panel's reading of the records as (files, paged, omitted); `records.py validate` reports the same.
+
+    Small records are sent whole. A JSONL record too large for that is paged: described by its hash, size
+    and row count and read in pages on request, with `index` caching each version's row offsets. Only what
+    exceeds even paging is left out and listed, so the proposal or a status never goes missing.
+    """
+    files = {}
+    paged = {}
+    omitted = []
+    total = 0
+    index = {} if index is None else index
+    for path in sorted(display_paths(tree), key=lambda name: (name.endswith(".jsonl"), name)):
+        info = tree.info(path)
+        size = info.st_size
+        if size > MAX_FILE_BYTES or total + size > MAX_TOTAL_BYTES:
+            if path.endswith(".jsonl") and size <= MAX_PAGED_BYTES:
+                key = (info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+                entry = index.get(path)
+                if entry is None or entry.key != key:
+                    entry = PagedFile(tree, path, info)
+                    index[path] = entry
+                paged[path] = entry
+            else:
+                omitted.append({"path": path, "size": size})
+            continue
+        raw = tree.read(path, limit=MAX_FILE_BYTES)
+        total += len(raw)
+        if total > MAX_TOTAL_BYTES:
+            raise ValueError("Snapshot byte limit exceeded")
+        try:
+            if path.endswith(".json"):
+                content = strict_json(raw.decode("utf-8"))
+                if not isinstance(content, dict):
+                    raise ValueError("JSON must be an object")
+                field = {"proposal.json": "examples", "resources.json": "items", "project.json": "deliveries"}.get(path)
+                if field in content and not isinstance(content[field], list):
+                    raise ValueError(f"{field} must be an array")
+                if path == "resources.json":
+                    for item in content.get("items", []):
+                        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                            raise ValueError("Resource requires an ID")
+                        if any(key in item and not isinstance(item[key], str) for key in ("title", "type", "status", "path", "location", "version", "size")):
+                            raise ValueError("Invalid resource field")
+                        if "monitor" in item and not isinstance(item["monitor"], dict):
+                            raise ValueError("Invalid resource monitor")
+                if path.endswith("/status.json") and content.get("state") not in ("pending", "running", "completed", "succeeded", "failed", "cancelled"):
+                    raise ValueError("Invalid execution state")
+            elif path.endswith(".jsonl"):
+                content = [strict_json(line) for line in raw.decode("utf-8").splitlines()
+                           if line.strip()]
+                if any(not isinstance(item, dict) for item in content):
+                    raise ValueError("JSONL rows must be objects")
+            else:
+                content = raw.decode("utf-8")
+        except (ValueError, RecursionError) as exc:
+            raise ValueError(f"{path}: {exc}") from exc
+        files[path] = {"content": content, "sha256": hashlib.sha256(raw).hexdigest()}
+    if "project.json" not in files:
+        raise ValueError("Missing required project.json")
+    for path in [name for name in index if name not in paged]:
+        del index[path]
+    return files, paged, omitted
 
 
 class Reader:
@@ -584,6 +795,9 @@ class Reader:
         self.tree = SafeTree(root)
         self.lock = threading.RLock()
         self._files = {}
+        self._paged = {}
+        self._index = {}
+        self._omitted = []
         self._revision = hashlib.sha256(b"").hexdigest()
         self._synced_at = None
         self.monitor = monitor_module.ResourceMonitor(self.tree)
@@ -593,108 +807,50 @@ class Reader:
         self.running = threading.Lock()
         self.models = ModelPool(self)
 
-    def _paths(self):
-        trie = {}
-        for pattern in PATTERNS:
-            node = trie
-            for segment in pattern.split("/"):
-                node = node.setdefault(segment, {})
-        count = 0
-        found = []
-
-        def walk(fd, node, prefix):
-            nonlocal count
-            with os.scandir(fd) as entries:
-                for entry in entries:
-                    count += 1
-                    if count > MAX_ENTRIES:
-                        raise ValueError("Directory entry limit exceeded")
-                    name = entry.name
-                    key = name if name in node else (
-                        "*" if "*" in node else
-                        "*.json" if "*.json" in node and name.endswith(".json") else None
-                    )
-                    if key is None or name.startswith("."):
-                        continue
-                    path = "/".join(prefix + [name])
-                    if entry.is_symlink():
-                        raise ValueError(f"Symlink is not allowed: {path}")
-                    if node[key]:
-                        if not entry.is_dir(follow_symlinks=False):
-                            raise ValueError(f"Expected directory: {path}")
-                        child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                                        dir_fd=fd)
-                        try:
-                            walk(child, node[key], prefix + [name])
-                        finally:
-                            os.close(child)
-                    else:
-                        if not recognized(path):
-                            raise ValueError("Unsafe recognized filename")
-                        found.append(path)
-                        if len(found) > MAX_FILES:
-                            raise ValueError("Recognized file count limit exceeded")
-        with self.tree.directory() as root:
-            walk(root, trie, [])
-        return sorted(found)
-
-    def _load(self):
-        files = {}
-        total = 0
-        for path in self._paths():
-            raw = self.tree.read(path, limit=MAX_FILE_BYTES)
-            total += len(raw)
-            if total > MAX_TOTAL_BYTES:
-                raise ValueError("Snapshot byte limit exceeded")
-            try:
-                if path.endswith(".json"):
-                    content = strict_json(raw.decode("utf-8"))
-                    if not isinstance(content, dict):
-                        raise ValueError("JSON must be an object")
-                    field = {"proposal.json": "examples", "resources.json": "items", "project.json": "deliveries"}.get(path)
-                    if field in content and not isinstance(content[field], list):
-                        raise ValueError(f"{field} must be an array")
-                    if path == "resources.json":
-                        for item in content.get("items", []):
-                            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-                                raise ValueError("Resource requires an ID")
-                            if any(key in item and not isinstance(item[key], str) for key in ("title", "type", "status", "path", "location", "version", "size")):
-                                raise ValueError("Invalid resource field")
-                            if "monitor" in item and not isinstance(item["monitor"], dict):
-                                raise ValueError("Invalid resource monitor")
-                    if path.endswith("/status.json") and content.get("state") not in ("pending", "running", "completed", "succeeded", "failed", "cancelled"):
-                        raise ValueError("Invalid execution state")
-                elif path.endswith(".jsonl"):
-                    content = [strict_json(line) for line in raw.decode("utf-8").splitlines()
-                               if line.strip()]
-                    if any(not isinstance(item, dict) for item in content):
-                        raise ValueError("JSONL rows must be objects")
-                else:
-                    content = raw.decode("utf-8")
-            except (ValueError, RecursionError) as exc:
-                raise ValueError(f"{path}: {exc}") from exc
-            files[path] = {"content": content, "sha256": hashlib.sha256(raw).hexdigest()}
-        if "project.json" not in files:
-            raise ValueError("Missing required project.json")
-        return files
-
     def snapshot(self):
         with self.lock:
             error = None
             try:
-                files = self._load()
+                files, paged, omitted = load_display(self.tree, self._index)
                 revision = hashlib.sha256(json.dumps(
-                    [(path, item["sha256"]) for path, item in sorted(files.items())],
+                    [[(path, item["sha256"]) for path, item in sorted(files.items())],
+                     [(path, entry.sha256) for path, entry in sorted(paged.items())], omitted],
                     separators=(",", ":")
                 ).encode()).hexdigest()
-                self._files, self._revision, self._synced_at = files, revision, now()
+                self._files, self._paged, self._omitted, self._revision, self._synced_at = files, paged, omitted, revision, now()
             except (OSError, ValueError, RecursionError) as exc:
                 error = f"Sync failed: {exc}"
             inventory = self._files.get("resources.json", {}).get("content", {"items": []})
             observations = self.monitor.snapshot(inventory) if not error else copy.deepcopy(self.monitor.report)
-            return {"files": copy.deepcopy(self._files), "revision": self._revision,
+            return {"files": copy.deepcopy(self._files), "paged": {path: dict(entry.summary) for path, entry in self._paged.items()},
+                    "omitted": copy.deepcopy(self._omitted), "revision": self._revision,
                     "synced_at": self._synced_at or now(), "error": error, "observations": observations,
                     "view": self.view(), "acceptance": copy.deepcopy(self.job), "models": self.models.status()}
+
+    def page(self, path, sha256, offset=None, limit=None, ids=None):
+        """Rows of a paged record, only for the version the panel was shown."""
+        with self.lock:
+            entry = self._paged.get(path)
+        if entry is None:
+            raise RequestError(404, "Not a paged record")
+        if sha256 != entry.sha256:
+            raise RequestError(409, "File changed; refresh")
+        total = entry.summary["rows"]
+        if ids is not None:
+            indexes = sorted({entry.ids[item] for item in ids if item in entry.ids})
+            start = None
+        else:
+            start = offset
+            indexes = range(start, min(total, start + limit))
+        try:
+            rows = entry.rows(self.tree, indexes)
+        except ValueError as exc:
+            raise RequestError(409, str(exc)) from exc
+        return {"path": path, "sha256": entry.sha256, "total": total, **({"offset": start} if start is not None else {}), "rows": rows}
+
+    def paged_media(self):
+        with self.lock:
+            return frozenset().union(*(entry.media for entry in self._paged.values()))
 
     def view(self):
         """Display focus published by the Agent; invalid or missing state is simply ignored."""
@@ -812,9 +968,11 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
-    def reply(self, status, value, mime="application/json; charset=utf-8"):
+    def reply(self, status, value, mime="application/json; charset=utf-8", headers=()):
         data = json.dumps(value, ensure_ascii=True).encode() if isinstance(value, dict) else value
         self.send_response(status)
+        for name, header in headers:
+            self.send_header(name, header)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
@@ -834,7 +992,32 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Invalid request path")
             path = unquote(parsed.path, errors="strict")
             if path == "/api/state":
-                self.reply(200, self.server.reader.snapshot())
+                state = self.server.reader.snapshot()
+                # Set only by an application proxy that strips it from browser requests, such as the
+                # DeepSeek Harness plugin: there a panel answer reaches the conversation by itself.
+                state["conversation"] = self.headers.get_all(CONVERSATION_HEADER, []) == ["1"]
+                # The proxy can tell the Agent why the panel stopped updating; ASCII-escaped JSON text.
+                headers = [(SYNC_ERROR_HEADER, json.dumps(state["error"][:500]))] if state["error"] else []
+                self.reply(200, state, headers=headers)
+                return
+            if path == "/api/rows":
+                query = parse_qs(parsed.query, strict_parsing=True)
+                single = {key: values[0] for key, values in query.items() if key != "id" and len(values) == 1}
+                if not {"path", "sha256"} <= set(query) or set(query) - {"path", "sha256", "offset", "limit", "id"} \
+                        or len(single) != len(set(query) - {"id"}):
+                    raise RequestError(400, "Expected path, sha256 and offset with limit, or ids")
+                if "id" in query:
+                    if "offset" in query or "limit" in query or len(query["id"]) > MAX_PAGE_ROWS:
+                        raise RequestError(400, f"Ask for at most {MAX_PAGE_ROWS} ids, without offset")
+                    answer = self.server.reader.page(single["path"], single["sha256"], ids=query["id"])
+                else:
+                    if not re.fullmatch(r"[0-9]{1,9}", single.get("offset", "")) or not re.fullmatch(r"[0-9]{1,4}", single.get("limit", "")):
+                        raise RequestError(400, "Expected numeric offset and limit")
+                    limit = int(single["limit"])
+                    if not 0 < limit <= MAX_PAGE_ROWS:
+                        raise RequestError(400, f"limit must be 1–{MAX_PAGE_ROWS}")
+                    answer = self.server.reader.page(single["path"], single["sha256"], offset=int(single["offset"]), limit=limit)
+                self.reply(200, answer)
                 return
             if path == "/api/media":
                 query = parse_qs(parsed.query, strict_parsing=True)
@@ -848,7 +1031,7 @@ class Handler(BaseHTTPRequestHandler):
                            ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
                            ".glb": "application/octet-stream", ".gltf": "application/octet-stream", ".obj": "application/octet-stream",
                            ".stl": "application/octet-stream", ".ply": "application/octet-stream"}
-                if suffix not in allowed or not media_reference(self.server.reader.snapshot(), relative):
+                if suffix not in allowed or not media_reference(self.server.reader.snapshot(), relative, self.server.reader.paged_media()):
                     raise ValueError("Media is not shared in research records")
                 data = self.server.reader.tree.read(relative, limit=64 * 1024 * 1024)
                 self.reply(200, data, allowed[suffix])
@@ -861,6 +1044,8 @@ class Handler(BaseHTTPRequestHandler):
             data = self.server.assets.read(relative, limit=16 * 1024 * 1024)
             mime = mimetypes.guess_type(relative)[0] or "application/octet-stream"
             self.reply(200, data, mime)
+        except RequestError as exc:
+            self.reply(exc.status, {"error": str(exc)})
         except (OSError, ValueError):
             self.reply(404, {"error": "Asset not found"})
 

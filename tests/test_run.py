@@ -416,6 +416,59 @@ class RunTests(unittest.TestCase):
         self.assertFalse(self.tree.exists("experiments/e1/evals/again/run.log"))
         self.assertEqual(records.audit(self.tree)["final_checks"], {"v2": {"attempts": 2, "succeeded": 1, "experiments": ["e1"]}})
 
+    def test_final_result_with_other_files_is_refused(self):
+        evaluation_hash = self.split_evaluation()
+        config = self.evaluation()
+        self.raw("tools/score.py", b"import json,os; from pathlib import Path\n"
+                 b"out=Path(os.environ['TUNETUNE_OUTPUT']); rows=[json.loads(l) for l in open(os.environ['TUNETUNE_SAMPLES'])]\n"
+                 b"(out/'invoke-outputs.jsonl').write_text('per-image scratch')\n"
+                 b"(out/'outputs.jsonl').write_text(''.join(json.dumps({'sample_id':r['sample_id'],'output':['alpha']})+'\\n' for r in rows))\n"
+                 b"(out/'metrics.json').write_text(json.dumps({'count':len(rows)}))\n")
+        path = "experiments/e1/evals/final"
+        self.publish(path + "/config.json", dict(id="final", evaluation_version="v2", split="final", target_sha256=config["target_sha256"],
+                     evaluation_sha256=evaluation_hash, execution=dict(argv=[sys.executable, "-B", "tools/score.py"], cwd=".", environment={}, timeout_seconds=5)))
+        self.assertEqual(runner.execute(self.tree, path)["state"], "completed")
+        with self.assertRaisesRegex(ValueError, "invoke-outputs.jsonl"):
+            records.finalize(self.tree, path)
+        self.assertEqual(records.read_record(self.tree, path + "/status.json")["state"], "completed")
+
+    def test_validation_reads_records_as_the_panel_does(self):
+        # Pinned reserved sources and notes beside evaluation versions are neither versions nor panel failures.
+        self.raw("evaluation/preparation/final.jsonl", b'{"path":"x"}\n')
+        records.write_manifest(self.tree, "evaluation/preparation")
+        self.raw("evaluation/coverage-v2.json", dict(missing=[]))
+        report = records.validate(self.tree)
+        self.assertTrue(report["valid"], report)
+        self.assertFalse([w for w in report["warnings"] if "panel" in w])
+        (self.root / "proposal.json").unlink()
+        (self.root / "proposal.json").symlink_to(self.root / "resources.json")
+        report = records.validate(self.tree)
+        self.assertIn("Symlink", " ".join(e for e in report["errors"] if e.startswith("panel:")))
+
+    def test_rehearsal_scores_a_prepared_evaluation_without_recording(self):
+        self.evaluation()
+        source = self.root / ".workspace/tmp/eval-v3"
+        source.mkdir(parents=True)
+        (source / "definition.json").write_bytes(records.encoded(dict(version="v3", description="Fixture", rubric="Count",
+            metrics=[dict(id="count", label="Count", direction="maximize"), dict(id="other", label="Other", direction="maximize")],
+            command=[sys.executable, "-B", "evaluation/v3/score.py"])))
+        (source / "samples.jsonl").write_bytes(b'{"sample_id":"one","input":"x"}\n{"sample_id":"two","input":"y","split":"final"}\n')
+        (source / "score.py").write_text("import json,os; from pathlib import Path\n"
+            "out=Path(os.environ['TUNETUNE_OUTPUT']); rows=[json.loads(l) for l in open(os.environ['TUNETUNE_SAMPLES'])]\n"
+            "assert os.environ['TUNETUNE_EVALUATION'].endswith('.workspace/tmp/eval-v3')\n"
+            "assert Path(os.environ['TUNETUNE_TARGET']).name == 'rule.txt'\n"
+            "(out/'outputs.jsonl').write_text(''.join(json.dumps({'sample_id':r['sample_id'],'output':1})+'\\n' for r in rows))\n"
+            "(out/'metrics.json').write_text(json.dumps({'count':len(rows)}))\n")
+        before = sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*") if ".workspace" not in p.parts)
+        report = runner.rehearse(self.tree, "e1", ".workspace/tmp/eval-v3", 10)
+        self.assertEqual(report["returncode"], 0, report.get("log_tail"))
+        self.assertEqual((report["samples"], report["metrics"], report["missing_metrics"], report["missing_outputs"]), (1, {"count": 1}, ["other"], 0))
+        self.assertTrue((self.root / report["rehearsal"] / "result/outputs.jsonl").exists())
+        self.assertEqual(sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*") if ".workspace" not in p.parts), before)
+        for bad in ("evaluation/v1", "experiments/e1", "../outside"):
+            with self.assertRaises(ValueError):
+                runner.rehearse(self.tree, "e1", bad, 10)
+
     def test_audit_flags_methods_that_contain_evaluation_material(self):
         self.split_evaluation()
         self.raw("proposal.json", dict(summary="Tags from the confirmed list: alpha", examples=[]))

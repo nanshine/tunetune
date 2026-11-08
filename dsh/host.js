@@ -11,6 +11,7 @@
 import { createReadStream, realpathSync, statSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Conversations } from './conversation.js';
 import { forward, PanelServices } from './panels.js';
 import { createSkillProvider, shadowingSkills } from './skills.js';
 import { findPython, inspectStudy } from './studies.js';
@@ -83,6 +84,22 @@ export function createRouter(ctx, { panels, findStudy = inspectStudy, shadowed =
     const session = ctx.sessions.get(id);
     return session ? remember(findStudy(sessionDirectory(ctx, session))) : null;
   };
+  // Sessions working in each study, newest first; reread at most every few seconds, since panels poll.
+  let cached = { at: 0, map: new Map() };
+  const sessionsOf = (id) => {
+    if (Date.now() - cached.at > 3_000) {
+      const map = new Map();
+      const created = (session) => String(session?.header?.createdAt ?? '');
+      for (const session of [...ctx.sessions.list()].sort((a, b) => created(b).localeCompare(created(a)))) {
+        const study = remember(findStudy(sessionDirectory(ctx, session)));
+        if (study) map.set(study.id, [...(map.get(study.id) ?? []), String(session.id)]);
+      }
+      cached = { at: Date.now(), map };
+    }
+    return cached.map.get(id) ?? [];
+  };
+  // Optional service: without live agents, panel answers wait for the person to mention them.
+  const conversations = new Conversations({ agents: () => ctx.get?.('agents'), sessionsOf });
   const studies = () => {
     const found = new Map();
     // Newest first, so "go to conversation" lands on the latest one.
@@ -132,7 +149,17 @@ export function createRouter(ctx, { panels, findStudy = inspectStudy, shadowed =
       } catch (error) {
         return sendJson(res, 503, { error: error.message, code: error.code, detail: error.detail });
       }
-      return forward(req, res, port, `${match[2]}${url.search}`);
+      const page = match[2];
+      if (req.method === 'GET' && page === '/') conversations.viewed(study.id, url.searchParams.get('session'));
+      const reachable = conversations.agent(study.id) !== undefined;
+      const options = { extra: reachable ? { 'x-tunetune-conversation': '1' } : {} };
+      if (req.method === 'POST' && page === '/api/responses') {
+        options.capture = true;
+        options.observe = ({ status, body }) => { if (status === 200 && body) conversations.answered(study.id, body); };
+      } else if (req.method === 'GET' && page === '/api/state') {
+        options.observe = ({ status, headers }) => { if (status === 200) conversations.synced(study.id, headers['x-tunetune-sync-error']); };
+      }
+      return forward(req, res, port, `${page}${url.search}`, options);
     }
     if ((match = rest.match(/^\/api\/studies\/([0-9a-f]{16})\/browser$/)) && req.method === 'POST') {
       const directory = known.get(match[1]);

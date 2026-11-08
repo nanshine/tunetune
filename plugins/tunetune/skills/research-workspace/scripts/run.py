@@ -273,6 +273,79 @@ def try_model(tree, experiment, value, timeout):
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+def rehearse(tree, experiment, source, timeout):
+    """Run a prepared, unfrozen evaluation on one verified model's development samples, as a rehearsal.
+
+    Calibration needs the real model-to-score path before freezing, but a measurement needs a frozen
+    package; a rehearsal gives the first without the second. It runs the source's `command` from the
+    project root, reading arguments under `evaluation/<version>/` from the source instead, with the
+    same TUNETUNE_* locations an evaluation run receives. Outputs stay in a scratch directory under
+    `.workspace/tmp/` for inspection and are never research evidence. Final-check samples never run.
+    """
+    require(isinstance(experiment, str) and re.fullmatch(ID, experiment), "Invalid experiment ID")
+    require(isinstance(timeout, (int, float)) and 0 < timeout < float("inf"), "Invalid timeout")
+    segments = parts(source)
+    require(segments[0] == "evaluation" and len(segments) == 2 or segments[:2] == [".workspace", "tmp"],
+            "Rehearse a prepared evaluation in evaluation/draft or under .workspace/tmp")
+    require(not tree.exists(source + "/manifest.json"), "This evaluation is frozen; measure it with an evaluation run")
+    raw = strict(tree.read(source + "/definition.json"))
+    version = raw.get("version") if isinstance(raw, dict) else None
+    require(isinstance(version, str) and re.fullmatch(ID, version), "Definition needs a version")
+    definition = shape(f"evaluation/{version}/definition.json", tree.read(source + "/definition.json"))
+    rows = shape(f"evaluation/{version}/samples.jsonl", tree.read(source + "/samples.jsonl"))
+    samples = [row for row in rows if row.get("split", "development") == "development"]
+    require(samples, "The prepared evaluation has no development samples")
+    with tree.locked():
+        read_record(tree, "project.json")
+        target = verify_model(tree, "experiments/" + experiment)["target"]
+    prefix = f"evaluation/{version}/"
+    argv = [source + "/" + arg[len(prefix):] if arg.startswith(prefix) else arg for arg in definition["command"]]
+    with tree.directory([".workspace", "tmp"], create=True):
+        pass
+    scratch = tempfile.mkdtemp(prefix=f"rehearse-{experiment}-", dir=os.path.join(tree.root, ".workspace", "tmp"))
+    result_dir = os.path.join(scratch, "result")
+    os.mkdir(result_dir)
+    with open(os.path.join(scratch, "samples.jsonl"), "wb") as stream:
+        stream.write(b"".join(encoded(row).replace(b"\n", b"") + b"\n" for row in samples))
+    locations = {"TUNETUNE_PROJECT": tree.root, "TUNETUNE_ATTEMPT": scratch, "TUNETUNE_TARGET": os.path.join(tree.root, target["path"]),
+                 "TUNETUNE_EVALUATION": os.path.join(tree.root, source), "TUNETUNE_SAMPLES": os.path.join(scratch, "samples.jsonl"),
+                 "TUNETUNE_OUTPUT": result_dir}
+    started = time.monotonic()
+    with open(os.path.join(scratch, "run.log"), "wb") as log:
+        process = subprocess.Popen(argv, cwd=tree.root, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                   start_new_session=True, shell=False, env={**os.environ, **NO_BYTECODE, **locations})
+        try:
+            returncode, timed_out = process.wait(timeout=timeout), False
+        except subprocess.TimeoutExpired:
+            returncode, timed_out = None, True
+        finally:
+            kill_owned_group(process)
+    report = {"rehearsal": os.path.relpath(scratch, tree.root), "experiment": experiment, "returncode": returncode,
+              "timed_out": timed_out, "elapsed_seconds": time.monotonic() - started, "samples": len(samples),
+              "note": "A rehearsal, not a measurement: freeze the evaluation before reporting any score."}
+    declared = [metric["id"] for metric in definition["metrics"]]
+    try:
+        with open(os.path.join(result_dir, "metrics.json"), "rb") as stream:
+            metrics = strict(stream.read())
+        report["metrics"] = metrics
+        report["missing_metrics"] = [name for name in declared if not isinstance(metrics, dict) or name not in metrics]
+    except (OSError, ValueError):
+        report["missing_metrics"] = declared
+    try:
+        with open(os.path.join(result_dir, "outputs.jsonl"), "rb") as stream:
+            answered = {row.get("sample_id") for row in (strict(line) for line in stream.read().decode("utf-8").splitlines() if line.strip())
+                        if isinstance(row, dict)}
+        expected = {row["sample_id"] for row in samples}
+        report["missing_outputs"] = len(expected - answered)
+        report["unexpected_outputs"] = len(answered - expected)
+    except (OSError, ValueError):
+        report["missing_outputs"] = len(samples)
+    if returncode != 0 or report["missing_metrics"] or report["missing_outputs"]:
+        with open(os.path.join(scratch, "run.log"), "rb") as stream:
+            report["log_tail"] = stream.read()[-4000:].decode("utf-8", "replace")
+    return report
+
+
 def compare(tree, experiments, timeout, local_only=False, served=None):
     """Run verified models' invoke.json entries on comparison/inputs.jsonl and merge comparison/outputs.jsonl.
 
@@ -365,7 +438,9 @@ def main():
     target.add_argument("--path", help="experiments/<id> or experiments/<id>/evals/<run-id>")
     target.add_argument("--compare", nargs="+", metavar="EXPERIMENT", help="run invoke.json entries on comparison/inputs.jsonl")
     target.add_argument("--try", dest="try_experiment", metavar="EXPERIMENT", help="run one local model on one JSON input read from stdin")
-    parser.add_argument("--timeout", type=float, default=600, help="per-model timeout for --compare and --try")
+    target.add_argument("--rehearse", metavar="EXPERIMENT", help="score one verified model with an unfrozen evaluation, without recording")
+    parser.add_argument("--source", default="evaluation/draft", help="prepared evaluation for --rehearse")
+    parser.add_argument("--timeout", type=float, default=600, help="per-model timeout for --compare, --try and --rehearse")
     parser.add_argument("--local-only", action="store_true", help="refuse API models in --compare")
     parser.add_argument("--served", action="append", default=[], metavar="EXPERIMENT=PATH",
                         help="use outputs a loaded model already produced for --compare")
@@ -387,6 +462,10 @@ def main():
             result = try_model(tree, args.try_experiment, strict(sys.stdin.buffer.read(256 * 1024 + 1)), args.timeout)
             print(json.dumps(result, ensure_ascii=False))
             return 0 if "output" in result else 1
+        if args.rehearse:
+            result = rehearse(tree, args.rehearse, args.source, args.timeout)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0 if result["returncode"] == 0 and not result["missing_metrics"] and not result["missing_outputs"] else 1
         if args.compare:
             served = dict(item.split("=", 1) for item in args.served if "=" in item)
             require(len(served) == len(args.served), "Use --served EXPERIMENT=PATH")

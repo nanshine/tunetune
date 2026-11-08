@@ -13,7 +13,7 @@ function host(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
 }
 
-export function ProposalView({ files, waiting = null, onRespond }: { files: Snapshot['files']; waiting?: string | null; onRespond?: (decision: string, note: string, sha: string) => Promise<unknown> }) {
+export function ProposalView({ files, waiting = null, onRespond, delivered = false }: { files: Snapshot['files']; waiting?: string | null; onRespond?: (decision: string, note: string, sha: string) => Promise<unknown>; delivered?: boolean }) {
   const proposal = files['proposal.json'] ? object(files['proposal.json'].content) : {};
   const resources = new Map(array(object(files['resources.json']?.content).items).map(object).map(item => [text(item.id), item]));
   const approaches = array(proposal.approaches).map(object).sort((a, b) => roleOrder.indexOf(text(array(a.roles)[0])) - roleOrder.indexOf(text(array(b.roles)[0])));
@@ -23,7 +23,7 @@ export function ProposalView({ files, waiting = null, onRespond }: { files: Snap
   const feasibility = object(proposal.feasibility);
   if (!text(proposal.summary) && !approaches.length && !examples.length) return <Empty icon={<Target size={20} />} title={t('还没有研究提案')}>{t('在对话里说说你想让模型做什么，提案会整理在这里。')}</Empty>;
   return <div className="brief">
-    {onRespond && <ResponseBar files={files} kind="proposal" waiting={waiting} prompt={t('看完下面的方案、资源和预算后，可以直接在这里确认或提出修改。')} approve={t('确认，开始研究')} decisions={{ approve: 'approve', revise: 'revise' }} onSubmit={onRespond} />}
+    {onRespond && <ResponseBar files={files} kind="proposal" waiting={waiting} prompt={t('看完下面的方案、资源和预算后，可以直接在这里确认或提出修改。')} approve={t('确认，开始研究')} decisions={{ approve: 'approve', revise: 'revise' }} onSubmit={onRespond} delivered={delivered} />}
     <div className="lead">
       <p>{text(proposal.summary)}</p>
       {!!Object.keys(feasibility).length && <p className="lead-meta"><span className={`badge feasibility-${text(feasibility.verdict, 'unknown')}`}>{feasibilityLabels[text(feasibility.verdict)] ?? t('待评估')}</span>{text(feasibility.reason)}</p>}
