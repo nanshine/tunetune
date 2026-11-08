@@ -289,6 +289,25 @@ describe('studies and routes', () => {
     assert.equal(page.status, 200);
   });
 
+  test('a session reports each new attention request from the pinned view helper', async () => {
+    const records = join(study, '.workspace', 'app', 'records.py');
+    const view = (...args) => execFileSync('python3', ['-B', records, 'view', '--project', study, ...args], { stdio: 'ignore' });
+    const attention = async () => JSON.parse((await call(port, 'GET', '/tunetune/api/sessions/s-study')).text).study.attention;
+    try {
+      assert.equal(await attention(), null);
+      view('--open', 'proposal', '--attention', 'proposal:请确认研究提案');
+      const first = await attention();
+      assert.match(first, /^\d+$/);
+      view('--open', 'proposal', '--attention', 'proposal:请再看一次');
+      const second = await attention();
+      assert.notEqual(second, first);
+      view('--clear');
+      assert.equal(await attention(), null);
+    } finally {
+      rmSync(join(study, '.workspace', 'view.json'), { force: true });
+    }
+  });
+
   test('the list shows where each study stands', async () => {
     const records = JSON.parse(readFileSync(join(study, 'proposal.json'), 'utf8'));
     writeFileSync(join(study, 'proposal.json'), JSON.stringify({ ...records, summary: '把客户留言分到五个类别。' }));

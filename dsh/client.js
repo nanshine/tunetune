@@ -13,6 +13,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement;
     const ID = 'dsh-tunetune';
     const UI = '/tunetune/ui/';
+    const API = '/tunetune/api/';
     // Named for what the person does here, like the harness's other workspaces; TuneTune is the maker.
     const LABEL = { zh: '模型研究室', en: 'Model Lab' };
     const GUIDE = {
@@ -109,6 +110,82 @@ window.__ModuleLoader__.load({
           c.slots.register({ name: 'sidebar.right.pane.tab', key: ID }, StudyTab)));
         return () => { for (const dispose of disposers) if (typeof dispose === 'function') dispose(); };
       });
+
+      // Bring the study forward without waiting for the person to find it: once when the conversation on
+      // screen first holds a study, and again whenever the Agent asks them to look (`records.py view --attention`).
+      ctx.inject(['sidebarRight'], (c) => autoOpen(c.sidebarRight));
+    }
+
+    const POLL_MS = 4000;
+    const MEMORY = 'tunetune:auto-open:';
+
+    // What was last shown for a conversation, kept per browser tab so a reload does not reopen a closed panel.
+    function remembered(sessionId) {
+      try {
+        const value = JSON.parse(sessionStorage.getItem(MEMORY + sessionId) || 'null');
+        return value && typeof value === 'object' ? value : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function remember(sessionId, value) {
+      try { sessionStorage.setItem(MEMORY + sessionId, JSON.stringify(value)); } catch { /* memory is a convenience */ }
+    }
+
+    // A study opens once per conversation; afterwards only a new attention request opens it again, so
+    // closing the panel stays respected until the Agent has something for the person to see.
+    function shouldOpen(previous, study) {
+      if (!study || !study.embeddable) return false;
+      if (!previous || previous.study !== study.id) return true;
+      return study.attention !== null && study.attention !== previous.attention;
+    }
+
+    function autoOpen(sidebar) {
+      let timer = null;
+      let watched = null;
+      let stopped = false;
+
+      async function check(sessionId) {
+        let study = null;
+        try {
+          const response = await fetch(`${API}sessions/${encodeURIComponent(sessionId)}`,
+            { cache: 'no-store', credentials: 'same-origin' });
+          if (response.ok) study = (await response.json()).study;
+        } catch {
+          return;
+        }
+        if (stopped || watched !== sessionId || sidebar.mounted.getSnapshot() !== sessionId) return;
+        const previous = remembered(sessionId);
+        if (!shouldOpen(previous, study)) return;
+        remember(sessionId, { study: study.id, attention: study.attention ?? null });
+        try {
+          // A page tab already open is focused rather than duplicated, and a collapsed column expands.
+          sidebar.openTab(ID);
+        } catch (error) {
+          console.error('[tunetune] could not open the study panel', error);
+        }
+      }
+
+      function follow() {
+        const sessionId = sidebar.mounted.getSnapshot();
+        if (sessionId === watched) return;
+        clearInterval(timer);
+        timer = null;
+        watched = sessionId ?? null;
+        if (!watched) return;
+        const current = watched;
+        void check(current);
+        timer = setInterval(() => { void check(current); }, POLL_MS);
+      }
+
+      const unsubscribe = sidebar.mounted.subscribe(follow);
+      follow();
+      return () => {
+        stopped = true;
+        clearInterval(timer);
+        unsubscribe();
+      };
     }
 
     exports.isPlugin = true;

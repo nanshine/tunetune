@@ -30,7 +30,7 @@ It verifies the skill's manifest, adds only the missing project guide, minimal r
 
 ## Open and continue
 
-Start the panel in a managed session and give the actual printed address once it responds:
+Open the panel right after initializing, before investigating the goal. Where the application shows it beside the conversation, follow the shared skill's `references/agent-adapters.md`: DeepSeek Harness with the plugin opens it itself, and the Codex and Claude desktop apps show its address in their own browser views. Elsewhere, start it in a managed session and give the actual printed address once it responds:
 
 ```sh
 python3 .workspace/app/workspace.py --project . --port 0 --open

@@ -51,6 +51,13 @@ function stageOf(project, summary) {
   return summary ? 'proposal' : 'starting';
 }
 
+// The Agent asks the person to look with `records.py view --attention`; its revision marks each new request,
+// so the browser half can bring the panel forward once per request. Notes cleared means nothing waits.
+function attentionOf(view) {
+  if (!Array.isArray(view?.attention) || !view.attention.length) return null;
+  return Number.isInteger(view.revision) ? String(view.revision) : null;
+}
+
 // A study is a directory initialized by init.py: its pinned tools carry their own panel.
 // Returns null for anything else, including symlinked project roots, which workspace.py refuses.
 export function inspectStudy(directory) {
@@ -80,6 +87,7 @@ export function inspectStudy(directory) {
     name: typeof project?.name === 'string' && project.name.trim() ? project.name.trim() : null,
     summary: summary.length > SUMMARY_LIMIT ? `${summary.slice(0, SUMMARY_LIMIT - 1)}…` : summary || null,
     stage: stageOf(project, summary),
+    attention: attentionOf(readJson(join(real, '.workspace', 'view.json'))),
     version: typeof manifest.version === 'string' ? manifest.version : null,
     // Panels from earlier tools request /api at the site root and cannot run under a prefix.
     embeddable,

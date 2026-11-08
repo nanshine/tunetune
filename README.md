@@ -25,7 +25,7 @@ Install TuneTune following https://github.com/nanshine/tunetune/blob/main/INSTAL
 Then, in the folder where you want to start a study, try a request like:
 
 ```text
-Use TuneTune to train a small model that names Pokémon from silhouettes or screenshots in the anime’s “Who’s That Pokémon?” segment. Help me find public Pokémon image collections.
+Use TuneTune to train a model that names Pokémon from silhouettes in the anime’s “Who’s That Pokémon?” segment.
 ```
 
 Already installed? Start with the request. Prefer to install it yourself? See [Installation](#installation).

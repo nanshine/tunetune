@@ -25,6 +25,8 @@ Start with the current proposal, experiment plan, resources and relevant evidenc
 
 ## Open the research space
 
+Open it when you start or resume work in this study, unless a panel already serves it. Follow the shared `references/agent-adapters.md` for this application: some show the panel beside the conversation themselves. Otherwise start it in a managed session:
+
 ```sh
 python3 .workspace/app/workspace.py --project . --port 0 --open
 ```
