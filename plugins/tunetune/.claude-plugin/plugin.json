@@ -1,7 +1,7 @@
 {
   "name": "tunetune",
   "description": "Work with your Agent to train, test, and improve small models for your own tasks.",
-  "version": "0.8.6",
+  "version": "0.8.7",
   "author": {
     "name": "nanshine",
     "url": "https://github.com/nanshine"
