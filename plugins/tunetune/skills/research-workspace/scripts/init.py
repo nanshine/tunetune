@@ -17,7 +17,7 @@ import re
 import stat
 import tempfile
 
-VERSION = "0.8.5"
+VERSION = "0.8.6"
 TEMPLATES = ("AGENTS.md", "project.json", "proposal.json", "resources.json")
 APP_SCRIPTS = ("workspace.py", "monitor.py", "records.py", "run.py", "resources.py", "scout.py")
 # Skill installers may reach the skill through a link; payload checks start at its real directory.
