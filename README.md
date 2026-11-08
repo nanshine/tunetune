@@ -1,12 +1,20 @@
 <p align="center">English · <a href="README_zh.md">简体中文</a></p>
 
-<img src="docs/assets/hero.png" alt="TuneTune" width="100%">
+<p align="center">
+  <img src="docs/assets/hero.png" alt="TuneTune" width="720">
+</p>
 
-> A human–agent research workbench for training, evaluating, and iterating on small models for specific tasks.
+> Work with your Agent to train, test, and improve small models for your own tasks.
 
-[![CI](https://github.com/nanshine/tunetune/actions/workflows/ci.yml/badge.svg)](https://github.com/nanshine/tunetune/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/dsh-tunetune)](https://www.npmjs.com/package/dsh-tunetune) [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/nanshine/tunetune/actions/workflows/ci.yml"><img src="https://github.com/nanshine/tunetune/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/dsh-tunetune"><img src="https://img.shields.io/npm/v/dsh-tunetune" alt="npm"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
 
 ## Quick start
+
+![Requirements: macOS / Linux, Python 3.10+; Windows via WSL2](docs/assets/requirements-en.svg)
 
 Send this to your Agent:
 
@@ -17,7 +25,7 @@ Install TuneTune following https://github.com/nanshine/tunetune/blob/main/INSTAL
 Then, in the folder where you want to start a study, try a request like:
 
 ```text
-Use TuneTune to train a small model that recognizes Donald Trump in photos, using public data.
+Use TuneTune to train a small model that names Pokémon from silhouettes or screenshots in the anime’s “Who’s That Pokémon?” segment. Help me find public Pokémon image collections.
 ```
 
 Already installed? Start with the request. Prefer to install it yourself? See [Installation](#installation).
@@ -26,30 +34,22 @@ Already installed? Start with the request. Prefer to install it yourself? See [I
 
 ## How it works
 
-Describe what you want the model to do. Your Agent investigates methods, asks the questions that matter, and proposes a direction and resource budget for you to review. It builds and calibrates an evaluation with a baseline, then runs bounded rounds of experiments: propose a hypothesis, test it, examine the evidence, and decide what to try next. You can inspect the study in a workbench with an infinite experiment canvas and floating proposal, evaluation, resource, plan, and acceptance windows.
+Tell your Agent what you want the model to do. It looks into the task, compares approaches, and proposes a plan with estimated time, downloads, and costs for you to review.
 
-![Research workflow: request, proposal, evaluation and baseline, repeated experiment rounds, and delivery; you guide the goal, review decisions, and try the results.](docs/assets/workflow-en.svg)
+It then prepares test examples, measures a simple starting model, and improves it through rounds of experiments. Follow the plans, experiments, and results in the workbench, and try your own inputs to see how well the model works for you. Your Agent asks for your judgment when reference answers need review or the budget or direction needs to change.
+
+![Research workflow: you describe the need, approve the plan and budget, review reference answers, and finally try the model; the ghost investigates and writes the proposal, prepares samples and measures a baseline, then plans, runs and analyzes experiment rounds until it verifies and delivers a model; at any time you can change the goal, question scores or suggest a method.](docs/assets/workflow-en.svg)
 
 | Skill | Role |
 |---|---|
-| `tunetune-init` | Investigate the need, compare approaches, and propose a direction and resource ceilings. |
-| `build-evaluation` | Calibrate evaluation, review subjective references with you, and measure the baseline. |
-| `run-experiments` | Plan and run experiment rounds, analyze results, and verify local models for delivery. |
-| `research-workspace` | Connect the stages, maintain evidence, and resume work in the shared workbench. |
+| `tunetune-init` | Set up the study, understand the task, research approaches, and agree on a plan and budget. |
+| `build-evaluation` | Prepare test examples and scoring, check that the tests are useful, and measure a starting model. |
+| `run-experiments` | Try improvements in rounds, compare results, and verify that the final model runs locally. |
+| `research-workspace` | Keep and display study records so your Agent can continue from earlier work. |
 
-Within the agreed scope, the Agent continues across rounds without asking you to approve every experiment. Candidates evolve in the experiment plan; the proposal changes when the goal, recommended direction, or scope changes. You can redirect the study or question the evaluation at any time; changed evaluations get a new version and relevant candidates are measured again.
-
-At delivery, try real inputs and compare model outputs in the workbench. Research may also stop when the budget is spent or no worthwhile next experiment remains; the Agent explains what worked, what did not, and what remains uncertain. Models stay in their experiments, ready for local use; export or integration is a separate request.
-
-**Three principles:**
-
-- **Small models for specific needs.** Explore training, prompting, retrieval, and other approaches according to the problem; an explicit training request remains a training requirement.
-- **People set the direction and standard.** You review consequential choices and subjective reference answers, then judge the result yourself.
-- **Evaluate before claiming improvement.** Compare against a measured baseline and deliver only verified local models. External APIs and data transfers require authorization.
+When the goal is met, the budget runs out, or no worthwhile next experiment remains, your Agent explains the results, limitations, and recommended next step.
 
 ## Installation
-
-Install once for your application, then start studies in separate folders. The workbench needs Python 3.10+ on macOS or Linux; on Windows, the Agent can guide WSL2 setup. The built panel is included, so you do not need to build the frontend.
 
 ### Claude Code
 
@@ -67,7 +67,7 @@ codex plugin add tunetune@tunetune
 
 ### DeepSeek Harness
 
-Open **Plugins** in the app and install `dsh-tunetune`. The plugin includes the skills and places the workbench beside your conversation; do not install a second copy of the skills.
+Install `dsh-tunetune` from **Plugins** to get the skills and a workbench beside your conversation.
 
 For a CLI-managed profile:
 
@@ -77,19 +77,15 @@ dsh plugin --profile <profile> add dsh-tunetune
 
 ### Other Agents with skills support
 
-With Node.js available, install the four skills for your application, replacing `<application>` with its skills CLI identifier, such as `cursor` or `opencode`:
+Install the skills for your Agent, replacing `<application>` with its identifier, such as `cursor` or `opencode`:
 
 ```sh
 npx skills add nanshine/tunetune --global --agent <application> -y
 ```
 
-These applications have not all been individually tested. Without Node.js, ask your Agent to follow [INSTALL.md](INSTALL.md), which also covers manual installation, initialization, and starting the workbench.
-
-Once installed, describe your task in the study folder. Each study pins its own tools, so updating installed skills does not replace the tools used by existing research.
-
 ## Contributing
 
-[Report an issue](https://github.com/nanshine/tunetune/issues), share a real study, or submit a pull request. For code changes, see the repository's [development and validation guidelines](AGENTS.md).
+[Report an issue](https://github.com/nanshine/tunetune/issues), share a real study, or submit a pull request. For code changes, see the repository's [contribution guidelines](CONTRIBUTING.md).
 
 ## License
 

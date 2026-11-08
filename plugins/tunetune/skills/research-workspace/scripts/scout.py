@@ -47,14 +47,15 @@ def fetch(url, timeout, accept="application/json", body=None):
             data = response.read(MAX_BYTES + 1)
             headers = response.headers
     except HTTPError as exc:
-        retry = exc.headers.get("retry-after") if exc.headers else None
-        if exc.code == 429 or exc.code == 403 and exc.headers and exc.headers.get("x-ratelimit-remaining") == "0":
-            raise ScoutError("rate_limited", f"{url} is rate limited; wait before retrying", retry) from None
-        if exc.code == 404:
-            raise ScoutError("not_found", f"{url} was not found") from None
-        if exc.code == 401 or exc.code == 403:
-            raise ScoutError("restricted", f"{url} requires access this tool does not have") from None
-        raise ScoutError("http_error", f"{url} returned HTTP {exc.code}") from None
+        with exc:
+            retry = exc.headers.get("retry-after") if exc.headers else None
+            if exc.code == 429 or exc.code == 403 and exc.headers and exc.headers.get("x-ratelimit-remaining") == "0":
+                raise ScoutError("rate_limited", f"{url} is rate limited; wait before retrying", retry) from None
+            if exc.code == 404:
+                raise ScoutError("not_found", f"{url} was not found") from None
+            if exc.code == 401 or exc.code == 403:
+                raise ScoutError("restricted", f"{url} requires access this tool does not have") from None
+            raise ScoutError("http_error", f"{url} returned HTTP {exc.code}") from None
     except (URLError, TimeoutError, OSError) as exc:
         raise ScoutError("unreachable", f"{url} could not be reached: {getattr(exc, 'reason', exc)}") from None
     if len(data) > MAX_BYTES:

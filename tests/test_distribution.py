@@ -144,6 +144,20 @@ class DistributionTests(unittest.TestCase):
                          [("tunetune", {"source": "local", "path": "./plugins/tunetune"})])
         self.assertEqual({path.name for path in (ROOT / builder.SKILLS_DIR).iterdir() if (path / "SKILL.md").is_file()}, set(builder.SKILLS))
 
+    def test_plugin_icons_are_shipped_inside_the_plugin(self):
+        plugin_root = ROOT / "plugins/tunetune"
+        codex = json.loads((plugin_root / ".codex-plugin/plugin.json").read_text())
+        claude = json.loads((plugin_root / ".claude-plugin/plugin.json").read_text())
+        for relative in (codex["interface"]["composerIcon"], codex["interface"]["logo"], claude["icon"]):
+            with self.subTest(path=relative):
+                self.assertTrue(relative.startswith("./"))
+                icon = (plugin_root / relative).resolve()
+                self.assertTrue(icon.is_relative_to(plugin_root.resolve()))
+                self.assertEqual(icon.read_bytes().strip(), (ROOT / "dsh/icon.svg").read_bytes().strip())
+                self.assertIn(icon.relative_to(plugin_root / "skills/research-workspace").as_posix(),
+                              {entry["path"] for entry in json.loads(
+                                  (plugin_root / "skills/research-workspace/manifest.json").read_text())["files"]})
+
     def test_builder_requires_shared_tools_before_writing(self):
         before = (self.skill / "manifest.json").read_bytes()
         for relative in ("references/records.md", "references/tools.md", "scripts/init.py", "scripts/records.py",

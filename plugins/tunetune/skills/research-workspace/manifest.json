@@ -51,7 +51,7 @@
     },
     {
       "path": "scripts/scout.py",
-      "sha256": "1acc5b81d24dd7a85f0c2c68cc988a36042476e70490473d68ca00c3d23a9a14"
+      "sha256": "a8bcac84e6ebcc70f68e45810c26428043cf2adb849c0e9ec6d9fbbba7568d87"
     },
     {
       "path": "scripts/workspace.py",

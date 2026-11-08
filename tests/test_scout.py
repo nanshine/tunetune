@@ -9,6 +9,8 @@ from pathlib import Path
 import threading
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
+from urllib.request import ProxyHandler, build_opener
 
 SCRIPT = Path(__file__).resolve().parents[1] / "plugins/tunetune/skills/research-workspace/scripts/scout.py"
 
@@ -51,6 +53,10 @@ class ScoutTests(unittest.TestCase):
         base = f"http://127.0.0.1:{self.server.server_port}"
         with patch.dict(os.environ, TUNETUNE_SCOUT_HF=base, TUNETUNE_SCOUT_MODELSCOPE=base, TUNETUNE_SCOUT_ARXIV=base, TUNETUNE_SCOUT_GITHUB=base):
             self.scout = load()
+        # All requests target the local fixture, regardless of the host's proxy configuration.
+        local_requests = patch.object(self.scout, "urlopen", build_opener(ProxyHandler({})).open)
+        local_requests.start()
+        self.addCleanup(local_requests.stop)
 
     def run_cli(self, *argv):
         out, err = io.StringIO(), io.StringIO()
@@ -125,6 +131,19 @@ class ScoutTests(unittest.TestCase):
         self.assertEqual(result["error"]["retry_after_s"], "60")
         code, result = self.run_cli("inspect", "org/absent")
         self.assertEqual(result["error"]["code"], "not_found")
+
+    def test_http_error_responses_are_closed_for_every_error_kind(self):
+        cases = [(429, {}, "rate_limited"), (403, {"x-ratelimit-remaining": "0"}, "rate_limited"),
+                 (404, {}, "not_found"), (401, {}, "restricted"), (403, {}, "restricted"),
+                 (500, {}, "http_error")]
+        for status, headers, expected in cases:
+            with self.subTest(status=status, headers=headers):
+                body = io.BytesIO(b"{}")
+                error = HTTPError("http://127.0.0.1/fixture", status, "fixture", headers, body)
+                with patch.object(self.scout, "urlopen", side_effect=error):
+                    code, result = self.run_cli("repos", "--query", "fixture")
+                self.assertEqual((code, result["error"]["code"]), (1, expected))
+                self.assertTrue(body.closed)
 
     def test_fit_uses_metadata_and_marks_training_estimates(self):
         Handler.routes["/api/models/org/llm"] = (200, {"id": "org/llm", "safetensors": {"total": 4_000_000_000}}, {})

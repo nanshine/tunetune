@@ -1,6 +1,6 @@
 {
   "name": "tunetune",
-  "description": "Research and build a useful private model on your own computer, with the Agent as researcher and you as reviewer.",
+  "description": "Work with your Agent to train, test, and improve small models for your own tasks.",
   "version": "0.8.2",
   "author": {
     "name": "nanshine",
@@ -10,5 +10,6 @@
   "repository": "https://github.com/nanshine/tunetune",
   "license": "Apache-2.0",
   "keywords": ["models", "research", "fine-tuning", "evaluation", "local"],
+  "icon": "./skills/research-workspace/assets/panel/favicon.svg",
   "skills": "./skills/"
 }

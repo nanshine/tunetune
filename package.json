@@ -1,7 +1,7 @@
 {
   "name": "dsh-tunetune",
   "version": "0.8.2",
-  "description": "TuneTune for DeepSeek Harness: research and build a useful private model on your own computer, with the study panel beside the conversation.",
+  "description": "TuneTune for DeepSeek Harness: train, test, and improve small models with your Agent, with a workbench beside the conversation.",
   "type": "module",
   "main": "./dsh/host.js",
   "exports": {

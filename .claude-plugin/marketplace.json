@@ -10,7 +10,7 @@
     {
       "name": "tunetune",
       "source": "./plugins/tunetune",
-      "description": "Research and build a useful private model on your own computer, with the Agent as researcher and you as reviewer.",
+      "description": "Work with your Agent to train, test, and improve small models for your own tasks.",
       "keywords": [
         "models",
         "research",

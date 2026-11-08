@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "TuneTune",
-    "description": "Research and build a useful private model on your own computer. The Agent researches, evaluates and experiments; a panel beside the conversation shows the study and records your review."
+    "description": "Work with your Agent to train, test, and improve small models for your own tasks. Follow plans, experiments, and results in the workbench beside the conversation, and try your own inputs."
   }
 }

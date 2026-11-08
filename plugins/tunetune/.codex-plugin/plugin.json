@@ -1,7 +1,7 @@
 {
   "name": "tunetune",
   "version": "0.8.2",
-  "description": "Research and build a useful private model on your own computer, with the Agent as researcher and you as reviewer.",
+  "description": "Work with your Agent to train, test, and improve small models for your own tasks.",
   "author": {
     "name": "nanshine",
     "url": "https://github.com/nanshine"
@@ -13,14 +13,16 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "TuneTune",
-    "shortDescription": "Turn an everyday need into a private model you can use",
-    "longDescription": "TuneTune researches methods and models for your need, calibrates an evaluation, measures a baseline, runs bounded experiments on your computer and shows the results in a local panel where you review and try them.",
+    "shortDescription": "Train and improve small models",
+    "longDescription": "Work with your Agent to train, test, and improve small models for your own tasks. Your Agent researches approaches, proposes a plan and budget, calibrates tests, measures a baseline, and runs bounded experiments. Follow the study in the workbench and try your own inputs on verified local models. Results depend on the task, data, and available resources.",
+    "composerIcon": "./skills/research-workspace/assets/panel/favicon.svg",
+    "logo": "./skills/research-workspace/assets/panel/favicon.svg",
     "developerName": "nanshine",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],
     "defaultPrompt": [
-      "Help me build a model that sorts my customer messages, starting in this folder.",
-      "Use TuneTune to turn my notes into a private tagging model."
+      "Help me train a small model that sorts my customer messages, starting in this folder.",
+      "Use TuneTune to train and evaluate a small model that tags my notes."
     ],
     "websiteURL": "https://github.com/nanshine/tunetune"
   }
