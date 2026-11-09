@@ -397,6 +397,28 @@ class RecordsTests(unittest.TestCase):
         self.put("evaluation/draft/samples.jsonl", b'{"sample_id":"x","input":[] }\n', expected=self.sha("evaluation/draft/samples.jsonl"))
         self.assertTrue(records.validate(self.tree)["valid"])
 
+    def test_sample_attachments_are_project_relative_and_must_exist(self):
+        def row(path):
+            return (json.dumps(dict(sample_id="one", input=dict(type="image", path=path), reference="a")) + "\n").encode()
+        self.raw("evaluation/draft/images/a.png", b"png")
+        # Relative to the evaluation directory, which is how the panel could not find them.
+        with self.assertRaisesRegex(ValueError, "relative to the project root"):
+            self.put("evaluation/draft/samples.jsonl", row("images/a.png"), create=True)
+        self.put("evaluation/draft/samples.jsonl", row("evaluation/draft/images/a.png"), create=True)
+        # The frozen address is valid in a draft because the pictures are copied with it.
+        self.put("evaluation/draft/samples.jsonl", row("evaluation/v1/images/a.png"), expected=self.sha("evaluation/draft/samples.jsonl"))
+        source = self.base / "freeze-source"
+        (source / "images").mkdir(parents=True)
+        (source / "images/a.png").write_bytes(b"png")
+        (source / "definition.json").write_bytes(records.encoded(self.definition()))
+        (source / "samples.jsonl").write_bytes(row("images/a.png"))
+        with self.assertRaisesRegex(ValueError, "relative to the project root"):
+            records.freeze(self.tree, self.root, source, "evaluation/v1")
+        self.assertFalse(self.tree.exists("evaluation/v1"))
+        (source / "samples.jsonl").write_bytes(row("evaluation/v1/images/a.png"))
+        records.freeze(self.tree, self.root, source, "evaluation/v1")
+        self.assertTrue(records.validate(self.tree)["valid"])
+
     def test_manifest_rejects_bad_shape_paths_duplicates_and_symlinks(self):
         self.fixture()
         path = "evaluation/v1/manifest.json"

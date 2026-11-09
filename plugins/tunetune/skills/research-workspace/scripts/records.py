@@ -693,8 +693,56 @@ def verify_inputs(tree, path, config):
                     and item["sha256"] not in {row["sha256"] for row in split["reserved"]}, "Reserved input used by experiment")
 
 
+def attachment_paths(value, found, depth=0):
+    """Display attachment paths inside a value, the same explicit {type,path} references the panel serves."""
+    if depth > 8:
+        return found
+    if isinstance(value, dict):
+        if value.get("type") in ("image", "audio", "video", "file") and isinstance(value.get("path"), str):
+            found.add(value["path"])
+        for child in value.values():
+            attachment_paths(child, found, depth + 1)
+    elif isinstance(value, list):
+        for child in value:
+            attachment_paths(child, found, depth + 1)
+    return found
+
+
+def check_attachments(tree, path, obj, package=None):
+    """Attachment paths are project-relative, so a path relative to its evaluation directory shows nowhere.
+    `package` is (frozen destination, files being frozen into it): files there count before they are copied."""
+    found = set()
+    if path == "proposal.json":
+        for example in obj.get("examples", []):
+            if isinstance(example, dict):
+                for key in ("input", "expected_output"):
+                    if key in example:
+                        attachment_paths(example[key], found)
+    elif path.endswith("/samples.jsonl"):
+        for row in obj:
+            for key in ("input", "reference"):
+                if key in row:
+                    attachment_paths(row[key], found)
+    drafted = re.fullmatch(rf"evaluation/({ID})/samples\.jsonl", path)
+    missing = []
+    for item in sorted(found):
+        if tree.exists(item):
+            continue
+        if package and item.startswith(package[0] + "/") and item[len(package[0]) + 1:] in package[1]:
+            continue
+        # A draft's pictures move with it when frozen, so a later version directory is a valid address.
+        later = re.fullmatch(rf"evaluation/{ID}/(.+)", item)
+        if drafted and drafted.group(1) == "draft" and later and tree.exists("evaluation/draft/" + later.group(1)):
+            continue
+        missing.append(item)
+    require(not missing, "Attachment paths are relative to the project root and must exist (not relative to the evaluation directory); missing: "
+            + ", ".join(missing[:3]) + (" …" if len(missing) > 3 else ""))
+
+
 def check_record(tree, path, obj):
     """Check references and success evidence, also before publication."""
+    if path == "proposal.json" or path.endswith("/samples.jsonl"):
+        check_attachments(tree, path, obj)
     if path == "project.json":
         if obj["current_evaluation"] is not None:
             base = "evaluation/" + obj["current_evaluation"]
@@ -830,7 +878,9 @@ def freeze(tree, root, source, path):
         if path.startswith("evaluation/"):
             require("definition.json" in payload and "samples.jsonl" in payload, "Evaluation requires definition.json and samples.jsonl")
             definition = shape(path + "/definition.json", payload["definition.json"][0])
-            splits = [row.get("split", "development") for row in shape(path + "/samples.jsonl", payload["samples.jsonl"][0])]
+            rows = shape(path + "/samples.jsonl", payload["samples.jsonl"][0])
+            splits = [row.get("split", "development") for row in rows]
+            check_attachments(tree, path + "/samples.jsonl", rows, (path, set(payload)))
             # A final check has to be set aside before methods are tuned, or decided against openly.
             require("development" in splits, "Evaluation requires development samples")
             require("final" in splits or "no_final_reason" in definition,
