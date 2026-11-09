@@ -12,6 +12,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
 
+https://github.com/user-attachments/assets/878c9c3f-b6c5-428e-8026-65cab7ba558d
+
 ## Quick start
 
 ![Requirements: macOS / Linux, Python 3.10+; Windows via WSL2](docs/assets/requirements-en.svg)
@@ -29,8 +31,6 @@ Use TuneTune to train a model that names Pok√©mon from silhouettes in the anime‚
 ```
 
 Already installed? Start with the request. Prefer to install it yourself? See [Installation](#installation).
-
-<!-- Add a real demo video here once recorded, using the same request and showing actual elapsed time. -->
 
 ## How it works
 

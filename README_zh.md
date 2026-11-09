@@ -12,6 +12,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
 
+https://github.com/user-attachments/assets/878c9c3f-b6c5-428e-8026-65cab7ba558d
+
 ## 快速开始
 
 ![运行要求：macOS / Linux、Python 3.10+；Windows 使用 WSL2](docs/assets/requirements-zh.svg)
@@ -29,8 +31,6 @@
 ```
 
 已经安装？直接说需求即可。也可以按下面的[安装说明](#安装)自行安装。
-
-<!-- 录好真实演示后在这里加入视频，使用同一个需求，并标出实际耗时。 -->
 
 ## 它是怎么工作的
 
